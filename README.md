@@ -1,0 +1,2 @@
+# Autopilot
+Stock index analysis 
