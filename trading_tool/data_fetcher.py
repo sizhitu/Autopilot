@@ -281,13 +281,15 @@ class DataFetcher:
 
     def _fetch_us_stock_nasdaq(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
-        Nasdaq 免费历史接口兜底（覆盖主流美股，无需 API Key）。
-        注意：免费接口仅返回最近约 15 个交易日，不足以支撑完整 300 天策略，
+        Nasdaq 免费历史接口兜底（覆盖主流美股 / ETF / 基金 / 指数，无需 API Key）。
+        注意：免费接口返回的交易日数量有限，不足以支撑完整 300 天策略，
         仅用于在 Yahoo 被限流时仍能显示最新价与近期走势。
+        部分 ETF / 基金 / 指数在 Nasdaq 按不同 assetclass 归类，故依次尝试
+        stocks → etf → fund → index，任一成功即返回（系统性兜底，无需逐只硬编码）。
         """
         from datetime import datetime as _dt, timedelta as _td
         end = _dt.now()
-        start = end - _td(days=max(days, 120))
+        start = end - _td(days=max(days, 365))
         url = f"https://api.nasdaq.com/api/quote/{symbol}/historical"
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -297,37 +299,47 @@ class DataFetcher:
             'Origin': 'https://www.nasdaq.com',
             'Referer': 'https://www.nasdaq.com/',
         }
-        params = {
-            'assetclass': 'stocks',
-            'fromdate': start.strftime('%Y-%m-%d'),
-            'todate': end.strftime('%Y-%m-%d'),
-        }
-        r = self.session.get(url, params=params, headers=headers, timeout=15)
-        if r.status_code != 200:
-            raise ValueError(f"Nasdaq 返回 {r.status_code}")
-        d = r.json()
-        if d.get('status', {}).get('rCode') != 200:
-            msg = d.get('status', {}).get('bCodeMessage', [{}])[0].get('errorMessage', '未知错误')
-            raise ValueError(f"Nasdaq: {msg}")
-        rows = d.get('data', {}).get('tradesTable', {}).get('rows', [])
-        if not rows:
-            raise ValueError("Nasdaq 未返回历史数据")
 
         def _num(x):
             return float(str(x).replace('$', '').replace(',', '').strip() or 0)
 
-        recs = []
-        for row in rows:
-            recs.append({
-                'date': _dt.strptime(row['date'], '%m/%d/%Y'),
-                'open': _num(row['open']),
-                'high': _num(row['high']),
-                'low': _num(row['low']),
-                'close': _num(row['close']),
-                'volume': _num(row['volume']),
-            })
-        df = pd.DataFrame(recs).sort_values('date').reset_index(drop=True)
-        return df
+        last_err = None
+        for assetclass in ('stocks', 'etf', 'fund', 'index'):
+            params = {
+                'assetclass': assetclass,
+                'fromdate': start.strftime('%Y-%m-%d'),
+                'todate': end.strftime('%Y-%m-%d'),
+            }
+            try:
+                r = self.session.get(url, params=params, headers=headers, timeout=15)
+                if r.status_code != 200:
+                    last_err = f"Nasdaq({assetclass}) 返回 {r.status_code}"
+                    continue
+                d = r.json()
+                if d.get('status', {}).get('rCode') != 200:
+                    msg = d.get('status', {}).get('bCodeMessage', [{}])[0].get('errorMessage', '未知错误')
+                    last_err = f"Nasdaq({assetclass}): {msg}"
+                    continue
+                rows = d.get('data', {}).get('tradesTable', {}).get('rows', [])
+                if not rows:
+                    last_err = f"Nasdaq({assetclass}) 未返回历史数据"
+                    continue
+                recs = []
+                for row in rows:
+                    recs.append({
+                        'date': _dt.strptime(row['date'], '%m/%d/%Y'),
+                        'open': _num(row['open']),
+                        'high': _num(row['high']),
+                        'low': _num(row['low']),
+                        'close': _num(row['close']),
+                        'volume': _num(row['volume']),
+                    })
+                df = pd.DataFrame(recs).sort_values('date').reset_index(drop=True)
+                return df
+            except Exception as e:
+                last_err = f"Nasdaq({assetclass}): {e}"
+                continue
+        raise ValueError(f"{last_err}")
 
     def _swap_exchange(self, sina_symbol: str) -> str:
         """sh<->sz 前缀互换（用于取数失败时自动换市场重试）"""

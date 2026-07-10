@@ -217,7 +217,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       </div>
 
       <!-- 分析视图 -->
-      <div id="analysisView">
+      <div id="analysisCanvas">
         <canvas id="chartCanvas" height="280"></canvas>
         <canvas id="volCanvas" height="70"></canvas>
         <canvas id="rsiCanvas" height="85"></canvas>
@@ -310,6 +310,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 
 <script>
 let currentSymbol = '';
+let currentName = '';
+let currentMarket = '';
 let lastChartData = null;
 
 // === Tab 切换 ===
@@ -322,7 +324,7 @@ function switchTab(name, el) {
 function switchView(view) {
   document.getElementById('viewAnalysis').classList.toggle('active', view === 'analysis');
   document.getElementById('viewBacktest').classList.toggle('active', view === 'backtest');
-  document.getElementById('analysisView').classList.toggle('hidden', view !== 'analysis');
+  document.getElementById('analysisCanvas').classList.toggle('hidden', view !== 'analysis');
   document.getElementById('backtestView').classList.toggle('hidden', view !== 'backtest');
 }
 
@@ -359,6 +361,13 @@ async function fetchQuote(symbol, name, market) {
   document.getElementById('searchResults').style.display = 'none';
   document.getElementById('chartMeta').textContent = '获取数据中...';
   currentSymbol = symbol;
+  currentName = name || '';
+  currentMarket = market || '';
+
+  // 立即显示股票头部（代码+名称），避免任何下游异常导致不展示
+  const info = document.getElementById('stockInfo');
+  info.style.display = 'flex';
+  info.innerHTML = `<span class="symbol">${symbol}</span> ${name||''} <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中...</span>`;
 
   try {
     const res = await fetch('/api/quote', {
@@ -368,15 +377,15 @@ async function fetchQuote(symbol, name, market) {
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
 
-    // 显示股票信息
-    const info = document.getElementById('stockInfo');
+    // 显示股票信息（含收盘价/K线区间）
     info.style.display = 'flex';
     info.innerHTML = `<span class="symbol">${symbol}</span> ${name||''} <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${json.meta.rows}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
 
     updateResults(json.data, json.meta);
     lastChartData = json.chart;
     drawChart(json.chart);
-    switchView('analysis');
+    switchView('analysis');      // 确保内部画布视图
+    switchMainTab('analysis');   // 跳转到分析工具主页面
   } catch(e) {
     document.getElementById('chartMeta').textContent = '错误: ' + e.message;
   }
@@ -427,6 +436,21 @@ function switchMainTab(tab) {
   document.getElementById('watchlistView').classList.toggle('hidden', tab !== 'watchlist');
   if (tab === 'watchlist') loadWatchlist();
 }
+
+// === 移动端手势：分析页向左滑动返回看板 ===
+let _swX = 0, _swY = 0;
+document.addEventListener('touchstart', function(e){
+  if (e.touches.length === 1) { _swX = e.touches[0].clientX; _swY = e.touches[0].clientY; }
+}, {passive:true});
+document.addEventListener('touchend', function(e){
+  if (_swX === 0 && _swY === 0) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - _swX, dy = t.clientY - _swY;
+  _swX = 0; _swY = 0;
+  const onAnalysis = !document.getElementById('analysisView').classList.contains('hidden');
+  // 在分析页且为明显向左的横滑（非纵向滚动/点击）-> 返回自选看板
+  if (onAnalysis && dx < -50 && Math.abs(dx) > Math.abs(dy)) switchMainTab('watchlist');
+}, {passive:true});
 
 // === 自选看板 ===
 async function loadWatchlist() {

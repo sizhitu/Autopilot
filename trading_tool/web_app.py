@@ -188,10 +188,14 @@ def df_to_chart_json(df: pd.DataFrame, result, show_last=120) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """返回前端页面"""
+    """返回前端页面（禁用缓存，避免移动端 WebView 加载旧版本）"""
     html_path = os.path.join(os.path.dirname(__file__), "index.html")
     with open(html_path, "r", encoding="utf-8") as f:
-        return f.read()
+        html = f.read()
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
 
 
 @app.post("/api/analyze")
@@ -332,8 +336,8 @@ async def get_quote(req: QuoteRequest):
     """获取真实行情数据并自动分析"""
     try:
         df = fetcher.fetch(req.symbol, req.days)
-        if len(df) < 30:
-            raise ValueError(f"数据不足: 仅{len(df)}根K线")
+        if len(df) < 5:
+            raise ValueError(f"数据不足: 仅{len(df)}根K线，无法分析")
 
         # 自动执行策略分析
         strategy = FujimotoStrategy(total_capital=100000)

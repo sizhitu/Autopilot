@@ -103,10 +103,12 @@ class FujimotoStrategy:
     #  系统层：均线与指标
     # ================================================================
 
-    def _calc_ma(self, df: pd.DataFrame) -> dict:
-        """计算9条均线"""
+    def _calc_ma(self, df: pd.DataFrame, periods: Optional[list] = None) -> dict:
+        """计算均线（周期可自适应）"""
+        if periods is None:
+            periods = self.MA_PERIODS
         mas = {}
-        for p in self.MA_PERIODS:
+        for p in periods:
             if len(df) >= p:
                 mas[p] = df['close'].rolling(p).mean().iloc[-1]
             else:
@@ -114,23 +116,26 @@ class FujimotoStrategy:
         return mas
 
     def _calc_vwma(self, df: pd.DataFrame, period: int = 20) -> Optional[float]:
-        """成交量加权均线"""
+        """成交量加权均线（周期自适应）"""
+        period = min(period, max(5, len(df) // 2))
         if len(df) < period:
             return None
         subset = df.tail(period)
+        if subset['volume'].sum() == 0:
+            return None
         return (subset['close'] * subset['volume']).sum() / subset['volume'].sum()
 
-    def _judge_trend(self, mas: dict, vwma: Optional[float],
-                     close: float) -> tuple:
-        """九转规则判断趋势"""
-        short_mas = [mas.get(p) for p in [5, 10, 20, 30, 50]]
-        long_mas = [mas.get(p) for p in [100, 150, 200, 250]]
+    def _judge_trend(self, mas: dict, vwma: Optional[float], close: float,
+                     short_periods: list, long_periods: list) -> tuple:
+        """自适应判断趋势（根据可用均线周期）"""
+        short_mas = [mas.get(p) for p in short_periods]
+        long_mas = [mas.get(p) for p in long_periods]
 
-        short_valid = all(m is not None for m in short_mas)
-        long_valid = all(m is not None for m in long_mas)
+        short_valid = len(short_mas) >= 2  # 至少需要2条短期均线判断排列
+        long_valid = len(long_mas) >= 2
 
-        # 检查均线是否纠缠（短期均线差异小）
-        if short_valid:
+        # 检查均线是否纠缠（短期均线差异小）——短期均线不足3条时不判断纠缠
+        if short_valid and len(short_mas) >= 3:
             short_vals = short_mas
             spread = (max(short_vals) - min(short_vals)) / close
             if spread < 0.01:  # 均线差异<1%，视为纠缠
@@ -159,13 +164,11 @@ class FujimotoStrategy:
         vwma_bear = vwma is not None and close < vwma
 
         if short_bull and (long_up or not long_valid) and vwma_bull:
-            return TrendType.BULL, "9线多头排列+VWMA确认"
+            note = "" if long_valid else "（长期数据不足）"
+            return TrendType.BULL, "短期多头排列+VWMA确认" + note
         elif short_bear and (long_down or not long_valid) and vwma_bear:
-            return TrendType.BEAR, "9线空头排列+VWMA确认"
-        elif short_bull and vwma_bull:
-            return TrendType.BULL, "短期多头排列+VWMA确认（长期数据不足）"
-        elif short_bear and vwma_bear:
-            return TrendType.BEAR, "短期空头排列+VWMA确认（长期数据不足）"
+            note = "" if long_valid else "（长期数据不足）"
+            return TrendType.BEAR, "短期空头排列+VWMA确认" + note
         else:
             return TrendType.RANGE, "均线排列混乱，趋势不明"
 
@@ -393,22 +396,29 @@ class FujimotoStrategy:
             StrategyResult
         """
         df = df.copy()
-        if len(df) < 30:
+        MIN_BARS = 10
+        if len(df) < MIN_BARS:
             return StrategyResult(
                 trend=TrendType.RANGE, signal=SignalType.WAIT,
-                action="数据不足（至少需要30根K线）",
+                action="数据不足（至少需要10根K线）",
                 position_pct=0, entry_price=None, stop_loss=None,
                 target_prices=[], fib_levels=[], indicators=[],
                 layers_consistent={},
                 risk_warning="数据量不足，无法分析"
             )
 
+        # 数据有限标记：沙箱环境常只有十余根K线，仍可做短期分析
+        data_limited = len(df) < 30
+
         close = df['close'].iloc[-1]
 
         # === 系统层 ===
-        mas = self._calc_ma(df)
-        vwma = self._calc_vwma(df)
-        trend, trend_detail = self._judge_trend(mas, vwma, close)
+        # 根据可用数据量自适应选择均线周期
+        short_periods = [p for p in self.MA_PERIODS if p <= 50 and len(df) >= p]
+        long_periods = [p for p in self.MA_PERIODS if p >= 100 and len(df) >= p]
+        mas = self._calc_ma(df, short_periods + long_periods)
+        vwma = self._calc_vwma(df, period=20)
+        trend, trend_detail = self._judge_trend(mas, vwma, close, short_periods, long_periods)
 
         rsi_res = self._calc_rsi(df)
         macd_res = self._calc_macd(df)
@@ -525,6 +535,11 @@ class FujimotoStrategy:
         else:  # WAIT
             position_pct = 0
             risk_warning = "观望为主，保留现金等待三层一致信号"
+
+        # 数据有限提示（沙箱常只有十余根K线）
+        if data_limited:
+            note = f"⚠ 数据有限（仅{len(df)}根K线），指标偏短期，结论仅供参考"
+            risk_warning = (risk_warning + "；" + note) if risk_warning else note
 
         # 图表数据
         chart_data = {
