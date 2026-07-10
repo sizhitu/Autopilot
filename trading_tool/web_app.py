@@ -31,6 +31,7 @@ from strategy_engine import FujimotoStrategy, generate_sample_data, SignalType, 
 from data_fetcher import DataFetcher
 from backtest import Backtester, result_to_dict as bt_to_dict
 from watchlist import get_watchlist_status
+from nine_turn import calc_nine_turn_display
 import threading
 
 app = FastAPI(title="藤本茂融合策略 Web 工具", version="2.0")
@@ -343,11 +344,15 @@ async def get_quote(req: QuoteRequest):
         strategy = FujimotoStrategy(total_capital=100000)
         result = strategy.analyze(df)
 
+        # 神奇九转（日级+月级，月级形成则展示月级）
+        nine_turn = calc_nine_turn_display(df)
+
         return JSONResponse(content=_to_jsonable({
             "success": True,
             "symbol": req.symbol,
             "data": result_to_dict(result),
             "chart": df_to_chart_json(df, result),
+            "nine_turn": nine_turn,
             "meta": {
                 "rows": len(df),
                 "last_close": round(float(df['close'].iloc[-1]), 2),

@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data_fetcher import DataFetcher
 from strategy_engine import FujimotoStrategy
-from nine_turn import calc_nine_turn
+from nine_turn import calc_nine_turn_display
 
 fetcher = DataFetcher()
 
@@ -78,8 +78,13 @@ class StockStatus:
     signal: str = "观望"          # 操盘建议
     signal_color: str = "gray"    # 信号颜色
     trend: str = ""
-    nine_turn: str = "无"         # 九转状态
-    nine_turn_dir: str = "none"   # down/up/none
+    nine_turn: str = "无"         # 九转状态（日级|月级 合并文本）
+    nine_turn_dir: str = "none"   # down/up/none（主级别方向）
+    nine_turn_level: str = "日"   # 主级别：月/日
+    nine_turn_daily: str = "日·无九转信号"
+    nine_turn_monthly: str = "月·—"
+    nine_turn_daily_state: str = "none"
+    nine_turn_monthly_state: str = "none"
     nine_turn_complete: bool = False
     nine_turn_completing: bool = False
     high_low: str = "—"           # 新高新低状态（最大幅度）
@@ -149,8 +154,8 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
 
         nt_signal = result.signal.value  # 策略原始信号：买入/卖出/持有/加仓/观望
 
-        # 九转状态（先算，供下方分类使用）
-        nt = calc_nine_turn(df)
+        # 九转状态（日级+月级，月级形成则展示月级；供下方分类使用）
+        nt = calc_nine_turn_display(df)
 
         # 藤本茂阶梯抄底：近5日跌幅达买入档位(-15% 第一档)视为买点关注
         buy_ladder_hit = status.change_5d <= -15.0
@@ -161,10 +166,10 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         #   下跌九转临近/完成 或 阶梯买点(暴跌) → 即将上涨关注（橙）
         #   上涨九转临近/完成 或 阶梯卖点(暴涨) → 上涨见顶关注（红）
         #   其余（仍在调整/震荡）                → 下跌观望（灰）
-        if (nt.is_completing or nt.is_complete) and nt.direction == 'down':
+        if (nt['is_completing'] or nt['is_complete']) and nt['direction'] == 'down':
             status.signal = "即将上涨关注"
             status.signal_color = "orange"
-        elif (nt.is_completing or nt.is_complete) and nt.direction == 'up':
+        elif (nt['is_completing'] or nt['is_complete']) and nt['direction'] == 'up':
             status.signal = "上涨见顶关注"
             status.signal_color = "red"
         elif buy_ladder_hit:
@@ -183,11 +188,16 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.signal = "下跌观望"
             status.signal_color = "gray"
 
-        # 九转状态文本
-        status.nine_turn = nt.status
-        status.nine_turn_dir = nt.direction
-        status.nine_turn_complete = nt.is_complete
-        status.nine_turn_completing = nt.is_completing
+        # 九转状态文本（日级与月级并列展示）
+        status.nine_turn = nt['text']
+        status.nine_turn_dir = nt['direction']
+        status.nine_turn_level = nt['level']
+        status.nine_turn_daily = nt['daily_text']
+        status.nine_turn_monthly = nt['monthly_text']
+        status.nine_turn_daily_state = nt['daily_state']
+        status.nine_turn_monthly_state = nt['monthly_state']
+        status.nine_turn_complete = nt['is_complete']
+        status.nine_turn_completing = nt['is_completing']
 
         # 新高新低
         hl_text, hl_type = _detect_high_low(df)
@@ -213,6 +223,11 @@ def _status_to_dict(st: StockStatus) -> dict:
         'trend': st.trend,
         'nine_turn': st.nine_turn,
         'nine_turn_dir': st.nine_turn_dir,
+        'nine_turn_level': st.nine_turn_level,
+        'nine_turn_daily': st.nine_turn_daily,
+        'nine_turn_monthly': st.nine_turn_monthly,
+        'nine_turn_daily_state': st.nine_turn_daily_state,
+        'nine_turn_monthly_state': st.nine_turn_monthly_state,
         'nine_turn_complete': st.nine_turn_complete,
         'nine_turn_completing': st.nine_turn_completing,
         'high_low': st.high_low,

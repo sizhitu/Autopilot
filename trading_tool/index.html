@@ -123,6 +123,9 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .stock-info { display:flex; gap:8px; align-items:center; font-size:12px; }
 .stock-info .symbol { font-weight:700; color:var(--gold); }
 .stock-info .price { font-family:monospace; }
+.nt-level { display:inline-block; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:700; vertical-align:middle; }
+.nt-日 { background:rgba(127,140,141,0.18); color:var(--text-dim); }
+.nt-月 { background:rgba(212,175,55,0.18); color:var(--gold); }
 </style>
 </head>
 <body>
@@ -247,6 +250,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div class="signal-trend" id="trendText">趋势: -</div>
       <div class="signal-main" id="signalText" style="color:var(--text-dim);">-</div>
       <div class="signal-action" id="actionText">输入股票代码或点击"模拟数据"开始</div>
+      <div class="signal-nine" id="nineTurnText">-</div>
       <div class="signal-grid">
         <div><span>仓位变动</span><b id="positionText">-</b></div>
         <div><span>入场价</span><b id="entryText">-</b></div>
@@ -381,7 +385,7 @@ async function fetchQuote(symbol, name, market) {
     info.style.display = 'flex';
     info.innerHTML = `<span class="symbol">${symbol}</span> ${name||''} <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${json.meta.rows}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
 
-    updateResults(json.data, json.meta);
+    updateResults(json.data, json.meta, json.nine_turn);
     lastChartData = json.chart;
     drawChart(json.chart);
     switchView('analysis');      // 确保内部画布视图
@@ -514,10 +518,13 @@ function renderWatchlist(stocks) {
     // 信号颜色
     const sigColors = {'red':'var(--red)','green':'var(--green)','blue':'var(--blue)','orange':'var(--orange)','gray':'var(--text-dim)'};
     const sigColor = sigColors[s.signal_color] || 'var(--text-dim)';
-    // 九转
-    let ntHtml = `<span style="color:var(--text-dim);">${s.nine_turn}</span>`;
-    if (s.nine_turn_complete) ntHtml = `<span style="color:var(--gold);font-weight:700;">${s.nine_turn}</span>`;
-    else if (s.nine_turn_completing) ntHtml = `<span style="color:var(--orange);font-weight:700;">${s.nine_turn}</span>`;
+    // 九转（日级 + 月级 同一列并列展示）
+    const _ntc = st => st === 'complete' ? 'var(--gold)' : (st === 'completing' ? 'var(--orange)' : 'var(--text-dim)');
+    const _dTxt = s.nine_turn_daily || '';
+    const _mTxt = s.nine_turn_monthly || '月–';
+    const ntHtml = `<span style="color:${_ntc(s.nine_turn_daily_state)};font-weight:600;">${_dTxt}</span>` +
+                   ` <span style="color:var(--text-dim);">|</span> ` +
+                   `<span style="color:${_ntc(s.nine_turn_monthly_state)};font-weight:600;">${_mTxt}</span>`;
     // 新高新低
     let hlHtml = '—';
     if (s.high_low !== '—') {
@@ -539,7 +546,7 @@ function renderWatchlist(stocks) {
 }
 
 // === 更新结果 ===
-function updateResults(data, meta) {
+function updateResults(data, meta, nineTurn) {
   const tc = {'多头趋势':'var(--green)','空头趋势':'var(--red)','震荡':'var(--gold)'};
   document.getElementById('trendText').textContent = `趋势: ${data.trend}`;
   document.getElementById('trendText').style.color = tc[data.trend] || 'var(--text)';
@@ -578,6 +585,21 @@ function updateResults(data, meta) {
   document.getElementById('tab-fibonacci').innerHTML = fh;
 
   document.getElementById('chartMeta').textContent = `${meta.rows}根K线 | 收盘 ${meta.last_close}`;
+
+  // 神奇九转（日级 + 月级 同一列并列展示）
+  const ntEl = document.getElementById('nineTurnText');
+  if (ntEl) {
+    if (nineTurn && nineTurn.daily_text) {
+      const _ntc = st => st === 'complete' ? 'var(--gold)' : (st === 'completing' ? 'var(--orange)' : 'var(--text-dim)');
+      const _d = `<span style="color:${_ntc(nineTurn.daily_state)};font-weight:600;">${nineTurn.daily_text}</span>`;
+      const _m = `<span style="color:${_ntc(nineTurn.monthly_state)};font-weight:600;">${nineTurn.monthly_text}</span>`;
+      ntEl.innerHTML = (nineTurn.monthly_text && nineTurn.monthly_text !== '月–')
+        ? `${_d} <span style="color:var(--text-dim);">|</span> ${_m}`
+        : `${_d} <span style="color:var(--text-dim);">|</span> <span style="color:var(--text-dim);">${nineTurn.monthly_text}</span>`;
+    } else {
+      ntEl.innerHTML = `<span style="color:var(--text-dim);">无九转信号</span>`;
+    }
+  }
 }
 
 // === 阶梯计算器 ===
