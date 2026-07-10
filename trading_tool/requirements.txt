@@ -1,0 +1,13 @@
+# 藤本茂融合交易策略 - Web 工具 依赖清单
+# Web 服务运行所需核心依赖（Python 3.10+）
+fastapi>=0.110,<1.0
+uvicorn>=0.27
+pandas>=2.1
+numpy>=1.26
+requests>=2.28
+pydantic>=2.0
+
+# === 可选依赖 ===
+# 仅在使用桌面版 (app.py) 或独立图表生成 (gen_chart.py) 时才需要，
+# 纯 Web 部署可忽略：
+# matplotlib>=3.7

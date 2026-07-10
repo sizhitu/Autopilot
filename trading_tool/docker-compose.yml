@@ -1,0 +1,17 @@
+services:
+  trading-tool:
+    build: .
+    image: trading-tool:latest
+    container_name: trading-tool
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+    # 进程退出自动重启（等价于沙箱里的 supervisord autorestart）
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
