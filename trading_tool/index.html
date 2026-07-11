@@ -128,21 +128,18 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .nt-月 { background:rgba(212,175,55,0.18); color:var(--gold); }
 .stock-info { flex-wrap:wrap; }
 
-/* 自选看板表格：列宽调整——名称换行展示全名(不省略)、数值列紧凑不换行 */
-#watchlistTable { table-layout: fixed; }
-#watchlistTable th, #watchlistTable td { vertical-align: middle; }
-#watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }  /* 名称换行，展示全名 */
-#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3),
-#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4),
-#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { white-space: nowrap; }  /* 现价/日/近5日 数值不换行 */
+/* 自选看板表格：fixed布局+min-width保证各列有足够宽度不堆叠，桌面填满/手机横滑，间距均匀 */
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 760px; }
+#watchlistTable th, #watchlistTable td { white-space: nowrap; vertical-align: middle; }
+#watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }  /* 名称超长可换行，正常情况单行 */
 #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 9%; }   /* 代码 */
-#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 22%; }  /* 名称 */
+#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 18%; }  /* 名称 */
 #watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 9%; }   /* 现价 */
 #watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 8%; }   /* 日 */
 #watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 9%; }   /* 近5日 */
-#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 15%; }  /* 操盘建议 */
+#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 13%; }  /* 操盘建议 */
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 13%; }  /* 神奇九转 */
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 15%; }  /* 新高新低/估值 */
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 21%; }  /* 新高新低/估值 */
 
 /* 移动端：分析页上下堆叠 + 看板紧凑 */
 @media (max-width: 820px) {
