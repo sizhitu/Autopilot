@@ -39,10 +39,14 @@ python3.11 web_app.py
 
 ```bash
 # 1. 安装依赖
-pip install -r requirements.txt
+python3 -m venv autoenv
+source autoenv/bin/activate
+cd trading_tool
+python3 -m pip install -r requirements.txt
+
 
 # 2. 启动（默认 0.0.0.0:8000）
-python web_app.py
+python3 web_app.py
 # 或使用 uvicorn 生产方式（推荐，支持多 worker）：
 uvicorn web_app:app --host 0.0.0.0 --port 8000
 
