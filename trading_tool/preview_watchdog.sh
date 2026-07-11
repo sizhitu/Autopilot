@@ -26,6 +26,10 @@ POLL=30
 
 http_fail_count=0
 last_restart=0
+# 每天定时重启时刻（小时，24h制，空格分隔）——刷新看板缓存/清理限流状态，
+# 对齐两市开盘前：09:00(A股开盘前)、13:00(A股午盘前)、21:00(美股开盘前)、03:00(美股盘中/夜间)
+RESTART_HOURS="9 13 21 3"
+last_sched=""
 
 # 返回 "STATE:PID"；注意 supervisord status 带 ANSI 颜色码（行首 ESC），
 # 故用 awk 全行匹配，不能用 ^ 锚定 grep。
@@ -92,6 +96,18 @@ while true; do
         do_restart
         continue
     fi
+
+    # 定时重启：每天 RESTART_HOURS 各时刻一次（服务健康时主动刷新缓存/状态）
+    cur_h=$(date +%-H)
+    cur_dh=$(date +%Y-%m-%d-%H)
+    for _h in $RESTART_HOURS; do
+        if [ "$cur_h" = "$_h" ] && [ "$last_sched" != "$cur_dh" ]; then
+            echo "[watchdog] $(date) 定时重启(${_h}:00) ${PROGRAM}（刷新缓存/清理限流）"
+            last_sched="$cur_dh"
+            do_restart
+            break
+        fi
+    done
 
     echo "[watchdog] $(date) 状态一致 ok (web_app=$WEB)"
 done
