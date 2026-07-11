@@ -66,6 +66,35 @@ LOW_WINDOWS = [
     (5, '近5天新低'),
 ]
 
+# 持仓定位：压舱石(稳健蓝筹/指数/宽基ETF) / 高赔率(高成长科技) / 周期弹性(有色/原油/矿业) / 卫星仓(投机小仓)
+# 不同定位用不同估值算法（见 ROLE_VAL_CONFIG）。
+STOCK_ROLE = {
+    # 压舱石：稳健蓝筹、宽基/行业ETF、指数
+    '000001': '压舱石', '399300': '压舱石', '600887': '压舱石', 'GOOG': '压舱石',
+    'ICE': '压舱石', 'ETN': '压舱石', 'CF': '压舱石', 'SMH': '压舱石', 'VGT': '压舱石',
+    'JEPI': '压舱石', '516150': '压舱石', '518850': '压舱石',
+    # 高赔率：高成长科技/半导体
+    'NVDA': '高赔率', 'MU': '高赔率', 'AVGO': '高赔率', 'ASM': '高赔率', 'APP': '高赔率',
+    'HIMS': '高赔率', 'GEV': '高赔率', 'LITE': '高赔率', '562500': '高赔率', '513310': '高赔率',
+    # 周期弹性：有色/原油/矿业/周期品
+    '600111': '周期弹性', '601899': '周期弹性', 'FCX': '周期弹性', 'WTI': '周期弹性',
+    '159880': '周期弹性', '560710': '周期弹性', '159985': '周期弹性', 'INTC': '周期弹性',
+    # 卫星仓：投机/高方差小仓
+    'OUST': '卫星仓', 'FLY': '卫星仓', 'SPCX': '卫星仓', 'FIGR': '卫星仓',
+    'ASTS': '卫星仓', 'EUV': '卫星仓',
+}
+DEFAULT_ROLE = '压舱石'
+
+# 各定位的估值算法配置
+#   method='ma'  : 收盘价相对均线偏离度，over/under 为高估/低估阈值（小数）
+#   method='pct' : 收盘价在近 window 日区间的分位数，over/under 为高估/低估分位阈值
+ROLE_VAL_CONFIG = {
+    '压舱石':   {'method': 'ma',  'ma': 250, 'over': 0.08,  'under': -0.08},
+    '高赔率':   {'method': 'ma',  'ma': 250, 'over': 0.35,  'under': -0.35},
+    '周期弹性': {'method': 'ma',  'ma': 120, 'over': 0.18,  'under': -0.18},
+    '卫星仓':   {'method': 'pct', 'window': 250, 'over': 0.80, 'under': 0.20},
+}
+
 
 @dataclass
 class StockStatus:
@@ -90,8 +119,10 @@ class StockStatus:
     nine_turn_completing: bool = False
     high_low: str = "—"           # 新高新低状态（最大幅度）
     high_low_type: str = "none"   # high/low/none
+    role: str = "压舱石"          # 持仓定位：压舱石/高赔率/周期弹性/卫星仓
     valuation: str = "合理"       # 估值状态：低估/高估/合理
     valuation_type: str = "fair"  # under/over/fair
+    valuation_detail: str = ""    # 估值依据（如 "MA250 -8%" / "分位85%"）
     error: str = ""
 
 
@@ -128,41 +159,61 @@ def _detect_high_low(df: pd.DataFrame) -> tuple:
     return ("—", "none")
 
 
-def _calc_valuation(df: pd.DataFrame) -> tuple:
+def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
     """
-    估值状态：基于收盘价相对长期均线的偏离度（均值回归思路）。
-      偏离 ≥ +10% → 高估（明显高出长期均值，注意回撤风险）
-      偏离 ≤ -10% → 低估（明显低于长期均值，关注修复机会）
-      其间       → 合理
-    均线周期自适应：取数据能支持的最长标准周期(250→200→...→20)，
-    数据不足 20 根时退化为全部收盘均值，保证任意数据量都能给出判断。
+    估值状态（按持仓定位差异化算法）。返回 (文本, 类型, 依据明细)。
+
+    - 压舱石  : 收盘价 vs MA250，偏离 ±8% 即判定（稳健股小幅错配即值得关注）
+    - 高赔率  : 收盘价 vs MA250，偏离 ±35% 才判定（成长股常大幅超涨，只标极端）
+    - 周期弹性: 收盘价 vs MA120，偏离 ±18% 判定（捕捉周期峰谷，用中期均线）
+    - 卫星仓  : 收盘价在近250日区间的分位数，≥80% 高估 / ≤20% 低估
+               （投机品均值回归意义弱，改用区间位置）
+
+    均线周期自适应：取 ≤目标周期且数据足够的最长标准周期；数据不足时退化为全部均值。
     """
+    cfg = ROLE_VAL_CONFIG.get(role, ROLE_VAL_CONFIG[DEFAULT_ROLE])
     closes = df['close']
     n = len(df)
     close = float(closes.iloc[-1])
+
+    if cfg['method'] == 'pct':
+        win = closes.tail(min(cfg['window'], n))
+        rank = float((win.values <= close).sum()) / len(win) if len(win) else 0.5
+        if rank >= cfg['over']:
+            return ("高估", "over", f"分位{rank*100:.0f}%")
+        if rank <= cfg['under']:
+            return ("低估", "under", f"分位{rank*100:.0f}%")
+        return ("合理", "fair", f"分位{rank*100:.0f}%")
+
+    # method == 'ma'
+    target = cfg['ma']
     ma = None
+    used = None
     for p in (250, 200, 150, 120, 100, 50, 30, 20):
-        if n >= p:
+        if p <= target and n >= p:
             m = closes.rolling(p).mean().iloc[-1]
             if not pd.isna(m) and float(m) > 0:
                 ma = float(m)
+                used = f"MA{p}"
                 break
     if ma is None:
         ma = float(closes.mean())
+        used = f"均值{n}"
     if ma <= 0:
-        return ("合理", "fair")
+        return ("合理", "fair", "")
     dev = (close - ma) / ma
-    if dev >= 0.10:
-        return ("高估", "over")
-    if dev <= -0.10:
-        return ("低估", "under")
-    return ("合理", "fair")
+    if dev >= cfg['over']:
+        return ("高估", "over", f"{used} {dev*100:+.0f}%")
+    if dev <= cfg['under']:
+        return ("低估", "under", f"{used} {dev*100:+.0f}%")
+    return ("合理", "fair", f"{used} {dev*100:+.0f}%")
 
 
 def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
     """获取单只股票完整状态"""
     market = '美股' if not code.isdigit() else 'A股'
     status = StockStatus(code=code, name=name, market=market)
+    status.role = STOCK_ROLE.get(code, DEFAULT_ROLE)
 
     try:
         df = fetcher.fetch(code, days)
@@ -246,10 +297,11 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         status.high_low = hl_text
         status.high_low_type = hl_type
 
-        # 估值状态（低估/高估/合理，基于长期均线偏离度）
-        val_text, val_type = _calc_valuation(df)
+        # 估值状态（按持仓定位差异化算法：压舱石/高赔率/周期弹性/卫星仓）
+        val_text, val_type, val_detail = _calc_valuation(df, status.role)
         status.valuation = val_text
         status.valuation_type = val_type
+        status.valuation_detail = val_detail
 
     except Exception as e:
         status.error = str(e)[:50]
@@ -280,8 +332,10 @@ def _status_to_dict(st: StockStatus) -> dict:
         'nine_turn_completing': st.nine_turn_completing,
         'high_low': st.high_low,
         'high_low_type': st.high_low_type,
+        'role': st.role,
         'valuation': st.valuation,
         'valuation_type': st.valuation_type,
+        'valuation_detail': st.valuation_detail,
         'error': st.error,
     }
 

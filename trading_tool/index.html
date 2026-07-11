@@ -164,9 +164,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <span><span style="color:var(--orange);font-weight:700;">●</span> 即将上涨关注（下跌九转临近/完成，或近5日暴跌达藤本茂买点）</span>
       <span><span style="color:var(--red);font-weight:700;">●</span> 上涨见顶关注（上涨九转临近/完成，或近5日暴涨达藤本茂卖点）</span>
       <span><span style="color:var(--text-dim);font-weight:700;">●</span> 下跌观望（仍在调整，观望等待）</span>
-      <span><span style="color:var(--green);font-weight:700;">●</span> 低估（收盘价低于长期均线10%以上）</span>
-      <span><span style="color:var(--red);font-weight:700;">●</span> 高估（收盘价高于长期均线10%以上）</span>
-      <span><span style="color:var(--text-dim);font-weight:700;">●</span> 合理（偏离长期均线±10%以内）</span>
+      <span><span style="color:var(--green);font-weight:700;">●</span> 低估 / <span style="color:var(--red);font-weight:700;">●</span> 高估 / <span style="color:var(--text-dim);font-weight:700;">●</span> 合理</span>
+      <span>估值按定位差异化：压舱石(MA250±8%) · 高赔率(MA250±35%) · 周期弹性(MA120±18%) · 卫星仓(区间分位80/20)</span>
     </div>
   </div>
   <div class="card" style="overflow-x:auto;">
@@ -540,7 +539,7 @@ function renderWatchlist(stocks) {
     const ntHtml = `<span style="color:${_ntc(s.nine_turn_daily_state)};font-weight:600;">${_dTxt}</span>` +
                    ` <span style="color:var(--text-dim);">|</span> ` +
                    `<span style="color:${_ntc(s.nine_turn_monthly_state)};font-weight:600;">${_mTxt}</span>`;
-    // 新高新低 + 估值（同列展示）
+    // 新高新低 + 估值（同列展示：估值状态 + 依据 + 定位标签）
     let hlPart = '—';
     if (s.high_low !== '—') {
       const hlColor = s.high_low_type === 'high' ? 'var(--gold)' : 'var(--red)';
@@ -549,7 +548,11 @@ function renderWatchlist(stocks) {
     }
     const _vc = {'低估':'var(--green)','高估':'var(--red)','合理':'var(--text-dim)'};
     const _vColor = _vc[s.valuation] || 'var(--text-dim)';
-    const hlHtml = `${hlPart}<br><span style="color:${_vColor};font-weight:600;">${s.valuation||'合理'}</span>`;
+    const _rc = {'压舱石':'#3498db','高赔率':'var(--orange)','周期弹性':'var(--purple)','卫星仓':'var(--gold)'};
+    const _rColor = _rc[s.role] || 'var(--text-dim)';
+    const hlHtml = `${hlPart}<br><span style="color:${_vColor};font-weight:600;">${s.valuation||'合理'}</span>` +
+      (s.valuation_detail ? ` <span style="color:var(--text-dim);font-size:10px;">${s.valuation_detail}</span>` : '') +
+      ` <span style="color:${_rColor};font-size:9px;border:1px solid currentColor;border-radius:3px;padding:0 3px;white-space:nowrap;">${s.role||''}</span>`;
     html += `<tr onclick="fetchQuote('${s.code}','${s.name}','${s.market}')" style="border-bottom:1px solid var(--border); cursor:pointer;">
       <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${s.code}</td>
       <td style="padding:6px 8px;">${s.name}</td>
