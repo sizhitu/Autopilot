@@ -74,6 +74,7 @@ class StockStatus:
     name: str
     market: str
     price: float = 0
+    change_1d: float = 0          # 当日涨跌幅%（最近一根K线相对前一根）
     change_5d: float = 0          # 近5日涨跌幅%
     signal: str = "观望"          # 操盘建议
     signal_color: str = "gray"    # 信号颜色
@@ -137,6 +138,11 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             return status
 
         status.price = round(float(df['close'].iloc[-1]), 2)
+
+        # 当日涨跌幅（最近一根K线收盘价相对前一根）
+        if len(df) >= 2:
+            prev_close = float(df['close'].iloc[-2])
+            status.change_1d = round((status.price - prev_close) / prev_close * 100, 2)
 
         # 近5日涨跌幅
         lookback_5 = min(5, len(df) - 1)
@@ -217,6 +223,7 @@ def _status_to_dict(st: StockStatus) -> dict:
         'name': st.name,
         'market': st.market,
         'price': st.price,
+        'change_1d': st.change_1d,
         'change_5d': st.change_5d,
         'signal': st.signal,
         'signal_color': st.signal_color,

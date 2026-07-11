@@ -165,6 +165,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <th style="padding:6px 8px;">代码</th>
           <th style="padding:6px 8px;">名称</th>
           <th style="padding:6px 8px; text-align:right;">现价</th>
+          <th style="padding:6px 8px; text-align:right;">日</th>
           <th style="padding:6px 8px; text-align:right;">近5日</th>
           <th style="padding:6px 8px;">操盘建议</th>
           <th style="padding:6px 8px;">神奇九转</th>
@@ -508,10 +509,13 @@ function renderWatchlist(stocks) {
       html += `<tr style="border-bottom:1px solid var(--border);">
         <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${s.code}</td>
         <td style="padding:6px 8px;">${s.name}</td>
-        <td colspan="5" style="padding:6px 8px;color:var(--red);font-size:11px;">${s.error}</td>
+        <td colspan="6" style="padding:6px 8px;color:var(--red);font-size:11px;">${s.error}</td>
       </tr>`;
       continue;
     }
+    // 当日涨跌幅颜色
+    const dayColor = s.change_1d >= 0 ? 'var(--green)' : 'var(--red)';
+    const dayText = (s.change_1d >= 0 ? '+' : '') + s.change_1d + '%';
     // 近5日涨跌颜色
     const chgColor = s.change_5d >= 0 ? 'var(--green)' : 'var(--red)';
     const chgText = (s.change_5d >= 0 ? '+' : '') + s.change_5d + '%';
@@ -536,6 +540,7 @@ function renderWatchlist(stocks) {
       <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${s.code}</td>
       <td style="padding:6px 8px;">${s.name}</td>
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${s.price}</td>
+      <td style="padding:6px 8px;text-align:right;color:${dayColor};font-weight:600;">${dayText}</td>
       <td style="padding:6px 8px;text-align:right;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:6px 8px;"><span style="color:${sigColor};font-weight:600;">${s.signal}</span></td>
       <td style="padding:6px 8px;font-size:11px;">${ntHtml}</td>
