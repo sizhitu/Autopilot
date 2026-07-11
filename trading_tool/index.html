@@ -807,10 +807,22 @@ function drawDrawdownChart(dd) {
 }
 
 // === K线图绘制 ===
+let _chartDrawPending = false;
 function drawChart(chartData) {
+  if (chartData) lastChartData = chartData;
+  chartData = lastChartData;   // 始终用最新数据绘制，防止挂起的旧 rAF 用示例数据覆盖真实行情
+  if (!chartData || !chartData.candles || chartData.candles.length === 0) return;
+  const canvas = document.getElementById('chartCanvas');
+  // 画布尚未布局可见时(offsetWidth=0)，下一帧用最新数据重绘（仅调度一次，避免堆积）
+  if (!canvas || canvas.offsetWidth === 0) {
+    if (!_chartDrawPending) {
+      _chartDrawPending = true;
+      requestAnimationFrame(() => { _chartDrawPending = false; drawChart(lastChartData); });
+    }
+    return;
+  }
   const candles = chartData.candles;
   const n = candles.length;
-  if (n === 0) return;
   let pMin = Infinity, pMax = -Infinity;
   for (const c of candles) { if (c.l < pMin) pMin = c.l; if (c.h > pMax) pMax = c.h; }
   if (chartData.fib_lines) for (const f of chartData.fib_lines) { if (f.price < pMin) pMin = f.price; if (f.price > pMax) pMax = f.price; }
@@ -820,12 +832,6 @@ function drawChart(chartData) {
   const pPad = (pMax - pMin) * 0.05; pMin -= pPad; pMax += pPad;
   let vMax = 0; for (const c of candles) { if (c.v > vMax) vMax = c.v; }
 
-  const canvas = document.getElementById('chartCanvas');
-  // 画布尚未布局可见时(offsetWidth=0)，下一帧重试，避免空白
-  if (canvas.offsetWidth === 0) {
-    requestAnimationFrame(() => drawChart(chartData));
-    return;
-  }
   const ctx = canvas.getContext('2d');
   const W = canvas.offsetWidth; canvas.width = W;
   const H = canvas.height;
