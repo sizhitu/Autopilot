@@ -193,6 +193,8 @@ async def index():
     html_path = os.path.join(os.path.dirname(__file__), "index.html")
     with open(html_path, "r", encoding="utf-8") as f:
         html = f.read()
+    # 注入服务端时间戳，便于用户确认是否加载了最新页面（排查缓存）
+    html = html.replace('__SERVE_TS__', datetime.now().strftime('%m-%d %H:%M:%S'))
     return HTMLResponse(
         content=html,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
