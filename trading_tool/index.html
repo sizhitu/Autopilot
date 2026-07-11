@@ -121,7 +121,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .spinner { width:28px; height:28px; border:3px solid var(--border); border-top-color:var(--blue); border-radius:50%; animation:spin 0.8s linear infinite; margin:0 auto 8px; }
 @keyframes spin { to { transform:rotate(360deg); } }
 .stock-info { display:flex; gap:8px; align-items:center; font-size:12px; }
-.stock-info .symbol { font-weight:700; color:var(--gold); }
+.stock-info .symbol { font-weight:700; color:var(--gold); font-size:20px; }
+.stock-info .stock-name { font-size:17px; font-weight:600; color:var(--text); }
 .stock-info .price { font-family:monospace; }
 .nt-level { display:inline-block; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:700; vertical-align:middle; }
 .nt-日 { background:rgba(127,140,141,0.18); color:var(--text-dim); }
@@ -397,7 +398,7 @@ async function fetchQuote(symbol, name, market) {
   // 立即显示股票头部（代码+名称），避免任何下游异常导致不展示
   const info = document.getElementById('stockInfo');
   info.style.display = 'flex';
-  info.innerHTML = `<span class="symbol">${symbol}</span> ${name||''} <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中...</span>`;
+  info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中...</span>`;
 
   try {
     const res = await fetch('/api/quote', {
@@ -409,7 +410,7 @@ async function fetchQuote(symbol, name, market) {
 
     // 显示股票信息（含收盘价/K线区间）
     info.style.display = 'flex';
-    info.innerHTML = `<span class="symbol">${symbol}</span> ${name||''} <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${json.meta.rows}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
+    info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${json.meta.rows}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
 
     updateResults(json.data, json.meta, json.nine_turn);
     lastChartData = json.chart;
