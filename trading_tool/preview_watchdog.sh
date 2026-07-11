@@ -28,7 +28,7 @@ http_fail_count=0
 last_restart=0
 # 每天定时重启时刻（小时，24h制，空格分隔）——刷新看板缓存/清理限流状态，
 # 对齐两市开盘前：09:00(A股开盘前)、13:00(A股午盘前)、21:00(美股开盘前)、03:00(美股盘中/夜间)
-RESTART_HOURS="9 13 21 3"
+RESTART_HOURS="9 12 21 3"
 last_sched=""
 
 # 返回 "STATE:PID"；注意 supervisord status 带 ANSI 颜色码（行首 ESC），
