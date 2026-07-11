@@ -90,6 +90,8 @@ class StockStatus:
     nine_turn_completing: bool = False
     high_low: str = "—"           # 新高新低状态（最大幅度）
     high_low_type: str = "none"   # high/low/none
+    valuation: str = "合理"       # 估值状态：低估/高估/合理
+    valuation_type: str = "fair"  # under/over/fair
     error: str = ""
 
 
@@ -124,6 +126,37 @@ def _detect_high_low(df: pd.DataFrame) -> tuple:
             return (label, "low")
 
     return ("—", "none")
+
+
+def _calc_valuation(df: pd.DataFrame) -> tuple:
+    """
+    估值状态：基于收盘价相对长期均线的偏离度（均值回归思路）。
+      偏离 ≥ +10% → 高估（明显高出长期均值，注意回撤风险）
+      偏离 ≤ -10% → 低估（明显低于长期均值，关注修复机会）
+      其间       → 合理
+    均线周期自适应：取数据能支持的最长标准周期(250→200→...→20)，
+    数据不足 20 根时退化为全部收盘均值，保证任意数据量都能给出判断。
+    """
+    closes = df['close']
+    n = len(df)
+    close = float(closes.iloc[-1])
+    ma = None
+    for p in (250, 200, 150, 120, 100, 50, 30, 20):
+        if n >= p:
+            m = closes.rolling(p).mean().iloc[-1]
+            if not pd.isna(m) and float(m) > 0:
+                ma = float(m)
+                break
+    if ma is None:
+        ma = float(closes.mean())
+    if ma <= 0:
+        return ("合理", "fair")
+    dev = (close - ma) / ma
+    if dev >= 0.10:
+        return ("高估", "over")
+    if dev <= -0.10:
+        return ("低估", "under")
+    return ("合理", "fair")
 
 
 def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
@@ -213,6 +246,11 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         status.high_low = hl_text
         status.high_low_type = hl_type
 
+        # 估值状态（低估/高估/合理，基于长期均线偏离度）
+        val_text, val_type = _calc_valuation(df)
+        status.valuation = val_text
+        status.valuation_type = val_type
+
     except Exception as e:
         status.error = str(e)[:50]
 
@@ -242,6 +280,8 @@ def _status_to_dict(st: StockStatus) -> dict:
         'nine_turn_completing': st.nine_turn_completing,
         'high_low': st.high_low,
         'high_low_type': st.high_low_type,
+        'valuation': st.valuation,
+        'valuation_type': st.valuation_type,
         'error': st.error,
     }
 
