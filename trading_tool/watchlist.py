@@ -349,14 +349,21 @@ _refresh_lock = threading.Lock()
 
 
 def _compute_watchlist() -> dict:
-    """真正计算全部关注股票状态（较重，应在后台线程执行）"""
+    """真正计算全部关注股票状态（并行抓取提速，应在后台线程执行）"""
     results = []
-    # 串行抓取：对 Yahoo 更友好，避免并发触发限流
-    for i, (code, name) in enumerate(WATCHLIST.items()):
-        if i > 0:
-            time.sleep(0.3)  # 请求间隔，降低被限流概率
-        st = get_stock_status(code, name)
-        results.append(_status_to_dict(st))
+    items = list(WATCHLIST.items())
+    # 并行抓取（控制并发=6，平衡速度与限流风险）；失败的单只记 error 不影响整体
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        fut_to_code = {ex.submit(get_stock_status, code, name): code for code, name in items}
+        for fut in as_completed(fut_to_code):
+            code = fut_to_code[fut]
+            try:
+                st = fut.result()
+            except Exception:
+                st = StockStatus(code=code, name=WATCHLIST.get(code, code),
+                                 market='美股' if not code.isdigit() else 'A股')
+                st.error = "获取失败"
+            results.append(_status_to_dict(st))
 
     # 排序：美股在前，A股在后
     results.sort(key=lambda x: (0 if x['market'] == '美股' else 1, x['code']))

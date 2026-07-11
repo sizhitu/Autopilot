@@ -128,11 +128,25 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .nt-月 { background:rgba(212,175,55,0.18); color:var(--gold); }
 .stock-info { flex-wrap:wrap; }
 
-/* 移动端：分析页左右分栏改为上下堆叠，避免 .right 的 min-width:360px 把 .left（代码/名称/图表）挤到 0 宽 */
+/* 自选看板表格：列宽固定自适应——名称限宽省略、数值列紧凑、单元格不换行省略 */
+#watchlistTable { table-layout: fixed; }
+#watchlistTable th, #watchlistTable td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 9%; }   /* 代码 */
+#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 22%; }  /* 名称 */
+#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 9%; }   /* 现价 */
+#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 8%; }   /* 日 */
+#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 9%; }   /* 近5日 */
+#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 15%; }  /* 操盘建议 */
+#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 13%; }  /* 神奇九转 */
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 15%; }  /* 新高新低/估值 */
+
+/* 移动端：分析页左右分栏改为上下堆叠 + 看板表格紧凑 */
 @media (max-width: 820px) {
   .container { flex-direction: column; }
   .left { flex: none; }
   .right { min-width: 0; max-width: none; flex: none; }
+  #watchlistTable { font-size: 11px !important; }
+  #watchlistTable th, #watchlistTable td { padding: 5px 6px !important; }
 }
 </style>
 </head>
