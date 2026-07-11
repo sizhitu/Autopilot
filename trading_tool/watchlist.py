@@ -137,18 +137,21 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.error = f"数据不足({len(df)}根)"
             return status
 
-        status.price = round(float(df['close'].iloc[-1]), 2)
+        # 用全精度收盘价计算涨跌幅，避免“先四舍五入价格再算”导致
+        # 低价/微小波动股（如 8.626→8.63）涨跌幅符号翻转。
+        last_close = float(df['close'].iloc[-1])
+        status.price = round(last_close, 2)
 
-        # 当日涨跌幅（最近一根K线收盘价相对前一根）
+        # 当日涨跌幅（昨收口径：今收/昨收 - 1，即最近一根K线收盘价相对前一根）
         if len(df) >= 2:
             prev_close = float(df['close'].iloc[-2])
-            status.change_1d = round((status.price - prev_close) / prev_close * 100, 2)
+            status.change_1d = round((last_close - prev_close) / prev_close * 100, 2)
 
-        # 近5日涨跌幅
+        # 近5日涨跌幅（同样用全精度）
         lookback_5 = min(5, len(df) - 1)
         if lookback_5 > 0:
-            prev_5 = df['close'].iloc[-1 - lookback_5]
-            status.change_5d = round((status.price - prev_5) / prev_5 * 100, 2)
+            prev_5 = float(df['close'].iloc[-1 - lookback_5])
+            status.change_5d = round((last_close - prev_5) / prev_5 * 100, 2)
 
         # 操盘建议（九转为主、策略信号为辅的分类建议）
         #   下跌九转临近/完成（1-9 买点）→ 即将上涨关注（橙）
