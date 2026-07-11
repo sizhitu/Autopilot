@@ -359,7 +359,7 @@ async def get_quote(req: QuoteRequest):
                 "start_date": df['date'].iloc[0].strftime('%Y-%m-%d') if 'date' in df.columns else "",
                 "end_date": df['date'].iloc[-1].strftime('%Y-%m-%d') if 'date' in df.columns else "",
             }
-        }))
+        }), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
     except Exception as e:
         raise HTTPException(400, f"获取数据失败: {str(e)}")
 
@@ -422,7 +422,7 @@ async def get_watchlist():
     """获取所有关注股票状态看板"""
     try:
         data = get_watchlist_status()
-        return JSONResponse(content=_to_jsonable(data))
+        return JSONResponse(content=_to_jsonable(data), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
     except Exception as e:
         raise HTTPException(500, f"获取自选列表失败: {str(e)}")
 

@@ -844,6 +844,17 @@ function drawChart(chartData) {
     ctx.fillText((pMax - (pMax - pMin) * i / 4).toFixed(2), W - padR + 3, y + 3);
   }
 
+  // 现价参考线：在最新收盘价处画虚线+标签，让当前价在图上一目了然
+  const lastClose = candles[n - 1].c;
+  const ly = p2y(lastClose);
+  if (ly >= padT && ly <= padT + plotH) {
+    ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(padL, ly); ctx.lineTo(W - padR, ly); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 10px monospace';
+    ctx.fillText(lastClose.toFixed(2), W - padR + 3, ly + 3);
+  }
+
   for (let i = 0; i < n; i++) {
     const c = candles[i]; const x = i2x(i);
     const color = c.c >= c.o ? '#2ecc71' : '#e74c3c';
