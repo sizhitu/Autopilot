@@ -398,9 +398,9 @@ async function fetchQuote(symbol, name, market) {
 
     updateResults(json.data, json.meta, json.nine_turn);
     lastChartData = json.chart;
-    drawChart(json.chart);
-    switchView('analysis');      // 确保内部画布视图
+    switchView('analysis');      // 先切换视图，确保画布可见
     switchMainTab('analysis');   // 跳转到分析工具主页面
+    drawChart(json.chart);       // 画布可见��再绘制（避免 offsetWidth=0 导致空白）
   } catch(e) {
     document.getElementById('chartMeta').textContent = '错误: ' + e.message;
   }
@@ -426,8 +426,8 @@ async function runAnalysis() {
     if (!json.success) throw new Error(json.detail || '分析失败');
     updateResults(json.data, json.meta);
     lastChartData = json.chart;
-    drawChart(json.chart);
     switchView('analysis');
+    drawChart(json.chart);
   } catch(e) {
     document.getElementById('chartMeta').textContent = '错误: ' + e.message;
   }
@@ -821,6 +821,11 @@ function drawChart(chartData) {
   let vMax = 0; for (const c of candles) { if (c.v > vMax) vMax = c.v; }
 
   const canvas = document.getElementById('chartCanvas');
+  // 画布尚未布局可见时(offsetWidth=0)，下一帧重试，避免空白
+  if (canvas.offsetWidth === 0) {
+    requestAnimationFrame(() => drawChart(chartData));
+    return;
+  }
   const ctx = canvas.getContext('2d');
   const W = canvas.offsetWidth; canvas.width = W;
   const H = canvas.height;
@@ -922,6 +927,14 @@ function drawChart(chartData) {
     rx.fillStyle = '#9b59b6'; rx.fillText('RSI(14)', padL + 4, 10);
   }
 }
+
+// 窗口尺寸变化/手机转屏时重绘 K 线，避免画布缩放后失真或空白
+let _resizeTimer = null;
+window.addEventListener('resize', () => {
+  if (!lastChartData) return;
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => drawChart(lastChartData), 150);
+});
 
 // === 初始化 ===
 async function loadLadderTable() {
