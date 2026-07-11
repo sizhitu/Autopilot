@@ -126,6 +126,14 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .nt-level { display:inline-block; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:700; vertical-align:middle; }
 .nt-日 { background:rgba(127,140,141,0.18); color:var(--text-dim); }
 .nt-月 { background:rgba(212,175,55,0.18); color:var(--gold); }
+.stock-info { flex-wrap:wrap; }
+
+/* 移动端：分析页左右分栏改为上下堆叠，避免 .right 的 min-width:360px 把 .left（代码/名称/图表）挤到 0 宽 */
+@media (max-width: 820px) {
+  .container { flex-direction: column; }
+  .left { flex: none; }
+  .right { min-width: 0; max-width: none; flex: none; }
+}
 </style>
 </head>
 <body>
