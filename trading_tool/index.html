@@ -130,17 +130,37 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .stock-info { flex-wrap:wrap; }
 
 /* 自选看板表格：fixed布局+min-width保证各列有足够宽度不堆叠，桌面填满/手机横滑，间距均匀 */
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 760px; }
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 720px; }
 #watchlistTable th, #watchlistTable td { white-space: nowrap; vertical-align: middle; }
 #watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }  /* 名称超长可换行，正常情况单行 */
 #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 9%; }   /* 代码 */
-#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 18%; }  /* 名称 */
-#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 9%; }   /* 现价 */
-#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 8%; }   /* 日 */
-#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 9%; }   /* 近5日 */
-#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 13%; }  /* 操盘建议 */
-#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 13%; }  /* 神奇九转 */
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 21%; }  /* 新高新低/估值 */
+#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 21%; }  /* 名称 */
+#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 10%; }  /* 现价 */
+#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 9%; }   /* 日 */
+#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 10%; }  /* 近5日 */
+#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 21%; }  /* 操盘建议 */
+#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 20%; }  /* 神奇九转 */
+
+/* 详情页：新高/新低/估值 卡片 */
+.hl-row { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); }
+.hl-row:last-child { border-bottom:none; }
+.hl-label { font-size:11px; color:var(--text-dim); width:48px; flex-shrink:0; }
+.hl-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:700; }
+.hl-badge.high { background:rgba(241,196,15,0.18); color:var(--gold); }
+.hl-badge.low { background:rgba(231,76,60,0.18); color:var(--red); }
+.hl-badge.none { background:rgba(136,136,136,0.15); color:var(--text-dim); }
+.hl-badge.under { background:rgba(46,204,113,0.15); color:var(--green); }
+.hl-badge.over { background:rgba(231,76,60,0.15); color:var(--red); }
+.hl-badge.fair { background:rgba(136,136,136,0.15); color:var(--text-dim); }
+.hl-detail { font-size:10px; color:var(--text-dim); margin-left:6px; }
+.hl-role { font-size:9px; border:1px solid currentColor; border-radius:3px; padding:0 4px; white-space:nowrap; }
+
+/* 详情页：神奇九转 详解 */
+.nt-block { font-size:11px; line-height:1.6; }
+.nt-concept { color:var(--text-dim); background:var(--bg); border-radius:6px; padding:7px 9px; margin-bottom:8px; font-size:10px; }
+.nt-current { font-size:12px; font-weight:700; margin-bottom:6px; }
+.nt-meaning { color:var(--text); background:var(--bg); border-left:3px solid var(--blue); border-radius:0 6px 6px 0; padding:6px 9px; font-size:10px; line-height:1.6; }
+.nt-tip { color:var(--text-dim); font-size:10px; margin-top:6px; }
 
 /* 移动端：分析页上下堆叠 + 看板紧凑 */
 @media (max-width: 820px) {
@@ -180,8 +200,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <span><span style="color:var(--orange);font-weight:700;">●</span> 即将上涨关注（下跌九转临近/完成，或近5日暴跌达藤本茂买点）</span>
       <span><span style="color:var(--red);font-weight:700;">●</span> 上涨见顶关注（上涨九转临近/完成，或近5日暴涨达藤本茂卖点）</span>
       <span><span style="color:var(--text-dim);font-weight:700;">●</span> 下跌观望（仍在调整，观望等待）</span>
-      <span><span style="color:var(--green);font-weight:700;">●</span> 低估 / <span style="color:var(--red);font-weight:700;">●</span> 高估 / <span style="color:var(--text-dim);font-weight:700;">●</span> 合理</span>
-      <span>估值按定位差异化：压舱石(MA250±8%) · 高赔率(MA250±35%) · 周期弹性(MA120±18%) · 卫星仓(区间分位80/20)</span>
+      <span>新高/新低、估值与持仓定位已移至个股详情页展示</span>
     </div>
   </div>
   <div class="card" style="overflow-x:auto;">
@@ -195,7 +214,6 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <th style="padding:6px 8px; text-align:right;">近5日</th>
           <th style="padding:6px 8px;">操盘建议</th>
           <th style="padding:6px 8px;">神奇九转</th>
-          <th style="padding:6px 8px;">新高新低/估值</th>
         </tr>
       </thead>
       <tbody id="watchlistBody"></tbody>
@@ -205,7 +223,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div>加载中...</div>
     </div>
   </div>
-  <div class="footer-note">点击任意一行可加载该股票详细分析 · 操盘建议基于三层策略 · 九转基于TD Sequential逻辑 <span style="color:var(--text-dim);">· 页面时间: __SERVE_TS__</span></div>
+  <div class="footer-note">点击任意一行可加载该股票详细分析（含新高/新低/估值与神奇九转详解）· 操盘建议基于三层策略 · 九转基于TD Sequential逻辑 <span style="color:var(--text-dim);">· 页面时间: __SERVE_TS__</span></div>
 </div>
 
 <!-- 分析模式视图 -->
@@ -285,6 +303,20 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
         <div><span>目标价</span><b id="targetText" style="color:var(--orange);">-</b></div>
       </div>
       <div id="riskWarning"></div>
+    </div>
+
+    <!-- 神奇九转 详解 -->
+    <div class="card" id="nineTurnDetailCard">
+      <div class="card-title">神奇九转 · 详解</div>
+      <div id="nineTurnDetailBody" class="nt-block">
+        <div style="color:var(--text-dim);text-align:center;padding:10px;">等待分析</div>
+      </div>
+    </div>
+
+    <!-- 新高 / 新低 / 估值 -->
+    <div class="card" id="hlValCard" style="display:none;">
+      <div class="card-title">新高 / 新低 / 估值</div>
+      <div id="hlValBody"></div>
     </div>
 
     <!-- 三层一致性 -->
@@ -413,6 +445,8 @@ async function fetchQuote(symbol, name, market) {
     info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${json.meta.rows}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
 
     updateResults(json.data, json.meta, json.nine_turn);
+    updateNineTurnDetail(json.nine_turn);
+    updateHlVal(json.high_low, json.valuation);
     lastChartData = json.chart;
     switchView('analysis');      // 先切换视图，确保画布可见
     switchMainTab('analysis');   // 跳转到分析工具主页面
@@ -441,6 +475,8 @@ async function runAnalysis() {
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '分析失败');
     updateResults(json.data, json.meta);
+    updateNineTurnDetail(json.nine_turn);
+    updateHlVal(json.high_low, json.valuation);
     lastChartData = json.chart;
     switchView('analysis');
     drawChart(json.chart);
@@ -535,7 +571,7 @@ function renderWatchlist(stocks) {
       html += `<tr style="border-bottom:1px solid var(--border);">
         <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${s.code}</td>
         <td style="padding:6px 8px;">${s.name}</td>
-        <td colspan="6" style="padding:6px 8px;color:var(--red);font-size:11px;">${s.error}</td>
+        <td colspan="5" style="padding:6px 8px;color:var(--red);font-size:11px;">${s.error}</td>
       </tr>`;
       continue;
     }
@@ -555,20 +591,6 @@ function renderWatchlist(stocks) {
     const ntHtml = `<span style="color:${_ntc(s.nine_turn_daily_state)};font-weight:600;">${_dTxt}</span>` +
                    ` <span style="color:var(--text-dim);">|</span> ` +
                    `<span style="color:${_ntc(s.nine_turn_monthly_state)};font-weight:600;">${_mTxt}</span>`;
-    // 新高新低 + 估值（同列展示：估值状态 + 依据 + 定位标签）
-    let hlPart = '—';
-    if (s.high_low !== '—') {
-      const hlColor = s.high_low_type === 'high' ? 'var(--gold)' : 'var(--red)';
-      const hlIcon = s.high_low_type === 'high' ? '▲' : '▼';
-      hlPart = `<span style="color:${hlColor};font-weight:600;">${hlIcon} ${s.high_low}</span>`;
-    }
-    const _vc = {'低估':'var(--green)','高估':'var(--red)','合理':'var(--text-dim)'};
-    const _vColor = _vc[s.valuation] || 'var(--text-dim)';
-    const _rc = {'压舱石':'#3498db','高赔率':'var(--orange)','周期弹性':'var(--purple)','卫星仓':'var(--gold)'};
-    const _rColor = _rc[s.role] || 'var(--text-dim)';
-    const hlHtml = `${hlPart}<br><span style="color:${_vColor};font-weight:600;">${s.valuation||'合理'}</span>` +
-      (s.valuation_detail ? ` <span style="color:var(--text-dim);font-size:10px;">${s.valuation_detail}</span>` : '') +
-      ` <span style="color:${_rColor};font-size:9px;border:1px solid currentColor;border-radius:3px;padding:0 3px;white-space:nowrap;">${s.role||''}</span>`;
     html += `<tr onclick="fetchQuote('${s.code}','${s.name}','${s.market}')" style="border-bottom:1px solid var(--border); cursor:pointer;">
       <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${s.code}</td>
       <td style="padding:6px 8px;">${s.name}</td>
@@ -577,7 +599,6 @@ function renderWatchlist(stocks) {
       <td style="padding:6px 8px;text-align:right;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:6px 8px;"><span style="color:${sigColor};font-weight:600;">${s.signal}</span></td>
       <td style="padding:6px 8px;font-size:11px;">${ntHtml}</td>
-      <td style="padding:6px 8px;font-size:11px;">${hlHtml}</td>
     </tr>`;
   }
   body.innerHTML = html;
@@ -638,6 +659,85 @@ function updateResults(data, meta, nineTurn) {
       ntEl.innerHTML = `<span style="color:var(--text-dim);">无九转信号</span>`;
     }
   }
+}
+
+// === 神奇九转 详解 ===
+function updateNineTurnDetail(nt) {
+  const el = document.getElementById('nineTurnDetailBody');
+  if (!nt || (!nt.daily_text && !nt.monthly_text)) {
+    el.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:10px;">当前无九转信号，趋势尚未形成可识别的连续计数结构</div>`;
+    return;
+  }
+  const _ntc = st => st === 'complete' ? 'var(--gold)' : (st === 'completing' ? 'var(--orange)' : 'var(--text-dim)');
+  const monthlyActive = nt.monthly_state && nt.monthly_state !== 'none';
+  const primaryText = monthlyActive
+    ? `${nt.monthly_text}（月级）`
+    : `${nt.daily_text}（日级）`;
+  const primaryColor = _ntc(monthlyActive ? nt.monthly_state : nt.daily_state);
+
+  let meaning = '';
+  if (nt.direction === 'down') {
+    meaning = `下跌九转：连续出现“当日收盘价 < 前第 4 根 K 线收盘价”的 K 线，计数逐日 +1，当前处于第 <b>${nt.count}</b> 天。` +
+      (nt.is_complete
+        ? ` 已<b style="color:var(--gold);">完成（第 9 天 = 买点）</b>：下跌动能衰竭，往往对应阶段性底部，可结合藤本茂阶梯“恐慌中接筹码”。`
+        : nt.is_completing
+          ? ` 已<b style="color:var(--orange);">临近完成（7-8 天）</b>：下跌动能开始衰减，是潜在的左侧买点区域，建议密切跟踪第 9 天确认。`
+          : ` 计数进行中：下跌结构尚未走完，暂不宜急于抄底，继续观望等待计数推进。`);
+  } else if (nt.direction === 'up') {
+    meaning = `上涨九转：连续出现“当日收盘价 > 前第 4 根 K 线收盘价”的 K 线，计数逐日 +1，当前处于第 <b>${nt.count}</b> 天。` +
+      (nt.is_complete
+        ? ` 已<b style="color:var(--gold);">完成（第 9 天 = 卖点）</b>：上涨动能枯竭，往往对应阶段性顶部，可结合藤本茂阶梯“让利润奔跑后逐步兑现”。`
+        : nt.is_completing
+          ? ` 已<b style="color:var(--orange);">临近完成（7-8 天）</b>：上涨动能开始衰减，是潜在的左侧卖点区域，建议密切跟踪第 9 天确认。`
+          : ` 计数进行中：上涨结构尚未走完，趋势仍可能延续，可继续持有但提高风险意识。`);
+  } else {
+    meaning = `当前无有效的九转计数（方向震荡或平盘重置），趋势结构不明确，建议结合三层策略与均线综合判断。`;
+  }
+
+  const concept = `神奇九转（TD Sequential 简化版）：以“当日收盘价 vs 前第 4 根 K 线收盘价”的连续比较进行 1-9 计数。下跌计数第 9 天为潜在买点，上涨计数第 9 天为潜在卖点；第 7-8 天视为“即将完成”的预警区。`;
+  const tip = `月级九转由月线重采样计算，代表更大级别趋势；当日级与月级同向时信号共振，参考价值更高。`;
+
+  el.innerHTML =
+    `<div class="nt-concept">${concept}</div>` +
+    `<div class="nt-current" style="color:${primaryColor};">当前状态：${primaryText}</div>` +
+    `<div class="nt-meaning">${meaning}</div>` +
+    `<div class="nt-tip">${tip}</div>`;
+}
+
+// === 新高 / 新低 / 估值 卡片 ===
+function _roleColor(role) {
+  const map = {'压舱石':'#3498db','高赔率':'var(--orange)','周期弹性':'var(--purple)','卫星仓':'var(--gold)'};
+  return map[role] || 'var(--text-dim)';
+}
+
+function updateHlVal(highLow, valuation) {
+  const card = document.getElementById('hlValCard');
+  const body = document.getElementById('hlValBody');
+  if (!highLow || !valuation) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+
+  // 新高 / 新低
+  const hlType = highLow.type || 'none';
+  const hlCls = hlType === 'high' ? 'high' : (hlType === 'low' ? 'low' : 'none');
+  const hlIcon = hlType === 'high' ? '▲' : (hlType === 'low' ? '▼' : '');
+  const hlText = (hlType === 'none') ? '—' : `${hlIcon} ${highLow.text}`;
+  const hlHtml = `<div class="hl-row"><span class="hl-label">高低</span>` +
+    `<span class="hl-badge ${hlCls}">${hlText}</span>` +
+    (hlType !== 'none'
+      ? `<span class="hl-detail">创出${hlType === 'high' ? '新高' : '新低'}</span>`
+      : `<span class="hl-detail">未创近期高低</span>`) +
+    `</div>`;
+
+  // 估值
+  const vType = valuation.type || 'fair';
+  const vCls = vType === 'under' ? 'under' : (vType === 'over' ? 'over' : 'fair');
+  const vHtml = `<div class="hl-row"><span class="hl-label">估值</span>` +
+    `<span class="hl-badge ${vCls}">${valuation.text || '合理'}</span>` +
+    (valuation.detail ? `<span class="hl-detail">${valuation.detail}</span>` : '') +
+    (valuation.role ? `<span class="hl-role" style="color:${_roleColor(valuation.role)};">${valuation.role}</span>` : '') +
+    `</div>`;
+
+  body.innerHTML = hlHtml + vHtml;
 }
 
 // === 阶梯计算器 ===

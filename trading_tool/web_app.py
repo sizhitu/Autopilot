@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from strategy_engine import FujimotoStrategy, generate_sample_data, SignalType, TrendType
 from data_fetcher import DataFetcher
 from backtest import Backtester, result_to_dict as bt_to_dict
-from watchlist import get_watchlist_status
+from watchlist import get_watchlist_status, _detect_high_low, _calc_valuation, STOCK_ROLE, DEFAULT_ROLE
 from nine_turn import calc_nine_turn_display
 import threading
 
@@ -183,6 +183,33 @@ def df_to_chart_json(df: pd.DataFrame, result, show_last=120) -> dict:
     }
 
 
+def _extra_metrics(df: pd.DataFrame, symbol: str = None) -> dict:
+    """计算新高/新低 与 估值状态，供股票详情页（分析页）展示。
+
+    - high_low: {text, type} 新高/新低状态文本与方向(high/low/none)
+    - valuation: {text, type, detail, role} 估值状态、依据明细、持仓定位
+    该信息原仅在自选看板展示，现下沉到个股详情页，看板侧只保留紧凑信号。
+    """
+    role = STOCK_ROLE.get(symbol, DEFAULT_ROLE) if symbol else DEFAULT_ROLE
+    try:
+        hl_text, hl_type = _detect_high_low(df)
+    except Exception:
+        hl_text, hl_type = "—", "none"
+    try:
+        val_text, val_type, val_detail = _calc_valuation(df, role)
+    except Exception:
+        val_text, val_type, val_detail = "合理", "fair", ""
+    return {
+        "high_low": {"text": hl_text, "type": hl_type},
+        "valuation": {
+            "text": val_text,
+            "type": val_type,
+            "detail": val_detail,
+            "role": role,
+        },
+    }
+
+
 # ================================================================
 #  API 路由
 # ================================================================
@@ -248,10 +275,19 @@ async def analyze_csv(
         strategy = FujimotoStrategy(total_capital=capital, entry_price=entry)
         result = strategy.analyze(df, current_position_pct=position / 100.0)
 
+        # 神奇九转（日级+月级）
+        nine_turn = calc_nine_turn_display(df)
+
+        # 新高/新低 + 估值（原自选看板列，现下沉到个股详情页展示）
+        extra = _extra_metrics(df)
+
         response_data = {
             "success": True,
             "data": result_to_dict(result),
             "chart": df_to_chart_json(df, result),
+            "nine_turn": nine_turn,
+            "high_low": extra["high_low"],
+            "valuation": extra["valuation"],
             "meta": {
                 "rows": len(df),
                 "last_close": round(float(df['close'].iloc[-1]), 2),
@@ -349,12 +385,17 @@ async def get_quote(req: QuoteRequest):
         # 神奇九转（日级+月级，月级形成则展示月级）
         nine_turn = calc_nine_turn_display(df)
 
+        # 新高/新低 + 估值（原自选看板列，现下沉到个股详情页展示）
+        extra = _extra_metrics(df, req.symbol)
+
         return JSONResponse(content=_to_jsonable({
             "success": True,
             "symbol": req.symbol,
             "data": result_to_dict(result),
             "chart": df_to_chart_json(df, result),
             "nine_turn": nine_turn,
+            "high_low": extra["high_low"],
+            "valuation": extra["valuation"],
             "meta": {
                 "rows": len(df),
                 "last_close": round(float(df['close'].iloc[-1]), 2),
