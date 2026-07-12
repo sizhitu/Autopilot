@@ -1,0 +1,52 @@
+# =============================================================
+# 自动部署到 Cloudflare Containers
+# 触发：推送到 main 自动上线；也可在 Actions 页面手动 Run workflow。
+#
+# 前置（仓库 Settings → Secrets and variables → Actions → New repository secret）：
+#   CLOUDFLARE_API_TOKEN  Cloudflare API Token，需包含以下权限：
+#                         - Account > Cloudflare Containers : Edit
+#                         - Account > Workers Scripts       : Edit
+#                         - Account > Workers Routes        : Edit
+#                         （自定义域名 timebricks.bid 由 wrangler 自动接入）
+#   CLOUDFLARE_ACCOUNT_ID Cloudflare 账号 ID（控制台右下角 "Account ID"）
+#
+# 注意：本机推送后，GitHub 托管的 runner 自带 Docker，
+#       会在 CI 内本地构建镜像并推送到 Cloudflare Registry，无需你本机有 Docker。
+# =============================================================
+
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安装 Worker 侧依赖（@cloudflare/containers）
+        working-directory: trading_tool
+        run: npm install
+
+      - name: 安装 wrangler（Containers 需 4.x）
+        run: npm install -g wrangler@4
+
+      - name: 部署到 Cloudflare Containers
+        working-directory: trading_tool
+        run: wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
