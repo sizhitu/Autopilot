@@ -162,6 +162,9 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .nt-block { font-size:11px; line-height:1.6; }
 .nt-concept { color:var(--text-dim); background:var(--bg); border-radius:6px; padding:7px 9px; margin-bottom:8px; font-size:10px; }
 .nt-current { font-size:12px; font-weight:700; margin-bottom:6px; }
+.nt-levels { display:flex; flex-direction:column; gap:4px; margin:0 0 8px; }
+.nt-lv-row { display:flex; gap:8px; align-items:baseline; font-size:12px; }
+.nt-lv-name { display:inline-block; min-width:32px; color:var(--text-dim); font-weight:700; }
 .nt-meaning { color:var(--text); background:var(--bg); border-left:3px solid var(--blue); border-radius:0 6px 6px 0; padding:6px 9px; font-size:10px; line-height:1.6; }
 .nt-tip { color:var(--text-dim); font-size:10px; margin-top:6px; }
 
@@ -255,7 +258,6 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       </div>
       <div id="stockInfo" class="stock-info" style="margin-top:6px; display:none;"></div>
       <div id="industryTag" class="industry-tag" style="display:none;"></div>
-      <div id="businessSummary" class="business-summary" style="display:none;"></div>
     </div>
 
     <!-- 图表区 -->
@@ -319,6 +321,9 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
         <div style="color:var(--text-dim);text-align:center;padding:10px;">等待分析</div>
       </div>
     </div>
+
+    <!-- 公司主营业务（位于九转详解下方） -->
+    <div id="businessSummary" class="business-summary" style="display:none;"></div>
 
     <!-- 新高 / 新低 / 估值 -->
     <div class="card" id="hlValCard" style="display:none;">
@@ -728,43 +733,62 @@ function updateResults(data, meta, nineTurn) {
 // === 神奇九转 详解 ===
 function updateNineTurnDetail(nt) {
   const el = document.getElementById('nineTurnDetailBody');
-  if (!nt || (!nt.daily_text && !nt.monthly_text)) {
+  const hasDaily = nt && nt.daily_direction && nt.daily_direction !== 'none' && nt.daily_count > 0;
+  const hasMonthly = nt && nt.monthly_direction && nt.monthly_direction !== 'none' && nt.monthly_count > 0;
+  if (!hasDaily && !hasMonthly) {
     el.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:10px;">当前无九转信号，趋势尚未形成可识别的连续计数结构</div>`;
     return;
   }
-  const _ntc = st => st === 'complete' ? 'var(--gold)' : (st === 'completing' ? 'var(--orange)' : 'var(--text-dim)');
-  const monthlyActive = nt.monthly_state && nt.monthly_state !== 'none';
-  const primaryText = monthlyActive
-    ? `${nt.monthly_text}（月级）`
-    : `${nt.daily_text}（日级）`;
-  const primaryColor = _ntc(monthlyActive ? nt.monthly_state : nt.daily_state);
 
-  let meaning = '';
-  if (nt.direction === 'down') {
-    meaning = `下跌九转：连续出现“当日收盘价 < 前第 4 根 K 线收盘价”的 K 线，计数逐日 +1，当前处于第 <b>${nt.count}</b> 天。` +
-      (nt.is_complete
-        ? ` 已<b style="color:var(--gold);">完成（第 9 天 = 买点）</b>：下跌动能衰竭，往往对应阶段性底部，可结合藤本茂阶梯“恐慌中接筹码”。`
-        : nt.is_completing
-          ? ` 已<b style="color:var(--orange);">临近完成（7-8 天）</b>：下跌动能开始衰减，是潜在的左侧买点区域，建议密切跟踪第 9 天确认。`
-          : ` 计数进行中：下跌结构尚未走完，暂不宜急于抄底，继续观望等待计数推进。`);
-  } else if (nt.direction === 'up') {
-    meaning = `上涨九转：连续出现“当日收盘价 > 前第 4 根 K 线收盘价”的 K 线，计数逐日 +1，当前处于第 <b>${nt.count}</b> 天。` +
-      (nt.is_complete
-        ? ` 已<b style="color:var(--gold);">完成（第 9 天 = 卖点）</b>：上涨动能枯竭，往往对应阶段性顶部，可结合藤本茂阶梯“让利润奔跑后逐步兑现”。`
-        : nt.is_completing
-          ? ` 已<b style="color:var(--orange);">临近完成（7-8 天）</b>：上涨动能开始衰减，是潜在的左侧卖点区域，建议密切跟踪第 9 天确认。`
-          : ` 计数进行中：上涨结构尚未走完，趋势仍可能延续，可继续持有但提高风险意识。`);
-  } else {
-    meaning = `当前无有效的九转计数（方向震荡或平盘重置），趋势结构不明确，建议结合三层策略与均线综合判断。`;
-  }
+  // 配色：完成=金，临近=橙，进行中=常规
+  const _ntc = st => st === 'complete' ? 'var(--gold)' : (st === 'completing' ? 'var(--orange)' : 'var(--text)');
 
-  const concept = `神奇九转（TD Sequential 简化版）：以“当日收盘价 vs 前第 4 根 K 线收盘价”的连续比较进行 1-9 计数。下跌计数第 9 天为潜在买点，上涨计数第 9 天为潜在卖点；第 7-8 天视为“即将完成”的预警区。`;
-  const tip = `月级九转由月线重采样计算，代表更大级别趋势；当日级与月级同向时信号共振，参考价值更高。`;
+  // 单级别状态文案（unit 用"天"/"月"，保证日级/月级单位不串）
+  const _statusText = (unit, dir, count, isC, isComp) => {
+    if (dir === 'none' || !count) return `无${unit}级信号`;
+    const d = dir === 'up' ? '上涨' : '下跌';
+    let s = `${d}第${count}${unit}`;
+    if (isC) s += `（${dir === 'up' ? '卖点' : '买点'}）`;
+    else if (isComp) s += '（即将完成）';
+    return s;
+  };
+
+  // 单级别详解（unit 用"天"/"月"，修复"月级却写第9天"的串单位 bug）
+  const _meaning = (unit, dir, count, isC, isComp) => {
+    if (dir === 'down') {
+      let m = `下跌九转：连续出现“当日收盘价 < 前第 4 根 K 线收盘价”的 K 线，计数逐${unit} +1，当前处于第 <b>${count}</b> ${unit}。`;
+      if (isC) m += ` 已<b style="color:var(--gold);">完成（第 9 ${unit} = 买点）</b>：下跌动能衰竭，往往对应阶段性底部，可结合藤本茂阶梯“恐慌中接筹码”。`;
+      else if (isComp) m += ` 已<b style="color:var(--orange);">临近完成（7-8 ${unit}）</b>：下跌动能开始衰减，是潜在的左侧买点区域，建议密切跟踪第 9 ${unit} 确认。`;
+      else m += ` 计数进行中：下跌结构尚未走完，暂不宜急于抄底，继续观望等待计数推进。`;
+      return m;
+    } else if (dir === 'up') {
+      let m = `上涨九转：连续出现“当日收盘价 > 前第 4 根 K 线收盘价”的 K 线，计数逐${unit} +1，当前处于第 <b>${count}</b> ${unit}。`;
+      if (isC) m += ` 已<b style="color:var(--gold);">完成（第 9 ${unit} = 卖点）</b>：上涨动能枯竭，往往对应阶段性顶部，可结合藤本茂阶梯“让利润奔跑后逐步兑现”。`;
+      else if (isComp) m += ` 已<b style="color:var(--orange);">临近完成（7-8 ${unit}）</b>：上涨动能开始衰减，是潜在的左侧卖点区域，建议密切跟踪第 9 ${unit} 确认。`;
+      else m += ` 计数进行中：上涨结构尚未走完，趋势仍可能延续，可继续持有但提高风险意识。`;
+      return m;
+    }
+    return '当前无有效九转计数。';
+  };
+
+  // 当前状态：日级 + 月级 并列（有数字才展示）
+  let statusRows = '';
+  if (hasDaily) statusRows += `<div class="nt-lv-row"><span class="nt-lv-name">日级</span><span style="color:${_ntc(nt.daily_state)};">${_statusText('天', nt.daily_direction, nt.daily_count, nt.daily_is_complete, nt.daily_is_completing)}</span></div>`;
+  if (hasMonthly) statusRows += `<div class="nt-lv-row"><span class="nt-lv-name">月级</span><span style="color:${_ntc(nt.monthly_state)};">${_statusText('月', nt.monthly_direction, nt.monthly_count, nt.monthly_is_complete, nt.monthly_is_completing)}</span></div>`;
+
+  // 详解：每个有效级别各一段
+  let meaningBlocks = '';
+  if (hasDaily) meaningBlocks += `<div class="nt-meaning"><b style="color:var(--text);">日级：</b>${_meaning('天', nt.daily_direction, nt.daily_count, nt.daily_is_complete, nt.daily_is_completing)}</div>`;
+  if (hasMonthly) meaningBlocks += `<div class="nt-meaning"><b style="color:var(--text);">月级：</b>${_meaning('月', nt.monthly_direction, nt.monthly_count, nt.monthly_is_complete, nt.monthly_is_completing)}</div>`;
+
+  const concept = `神奇九转（TD Sequential 简化版）：以“当日收盘价 vs 前第 4 根 K 线收盘价”的连续比较进行 1-9 计数。下跌计数第 9 天/月为潜在买点，上涨计数第 9 天/月为潜在卖点；第 7-8 天/月视为“即将完成”的预警区。`;
+  const tip = `日级与月级分别代表短中期与更大级别趋势；当月级与日级同向时信号共振，参考价值更高。`;
 
   el.innerHTML =
     `<div class="nt-concept">${concept}</div>` +
-    `<div class="nt-current" style="color:${primaryColor};">当前状态：${primaryText}</div>` +
-    `<div class="nt-meaning">${meaning}</div>` +
+    `<div class="nt-current">当前状态</div>` +
+    `<div class="nt-levels">${statusRows}</div>` +
+    meaningBlocks +
     `<div class="nt-tip">${tip}</div>`;
 }
 
