@@ -73,7 +73,7 @@ class DataFetcher:
         'TCEHY': '腾讯ADR', 'BABA': '阿里巴巴', 'TCBJY': '工商银行ADR',
         # --- 用户关注 ---
         'OUST': 'Ouster', 'FLY': 'Firefly Aerospace', 'SPCX': 'SpaceX',
-        'FIGR': 'Figure Technology', 'MU': '美光科技', 'CF': 'Fundrise Innovation Fund',
+        'FIGR': 'Figure Technology', 'MU': '美光科技', 'VCX': 'Fundrise Innovation Fund',
         'ETN': '伊顿', 'GEV': 'GE Vernova', 'HIMS': 'Hims & Hers', 'APP': 'AppLovin',
         # --- 新增关注 ---
         'ICE': '洲际交易所', 'SMH': '半导体指数ETF', 'VGT': '领航信息技术',

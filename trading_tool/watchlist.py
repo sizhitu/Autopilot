@@ -30,7 +30,7 @@ fetcher = DataFetcher()
 WATCHLIST = {
     # 美股
     'OUST': 'Ouster', 'FLY': 'Firefly Aerospace', 'SPCX': 'SpaceX',
-    'FIGR': 'Figure Technology', 'MU': '美光科技', 'CF': 'Fundrise Innovation Fund',
+    'FIGR': 'Figure Technology', 'MU': '美光科技', 'VCX': 'Fundrise Innovation Fund',
     'ETN': '伊顿', 'GEV': 'GE Vernova', 'HIMS': 'Hims & Hers', 'APP': 'AppLovin',
     'ICE': '洲际交易所', 'SMH': '半导体指数ETF', 'VGT': '领航信息技术',
     'JEPI': '摩根JEPi', 'GOOG': '谷歌C', 'LITE': 'Lumentum',
@@ -71,7 +71,7 @@ LOW_WINDOWS = [
 STOCK_ROLE = {
     # 压舱石：稳健蓝筹、宽基/行业ETF、指数
     '000001': '压舱石', '399300': '压舱石', '600887': '压舱石', 'GOOG': '压舱石',
-    'ICE': '压舱石', 'ETN': '压舱石', 'CF': '压舱石', 'SMH': '压舱石', 'VGT': '压舱石',
+    'ICE': '压舱石', 'ETN': '压舱石', 'VCX': '压舱石', 'SMH': '压舱石', 'VGT': '压舱石',
     'JEPI': '压舱石', '516150': '压舱石', '518850': '压舱石',
     # 高赔率：高成长科技/半导体
     'NVDA': '高赔率', 'MU': '高赔率', 'AVGO': '高赔率', 'ASM': '高赔率', 'APP': '高赔率',
