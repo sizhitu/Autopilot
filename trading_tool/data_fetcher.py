@@ -447,7 +447,10 @@ class DataFetcher:
         kw_lower = keyword.lower()
         if kw_lower.startswith(('sh', 'sz', 'bj')) or (keyword.isdigit() and len(keyword) == 6):
             if kw_lower not in [r['code'] for r in results]:
-                results.insert(0, {'code': kw_lower, 'name': '自定义A股', 'market': 'A股'})
+                # 反查真实公司简称（东方财富/新浪），失败再回退"自定义A股"
+                cn_code = kw_lower[2:] if kw_lower[:2] in ('sh', 'sz', 'bj') else kw_lower
+                cn_name = self.lookup_cn_name(cn_code) or '自定义A股'
+                results.insert(0, {'code': kw_lower, 'name': cn_name, 'market': 'A股'})
 
         # 美股代码可能包含字母、横线或点号（如 BRK-B, BRK.B）
         # 标准化：点号转为横线
@@ -457,70 +460,176 @@ class DataFetcher:
             # 只匹配纯ASCII字母+横线/点号（排除中文）
             cleaned = keyword.replace('-', '').replace('.', '')
             if cleaned.isascii() and cleaned.isalpha() and len(keyword) <= 8:
-                results.insert(0, {'code': normalized, 'name': '自定义美股', 'market': '美股'})
+                us_name = self.lookup_us_name(normalized) or '自定义美股'
+                results.insert(0, {'code': normalized, 'name': us_name, 'market': '美股'})
 
         return results[:20]  # 最多返回20条
 
-    def fetch_profile(self, symbol: str) -> "str | None":
-        """
-        获取公司主营业务简介（最简短描述）。
-
-        数据源（best-effort，任一成功即返回）：
-          - 美股/ETF/指数/A股：Yahoo quoteSummary 的 assetProfile.longBusinessSummary
-          - 美股/ETF 兜底：Nasdaq /info 的 profile.Description
-        受系统性限流保护：Yahoo 冷却期内直接返回 None，不做请求。
-        任何失败均返回 None（前端隐藏该区域）。
-        """
-        if _yahoo_in_cooldown():
+    # ================================================================
+    #  公司名称反查（搜索兜底：避免展示"自定义股票"）
+    # ================================================================
+    def lookup_cn_name(self, code: str) -> "str | None":
+        """通过东方财富 F10 / 新浪实时行情反查 A股 6位代码对应的公司简称。"""
+        code = code.strip().lower()
+        if code[:2] in ('sh', 'sz', 'bj'):   # 兼容 sh600519 / sz000822 形式
+            code = code[2:]
+        if not (code.isdigit() and len(code) == 6):
             return None
-
-        sym = symbol.strip()
-        # 构造 Yahoo 符号
-        if self._is_cn_stock(sym):
-            ysym = f"{sym}.SS" if sym.startswith('6') else f"{sym}.SZ"  # A股
-        elif sym.startswith('^'):
-            ysym = sym  # 指数直接用
-        else:
-            ysym = sym.replace('.', '-').upper()
-
-        # 1) Yahoo quoteSummary（主源）
+        # 1) 东方财富 F10（权威简称）
         try:
-            url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ysym}"
-            r = self.session.get(url, params={'modules': 'assetProfile'}, timeout=10)
-            if r.status_code == 429:
-                _trigger_yahoo_cooldown()
-            elif r.status_code == 200:
+            em = ('SH' if code.startswith('6') else 'SZ') + code
+            r = self.session.get(
+                f"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={em}",
+                timeout=12,
+                headers={'User-Agent': 'Mozilla/5.0',
+                         'Referer': 'https://emweb.securities.eastmoney.com/'})
+            if r.status_code == 200:
                 d = r.json()
-                result = d.get('quoteSummary', {}).get('result')
-                if result:
-                    s = result[0].get('assetProfile', {}).get('longBusinessSummary')
-                    if s:
-                        return s.strip()
+                jb = (d.get('jbzl') or [{}])[0]
+                abbr = jb.get('SECURITY_NAME_ABBR') or jb.get('STR_NAMEA')
+                if abbr:
+                    return abbr.strip()
         except Exception:
             pass
+        # 2) 新浪实时行情兜底（首字段即公司名）
+        try:
+            sina = self._normalize_cn_symbol(code)
+            r2 = self.session.get(
+                f"https://hq.sinajs.cn/list={sina}",
+                headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'},
+                timeout=10)
+            r2.encoding = 'gbk'
+            m = re.search(r'"([^",]+),', r2.text)
+            if m and m.group(1) and m.group(1) != code:
+                return m.group(1).strip()
+        except Exception:
+            pass
+        return None
 
-        # 2) Nasdaq /info 兜底（仅美股/ETF，A股与指数无）
-        if (not self._is_cn_stock(sym)) and (not sym.startswith('^')):
-            try:
-                nh = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                                  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'application/json',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Origin': 'https://www.nasdaq.com',
-                    'Referer': 'https://www.nasdaq.com/',
-                }
-                r2 = self.session.get(
-                    f"https://api.nasdaq.com/api/quote/{ysym}/info", headers=nh, timeout=12)
-                if r2.status_code == 200:
-                    d2 = r2.json()
-                    prof = (d2.get('data') or {}).get('summary', {}).get('profile', {})
-                    desc = prof.get('Description') or prof.get('description')
-                    if desc:
-                        return desc.strip()
-            except Exception:
-                pass
+    def lookup_us_name(self, symbol: str) -> "str | None":
+        """通过 Yahoo v8 chart 的 meta 反查美股/ETF/指数代码对应的公司名（best-effort）。"""
+        if _yahoo_in_cooldown():
+            return None
+        ysym = symbol.replace('.', '-').upper()
+        try:
+            r = self.session.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{ysym}",
+                params={'interval': '1d', 'range': '1d'}, timeout=10)
+            if r.status_code == 429:
+                _trigger_yahoo_cooldown()
+                return None
+            if r.status_code != 200:
+                return None
+            meta = r.json().get('chart', {}).get('result', [{}])[0].get('meta', {})
+            return meta.get('shortName') or meta.get('longName')
+        except Exception:
+            return None
 
+    def lookup_name(self, symbol: str) -> "str | None":
+        """统一名称反查：A股走东方财富/新浪，其余走 Yahoo。"""
+        sym = symbol.strip()
+        if self._is_cn_stock(sym):
+            return self.lookup_cn_name(sym)
+        return self.lookup_us_name(sym)
+
+    # ================================================================
+    #  公司主营业务（多数据源兜底）
+    # ================================================================
+    def _fetch_em_profile(self, em_code: str) -> "str | None":
+        """东方财富 F10 公司概况：优先公司简介(ORG_PROFILE)，其次经营范围(BUSINESS_SCOPE)。"""
+        try:
+            r = self.session.get(
+                f"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={em_code}",
+                timeout=12,
+                headers={'User-Agent': 'Mozilla/5.0',
+                         'Referer': 'https://emweb.securities.eastmoney.com/'})
+            if r.status_code != 200:
+                return None
+            d = r.json()
+            jb = (d.get('jbzl') or [{}])[0]
+            prof = jb.get('ORG_PROFILE') or jb.get('BUSINESS_SCOPE')
+            return prof.strip() if prof else None
+        except Exception:
+            return None
+
+    def _fetch_yahoo_profile(self, ysym: str) -> "str | None":
+        try:
+            r = self.session.get(
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ysym}",
+                params={'modules': 'assetProfile'}, timeout=10)
+            if r.status_code == 429:
+                _trigger_yahoo_cooldown()
+                return None
+            if r.status_code != 200:
+                return None
+            result = r.json().get('quoteSummary', {}).get('result')
+            if not result:
+                return None
+            s = result[0].get('assetProfile', {}).get('longBusinessSummary')
+            return s.strip() if s else None
+        except Exception:
+            return None
+
+    def _fetch_nasdaq_profile(self, ysym: str) -> "str | None":
+        try:
+            nh = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                              '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Origin': 'https://www.nasdaq.com',
+                'Referer': 'https://www.nasdaq.com/',
+            }
+            r = self.session.get(
+                f"https://api.nasdaq.com/api/quote/{ysym}/info", headers=nh, timeout=12)
+            if r.status_code != 200:
+                return None
+            d = r.json()
+            prof = (d.get('data') or {}).get('summary', {}).get('profile', {})
+            desc = prof.get('Description') or prof.get('description')
+            return desc.strip() if desc else None
+        except Exception:
+            return None
+
+    def fetch_profile(self, symbol: str) -> "str | None":
+        """
+        获取公司主营业务简介（最简短描述）。多数据源兜底，任一成功即返回：
+
+          A股  ：东方财富 F10(公司简介/经营范围) → Yahoo .SS/.SZ assetProfile(受冷却保护)
+          美股/ETF：Yahoo quoteSummary assetProfile → Nasdaq /info Description
+          指数  ：Yahoo quoteSummary（无则 None）
+
+        说明：东方财富/新浪为独立源，不受 Yahoo 限流冷却影响；只有真正请求 Yahoo 时才检查冷却。
+        任何失败均返回 None（前端隐藏该区域）。
+        """
+        sym = symbol.strip()
+
+        # —— A股：东方财富为主，Yahoo 兜底 ——
+        if self._is_cn_stock(sym):
+            code = sym.lower()
+            if code[:2] in ('sh', 'sz', 'bj'):
+                code = code[2:]
+            em_code = ('SH' if code.startswith('6') else 'SZ') + code
+            s = self._fetch_em_profile(em_code)
+            if s:
+                return s
+            if not _yahoo_in_cooldown():
+                y = f"{code}.SS" if code.startswith('6') else f"{code}.SZ"
+                s = self._fetch_yahoo_profile(y)
+                if s:
+                    return s
+            return None
+
+        # —— 美股/ETF/指数：Yahoo 为主，Nasdaq 兜底 ——
+        ysym = sym if sym.startswith('^') else sym.replace('.', '-').upper()
+        if not _yahoo_in_cooldown():
+            s = self._fetch_yahoo_profile(ysym)
+            if s:
+                return s
+        if not sym.startswith('^'):
+            s = self._fetch_nasdaq_profile(ysym)
+            if s:
+                return s
         return None
 
 

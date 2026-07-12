@@ -415,6 +415,12 @@ async function searchStock() {
     data.results.forEach(r => {
       box.innerHTML += `<div class="search-result-item" onclick="fetchQuote('${r.code}','${r.name}','${r.market}')"><span class="code">${r.code}</span><span class="name">${r.name}</span><span class="market">${r.market}</span></div>`;
     });
+    // 唯一精确匹配（如输入完整 6 位代码）直接打开分析页，省去二次点击，并直接展示公司简称
+    if (data.results.length === 1) {
+      const r = data.results[0];
+      box.style.display = 'none';
+      fetchQuote(r.code, r.name, r.market);
+    }
   }
 }
 document.getElementById('searchInput').addEventListener('keydown', e => {
