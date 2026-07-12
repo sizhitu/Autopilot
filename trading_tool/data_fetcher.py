@@ -43,6 +43,45 @@ def _clear_yahoo_cooldown() -> None:
 
 
 
+# ================================================================
+#  自选股人工维护元数据（行业分类 + 简短主营业务）
+#  作用：美股/ETF/指数在沙箱环境常被 Yahoo 限流、且免费接口
+#        普遍拿不到行业与简介，故对自选持仓做人工维护，保证
+#        详情页与看板无论沙箱还是本机都能稳定展示。
+#        不在本表中的代码（临时搜索）仍走动态数据源兜底。
+# ================================================================
+STOCK_META = {
+    # 美股
+    'OUST': {'industry': '激光雷达', 'desc': '研发制造高分辨率数字激光雷达，用于自动驾驶、工业与机器人感知。'},
+    'FLY':  {'industry': '商业航天', 'desc': '商业航天公司，研制 Alpha 火箭与蓝幽灵月球着陆器，提供发射与太空运输服务。'},
+    'SPCX': {'industry': '商业航天', 'desc': '私营航天与卫星互联网公司，运营猎鹰火箭与星链(Starlink)星座。'},
+    'FIGR': {'industry': '金融科技', 'desc': '区块链金融科技公司，聚焦房屋净值贷款与数字资产借贷(Figure Markets)。'},
+    'MU':   {'industry': '半导体·存储', 'desc': '全球领先 DRAM 与 NAND 闪存制造商，主营存储芯片。'},
+    'VCX':  {'industry': '私募创投', 'desc': 'Fundrise 旗下创投基金，投资房地产科技与初创企业（注：本基金为非上市私募，行情取自对应代码）。'},
+    'ETN':  {'industry': '电气设备', 'desc': '全球电力管理与流体动力设备供应商，服务数据中心、电网与工业。'},
+    'GEV':  {'industry': '电力设备', 'desc': '通用电气分拆的能源业务，主营发电设备、风电与电网技术。'},
+    'HIMS': {'industry': '数字医疗', 'desc': '远程医疗与直接面向消费者的健康品牌，主营处方药与保健订阅。'},
+    'APP':  {'industry': '移动广告', 'desc': '移动广告变现与营销平台，AXON AI 引擎驱动广告投放。'},
+    'ICE':  {'industry': '交易所', 'desc': '运营纽交所(NYSE)及多家清算所，主营交易所与数据服务。'},
+    'SMH':  {'industry': '半导体ETF', 'desc': '跟踪 ICE 半导体指数，集中持有全球半导体龙头（设计/设备/制造）。'},
+    'VGT':  {'industry': '信息技术ETF', 'desc': '跟踪 MSCI 美国可投资市场信息技术指数，覆盖软硬件与互联网。'},
+    'JEPI': {'industry': '高股息策略ETF', 'desc': '通过期权叠加策略获取标普500成分股股息与收益。'},
+    'GOOG': {'industry': '互联网·广告', 'desc': '谷歌母公司，主营搜索广告、YouTube、云与安卓生态。'},
+    'LITE': {'industry': '光通信', 'desc': '光学元件与激光器供应商，服务光通信与工业市场。'},
+    'ASTS': {'industry': '卫星通信', 'desc': '构建天基蜂窝宽带网络，直连普通手机的低轨卫星星座。'},
+    'FCX':  {'industry': '有色金属·矿业', 'desc': '全球最大上市铜矿商之一，主营铜、金、钼开采。'},
+    'ASM':  {'industry': '半导体设备', 'desc': '半导体沉积设备供应商，服务晶圆制造前端工艺。'},
+    'EUV':  {'industry': '半导体设备', 'desc': '极紫外(EUV)光刻相关半导体设备标的。'},
+    'WTI':  {'industry': '大宗商品·原油', 'desc': '跟踪美国 WTI 原油价格的商品标的（期货/ETF）。'},
+    'AVGO': {'industry': '半导体·软件', 'desc': '通信与 AI 定制芯片(ASIC)及基础设施软件(VMware)供应商。'},
+    'NVDA': {'industry': '半导体·AI芯片', 'desc': 'GPU 与加速计算龙头，主营数据中心 AI 芯片、游戏显卡与网络。'},
+    'INTC': {'industry': '半导体·CPU', 'desc': '全球主要 CPU 与晶圆代工供应商，覆盖 PC、数据中心与代工。'},
+    # 指数
+    '000001': {'industry': '宽基指数', 'desc': '上交所编制的 A 股大盘基准指数，反映沪市整体表现。'},
+    '399300': {'industry': '宽基指数', 'desc': '沪深两市市值与流动性居前的 300 只股票，A 股核心宽基指数。'},
+}
+
+
 class DataFetcher:
     """统一数据获取接口"""
 
@@ -604,6 +643,11 @@ class DataFetcher:
         """
         sym = symbol.strip()
 
+        # 优先使用自选股人工维护的简短简介（含指数，避免指数代码被当成个股走东财）
+        meta = STOCK_META.get(sym.upper()) or STOCK_META.get(sym)
+        if meta and meta.get('desc'):
+            return meta['desc']
+
         # —— A股：东方财富为主，Yahoo 兜底 ——
         if self._is_cn_stock(sym):
             code = sym.lower()
@@ -620,7 +664,13 @@ class DataFetcher:
                     return s
             return None
 
-        # —— 美股/ETF/指数：Yahoo 为主，Nasdaq 兜底 ——
+        # —— 美股/ETF/指数：人工维护映射为主（沙箱/本机均可靠），Yahoo 兜底 ——
+        # 优先使用自选股人工维护的简短简介，保证详情页稳定展示；
+        # 不在表中的临时代码再走 Yahoo assetProfile（本机可用，沙箱常限流）。
+        meta = STOCK_META.get(sym.upper()) or STOCK_META.get(sym)
+        if meta and meta.get('desc'):
+            return meta['desc']
+
         ysym = sym if sym.startswith('^') else sym.replace('.', '-').upper()
         if not _yahoo_in_cooldown():
             s = self._fetch_yahoo_profile(ysym)
@@ -630,6 +680,79 @@ class DataFetcher:
             s = self._fetch_nasdaq_profile(ysym)
             if s:
                 return s
+        return None
+
+    # ================================================================
+    #  行业分类（多数据源兜底）
+    # ================================================================
+    def _fetch_em_industry(self, em_code: str) -> "str | None":
+        """东方财富 F10 证监会行业分类（INDUSTRYCSRC1，如 '制造业-有色金属冶炼和压延加工业'）。"""
+        try:
+            r = self.session.get(
+                f"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={em_code}",
+                timeout=12,
+                headers={'User-Agent': 'Mozilla/5.0',
+                         'Referer': 'https://emweb.securities.eastmoney.com/'})
+            if r.status_code != 200:
+                return None
+            d = r.json()
+            jb = (d.get('jbzl') or [{}])[0]
+            ind = jb.get('INDUSTRYCSRC1')
+            return ind.strip() if ind else None
+        except Exception:
+            return None
+
+    def _fetch_yahoo_industry(self, ysym: str) -> "str | None":
+        """Yahoo assetProfile 的 sector / industry（本机可用，沙箱常限流）。"""
+        if _yahoo_in_cooldown():
+            return None
+        try:
+            r = self.session.get(
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ysym}",
+                params={'modules': 'assetProfile'}, timeout=10)
+            if r.status_code == 429:
+                _trigger_yahoo_cooldown()
+                return None
+            if r.status_code != 200:
+                return None
+            result = r.json().get('quoteSummary', {}).get('result')
+            if not result:
+                return None
+            ap = result[0].get('assetProfile', {})
+            s = ap.get('sector') or ap.get('industry')
+            return s.strip() if s else None
+        except Exception:
+            return None
+
+    def fetch_industry(self, symbol: str) -> "str | None":
+        """
+        获取行业分类（最简短标签）。多数据源兜底，任一成功即返回：
+
+          A股  ：东方财富 F10(INDUSTRYCSRC1) → 人工维护映射
+          美股/ETF/指数：人工维护映射（最可靠）→ Yahoo assetProfile(sector)
+
+        说明：人工维护映射对本仓持有标的在沙箱/本机均稳定可用；
+              临时搜索且不在表中的代码走动态源（沙箱下美股可能为空）。
+        """
+        sym = symbol.strip()
+        # 1) 自选股人工维护映射（优先，最可靠）
+        meta = STOCK_META.get(sym.upper()) or STOCK_META.get(sym)
+        if meta and meta.get('industry'):
+            return meta['industry']
+        # 2) A股：东方财富行业
+        if self._is_cn_stock(sym):
+            code = sym.lower()
+            if code[:2] in ('sh', 'sz', 'bj'):
+                code = code[2:]
+            em_code = ('SH' if code.startswith('6') else 'SZ') + code
+            s = self._fetch_em_industry(em_code)
+            if s:
+                return s
+        # 3) 美股/ETF/指数：Yahoo sector（本机可用）
+        ysym = sym if sym.startswith('^') else sym.replace('.', '-').upper()
+        s = self._fetch_yahoo_industry(ysym)
+        if s:
+            return s
         return None
 
 

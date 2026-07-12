@@ -462,12 +462,15 @@ async def run_backtest(req: BacktestRequest):
 
 @app.get("/api/profile")
 async def get_profile(symbol: str = Query(..., description="股票代码")):
-    """获取公司主营业务简介（最简短描述，best-effort，失败返回 null）"""
+    """获取公司主营业务简介 + 行业分类（最简短描述，best-effort，失败返回 null）"""
     try:
         summary = fetcher.fetch_profile(symbol)
-        return {"success": True, "symbol": symbol, "business_summary": summary}
+        industry = fetcher.fetch_industry(symbol)
+        return {"success": True, "symbol": symbol,
+                "business_summary": summary, "industry": industry}
     except Exception:
-        return {"success": True, "symbol": symbol, "business_summary": None}
+        return {"success": True, "symbol": symbol,
+                "business_summary": None, "industry": None}
 
 
 @app.get("/api/watchlist")

@@ -129,6 +129,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .nt-月 { background:rgba(212,175,55,0.18); color:var(--gold); }
 .stock-info { flex-wrap:wrap; }
 .business-summary { margin-top:4px; font-size:11px; line-height:1.5; color:var(--text-dim); padding:5px 9px; background:var(--bg); border-left:3px solid var(--purple); border-radius:0 6px 6px 0; }
+.industry-tag { margin-top:4px; display:inline-block; font-size:11px; font-weight:600; color:var(--gold); background:rgba(212,175,55,0.12); border:1px solid rgba(212,175,55,0.35); padding:2px 9px; border-radius:999px; }
 
 /* 自选看板表格：fixed布局+min-width保证各列有足够宽度不堆叠，桌面填满/手机横滑，间距均匀 */
 #watchlistTable { table-layout: fixed; width: 100%; min-width: 760px; }
@@ -253,6 +254,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
         <button class="btn btn-orange btn-sm" onclick="runBacktest()">📊回测</button>
       </div>
       <div id="stockInfo" class="stock-info" style="margin-top:6px; display:none;"></div>
+      <div id="industryTag" class="industry-tag" style="display:none;"></div>
       <div id="businessSummary" class="business-summary" style="display:none;"></div>
     </div>
 
@@ -441,6 +443,7 @@ async function fetchQuote(symbol, name, market) {
   // 立即显示股票头部（代码+名称），避免任何下游异常导致不展示
   const info = document.getElementById('stockInfo');
   document.getElementById('businessSummary').style.display = 'none';
+  document.getElementById('industryTag').style.display = 'none';
   info.style.display = 'flex';
   info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中...</span>`;
 
@@ -469,12 +472,24 @@ async function fetchQuote(symbol, name, market) {
   }
 }
 
-// === 公司主营业务（异步补充） ===
+// === 公司主营业务 + 行业分类（异步补充） ===
 async function fetchProfile(symbol) {
   const el = document.getElementById('businessSummary');
+  const tagEl = document.getElementById('industryTag');
   try {
     const res = await fetch(`/api/profile?symbol=${encodeURIComponent(symbol)}`);
     const json = await res.json();
+
+    // 行业分类小标签（代码/名称下方）
+    const ind = (json.industry || '').trim();
+    if (ind) {
+      tagEl.textContent = '行业：' + ind;
+      tagEl.style.display = 'inline-block';
+    } else {
+      tagEl.style.display = 'none';
+    }
+
+    // 主营业务
     let txt = json.business_summary;
     if (txt && txt.trim()) {
       txt = txt.trim().replace(/\s+/g, ' ');
@@ -486,6 +501,7 @@ async function fetchProfile(symbol) {
     }
   } catch (e) {
     el.style.display = 'none';
+    tagEl.style.display = 'none';
   }
 }
 
