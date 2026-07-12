@@ -460,6 +460,16 @@ async def run_backtest(req: BacktestRequest):
 #  自选看板 API
 # ================================================================
 
+@app.get("/api/profile")
+async def get_profile(symbol: str = Query(..., description="股票代码")):
+    """获取公司主营业务简介（最简短描述，best-effort，失败返回 null）"""
+    try:
+        summary = fetcher.fetch_profile(symbol)
+        return {"success": True, "symbol": symbol, "business_summary": summary}
+    except Exception:
+        return {"success": True, "symbol": symbol, "business_summary": None}
+
+
 @app.get("/api/watchlist")
 async def get_watchlist():
     """获取所有关注股票状态看板"""

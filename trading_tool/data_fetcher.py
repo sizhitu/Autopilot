@@ -461,6 +461,68 @@ class DataFetcher:
 
         return results[:20]  # 最多返回20条
 
+    def fetch_profile(self, symbol: str) -> "str | None":
+        """
+        获取公司主营业务简介（最简短描述）。
+
+        数据源（best-effort，任一成功即返回）：
+          - 美股/ETF/指数/A股：Yahoo quoteSummary 的 assetProfile.longBusinessSummary
+          - 美股/ETF 兜底：Nasdaq /info 的 profile.Description
+        受系统性限流保护：Yahoo 冷却期内直接返回 None，不做请求。
+        任何失败均返回 None（前端隐藏该区域）。
+        """
+        if _yahoo_in_cooldown():
+            return None
+
+        sym = symbol.strip()
+        # 构造 Yahoo 符号
+        if self._is_cn_stock(sym):
+            ysym = f"{sym}.SS" if sym.startswith('6') else f"{sym}.SZ"  # A股
+        elif sym.startswith('^'):
+            ysym = sym  # 指数直接用
+        else:
+            ysym = sym.replace('.', '-').upper()
+
+        # 1) Yahoo quoteSummary（主源）
+        try:
+            url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ysym}"
+            r = self.session.get(url, params={'modules': 'assetProfile'}, timeout=10)
+            if r.status_code == 429:
+                _trigger_yahoo_cooldown()
+            elif r.status_code == 200:
+                d = r.json()
+                result = d.get('quoteSummary', {}).get('result')
+                if result:
+                    s = result[0].get('assetProfile', {}).get('longBusinessSummary')
+                    if s:
+                        return s.strip()
+        except Exception:
+            pass
+
+        # 2) Nasdaq /info 兜底（仅美股/ETF，A股与指数无）
+        if (not self._is_cn_stock(sym)) and (not sym.startswith('^')):
+            try:
+                nh = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                                  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Origin': 'https://www.nasdaq.com',
+                    'Referer': 'https://www.nasdaq.com/',
+                }
+                r2 = self.session.get(
+                    f"https://api.nasdaq.com/api/quote/{ysym}/info", headers=nh, timeout=12)
+                if r2.status_code == 200:
+                    d2 = r2.json()
+                    prof = (d2.get('data') or {}).get('summary', {}).get('profile', {})
+                    desc = prof.get('Description') or prof.get('description')
+                    if desc:
+                        return desc.strip()
+            except Exception:
+                pass
+
+        return None
+
 
 # ================================================================
 #  测试
