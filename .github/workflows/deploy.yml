@@ -1,20 +1,17 @@
 # =============================================================
-# 自动部署到 Cloudflare Containers
+# 自动部署到免费 Cloudflare Workers（不使用Containers容器，无付费）
 # 触发：推送到 main 自动上线；也可在 Actions 页面手动 Run workflow。
 #
-# 前置（仓库 Settings → Secrets and variables → Actions → New repository secret）：
-#   CLOUDFLARE_API_TOKEN  Cloudflare API Token，需包含以下权限：
-#                         - Account > Cloudflare Containers : Edit
-#                         - Account > Workers Scripts       : Edit
-#                         - Account > Workers Routes        : Edit
-#                         （自定义域名 timebricks.bid 由 wrangler 自动接入）
-#   CLOUDFLARE_ACCOUNT_ID Cloudflare 账号 ID（控制台右下角 "Account ID"）
+# 前置 Secrets（仓库 Settings → Secrets and variables → Actions）：
+#   CLOUDFLARE_API_TOKEN
+#   CLOUDFLARE_ACCOUNT_ID
 #
-# 注意：本机推送后，GitHub 托管的 runner 自带 Docker，
-#       会在 CI 内本地构建镜像并推送到 Cloudflare Registry，无需你本机有 Docker。
+# Token最小权限：
+# Account > Workers Scripts: Edit
+# Account > Workers Routes: Edit
+# Zone > DNS: Edit（选中你的域名 timebricks.bid）
 # =============================================================
-
-name: Deploy to Cloudflare
+name: Deploy to Cloudflare Workers
 
 on:
   push:
@@ -27,7 +24,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -37,14 +34,14 @@ jobs:
         with:
           node-version: 20
 
-      - name: 安装 Worker 侧依赖（@cloudflare/containers）
+      - name: 安装 Worker 项目依赖
         working-directory: trading_tool
         run: npm install
 
-      - name: 安装 wrangler（Containers 需 4.x）
-        run: npm install -g wrangler@4
+      - name: 安装 wrangler 稳定3.x版本（纯Workers，无容器付费逻辑）
+        run: npm install -g wrangler@3.78.0
 
-      - name: 部署到 Cloudflare Containers
+      - name: 部署到 Cloudflare Workers
         working-directory: trading_tool
         run: wrangler deploy
         env:
