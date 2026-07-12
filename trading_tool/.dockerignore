@@ -1,0 +1,12 @@
+# 精简 Docker 构建上下文（Dockerfile 中 COPY . . 会复制当前目录）
+node_modules
+__pycache__
+*.pyc
+.git
+deploy
+*.png
+# Cloudflare 部署文件不需要打进容器镜像
+worker.js
+wrangler.toml
+package.json
+package-lock.json

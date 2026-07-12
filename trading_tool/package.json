@@ -1,0 +1,9 @@
+{
+  "name": "autopilot-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "main": "worker.js",
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.7"
+  }
+}

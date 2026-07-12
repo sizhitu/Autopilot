@@ -25,3 +25,10 @@ _test_*
 # 本地部署产物
 *.egg
 .piptools
+
+# Cloudflare Workers / Containers 相关
+node_modules/
+package-lock.json
+.wrangler/
+.dev.vars
+.dev.vars.*
