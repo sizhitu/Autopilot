@@ -90,6 +90,42 @@ STOCK_META = {
 }
 
 
+# ================================================================
+#  抗限流工具：多 UA 轮换 + K 线短时效缓存
+# ================================================================
+# 多 User-Agent 轮换，降低单一 UA 指纹被限流的概率
+_USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+]
+def _rotate_ua() -> str:
+    return random.choice(_USER_AGENTS)
+
+
+# Stooq 指数代码映射（美股个股用 <代码>.us，指数单独映射）
+_STOOQ_INDEX = {'^GSPC': '.inx', '^IXIC': '.ixic', '^DJI': '.dji', '^VIX': '^vix'}
+
+
+# K线缓存：同一标的短时间内（看板刷新 + 详情页）只真实抓取一次，显著降低限流命中率
+_KLINE_CACHE = {}
+_KLINE_CACHE_TS = {}
+_KLINE_TTL = 120  # 秒
+
+
+def _kline_cache_get(key):
+    ts = _KLINE_CACHE_TS.get(key)
+    if ts and (time.time() - ts) < _KLINE_TTL:
+        return _KLINE_CACHE.get(key)
+    return None
+
+
+def _kline_cache_set(key, df):
+    _KLINE_CACHE[key] = df
+    _KLINE_CACHE_TS[key] = time.time()
+
+
 class DataFetcher:
     """统一数据获取接口"""
 
@@ -230,69 +266,49 @@ class DataFetcher:
             'interval': '1d',
         }
 
-        # 尝试多个域名，避免限流
-        domains = [
-            'query2.finance.yahoo.com',
-            'query1.finance.yahoo.com',
-        ]
-
+        # 尝试多个域名；仅在两个域名都失败时触发全局冷却并降级，
+        # 避免单域名“瞬时限流”即放弃（提升抗限流健壮性）。
+        domains = ['query2.finance.yahoo.com', 'query1.finance.yahoo.com']
         last_error = None
-        for attempt in range(2):  # 仅试 query2 / query1 两个域名各一次，避免持续限流时空等
-            domain = domains[attempt % len(domains)]
+        parsed = None
+        for domain in domains:
             url = f"https://{domain}/v8/finance/chart/{symbol}"
             try:
                 r = self.session.get(url, params=params, timeout=10)
                 if r.status_code == 429:
-                    # 系统性防护：命中限流即触发全局冷却，停止对 Yahoo 的后续重试
-                    _trigger_yahoo_cooldown()
-                    last_error = f"Yahoo Finance ({domain}) 限流 429（已触发全局冷却，转 Nasdaq 兜底）"
-                    break
+                    last_error = f"Yahoo({domain}) 429"
+                    continue
                 if r.status_code != 200:
-                    # 非 200（含 5xx/404 等）一律视为 Yahoo 不可用，触发冷却并放弃本次重试
-                    _trigger_yahoo_cooldown()
-                    last_error = f"Yahoo Finance ({domain}) 返回 {r.status_code}（已触发全局冷却）"
-                    break
-
+                    last_error = f"Yahoo({domain}) {r.status_code}"
+                    continue
                 d = r.json()
                 result = d.get('chart', {}).get('result')
                 if not result:
-                    err = d.get('chart', {}).get('error', {})
-                    last_error = f"Yahoo Finance 错误: {err.get('description', '未知')}"
+                    last_error = f"Yahoo 错误: {d.get('chart', {}).get('error', {}).get('description', '未知')}"
                     continue
 
+                # —— 解析（两域名共用）——
                 data = result[0]
                 timestamps = data.get('timestamp', [])
                 quote = data.get('indicators', {}).get('quote', [{}])[0]
                 ohlcv = data.get('indicators', {}).get('adjclose', [{}])[0] if 'adjclose' in data.get('indicators', {}) else {}
-
-                opens = quote.get('open', [])
-                highs = quote.get('high', [])
-                lows = quote.get('low', [])
-                closes = quote.get('close', [])
+                opens = quote.get('open', []); highs = quote.get('high', [])
+                lows = quote.get('low', []); closes = quote.get('close', [])
                 volumes = quote.get('volume', [])
                 adj_closes = ohlcv.get('adjclose', []) if ohlcv else closes
 
                 df = pd.DataFrame({
                     'date': [datetime.fromtimestamp(t).strftime('%Y-%m-%d') for t in timestamps],
-                    'open': opens,
-                    'high': highs,
-                    'low': lows,
+                    'open': opens, 'high': highs, 'low': lows,
                     'close': adj_closes,  # 使用前复权收盘价
                     'volume': volumes,
                 })
-
-                # 去除空行
                 df = df.dropna(subset=['close'])
-                df = df[df['close'] > 0]
-                df = df.reset_index(drop=True)
-
-                # 用原始open/high/low，但如果没有则用close
+                df = df[df['close'] > 0].reset_index(drop=True)
                 df['open'] = df['open'].fillna(df['close'])
                 df['high'] = df['high'].fillna(df['close'])
                 df['low'] = df['low'].fillna(df['close'])
                 df['volume'] = df['volume'].fillna(0).astype(float)
-
-                # 如果有前复权价，调整 open/high/low 的比例
                 if ohlcv and len(adj_closes) == len(closes):
                     for i in range(len(df)):
                         if not np.isnan(closes[i]) and closes[i] > 0:
@@ -303,28 +319,34 @@ class DataFetcher:
                                 df.loc[i, 'high'] = df.loc[i, 'high'] * ratio
                             if not np.isnan(df.loc[i, 'low']):
                                 df.loc[i, 'low'] = df.loc[i, 'low'] * ratio
-
                 df['date'] = pd.to_datetime(df['date'])
-                # 截取请求的天数
                 if len(df) > days:
                     df = df.tail(days).reset_index(drop=True)
-                return df
-
-            except Exception as e:
-                # 连接超时/异常也视为 Yahoo 不可用，触发全局冷却后转 Nasdaq 兜底
-                _trigger_yahoo_cooldown()
-                last_error = str(e)
+                parsed = df
                 break
+            except Exception as e:
+                last_error = str(e)
+                continue
 
-        # Yahoo 全部失败 → 尝试 Nasdaq 兜底（免费、无需 API Key，覆盖主流美股）
+        if parsed is not None and len(parsed) > 0:
+            return parsed
+
+        # Yahoo 两域名均失败 → 触发全局冷却，依次用 Nasdaq / Stooq 兜底
+        _trigger_yahoo_cooldown()
         try:
             df = self._fetch_us_stock_nasdaq(symbol, days)
             if df is not None and len(df) > 0:
                 return df
         except Exception as ne:
-            last_error = f"{last_error}；Nasdaq 兜底也失败: {ne}"
+            last_error = f"{last_error}；Nasdaq 兜底失败: {ne}"
+        try:
+            df = self._fetch_stooq(symbol, days)
+            if df is not None and len(df) > 0:
+                return df
+        except Exception as se:
+            last_error = f"{last_error}；Stooq 兜底失败: {se}"
 
-        raise ValueError(f"Yahoo Finance 所有域名均失败: {last_error}")
+        raise ValueError(f"Yahoo/Nasdaq/Stooq 均失败: {last_error}")
 
     def _fetch_us_stock_nasdaq(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
@@ -388,6 +410,82 @@ class DataFetcher:
                 continue
         raise ValueError(f"{last_err}")
 
+    def _fetch_stooq(self, symbol: str, days: int = 300) -> pd.DataFrame:
+        """
+        Stooq 免费 CSV 历史接口兜底（无需 API Key、限流极宽松，覆盖美股/ETF/指数）。
+        作为 Yahoo + Nasdaq 之后的第三层兜底，显著提升抗限流能力。
+        """
+        import csv as _csv, io as _io
+        ysym = symbol.replace('.', '-').upper()
+        st = self._STOOQ_INDEX.get(ysym)
+        if st is None:
+            st = (ysym + '.us') if not ysym.startswith('^') else ysym.lower()
+        url = f"https://stooq.com/q/d/l/?s={st}&i=d"
+        r = self.session.get(url, timeout=10, headers={'User-Agent': _rotate_ua()})
+        if r.status_code != 200 or r.text.lstrip().lower().startswith('<!doctype'):
+            raise ValueError(f"Stooq 未返回 CSV（{r.status_code}）")
+        rows = list(_csv.reader(_io.StringIO(r.text.strip())))
+        if len(rows) < 2 or rows[0][0].strip().lower() != 'date':
+            raise ValueError("Stooq 返回格式异常")
+        recs = []
+        for row in rows[1:]:
+            if len(row) < 6:
+                continue
+            try:
+                recs.append({
+                    'date': datetime.strptime(row[0].strip(), '%Y-%m-%d'),
+                    'open': float(row[1]), 'high': float(row[2]),
+                    'low': float(row[3]), 'close': float(row[4]),
+                    'volume': float(row[5] or 0),
+                })
+            except Exception:
+                continue
+        if not recs:
+            raise ValueError("Stooq 无有效数据行")
+        df = pd.DataFrame(recs).sort_values('date').reset_index(drop=True)
+        if len(df) > days:
+            df = df.tail(days).reset_index(drop=True)
+        return df
+
+    def _fetch_em_kline(self, sina_symbol: str, days: int = 300) -> pd.DataFrame:
+        """
+        东方财富 K 线（前复权），A 股权威免费源，作为新浪之后的兜底。
+        """
+        code = sina_symbol[2:] if sina_symbol[:2] in ('sh', 'sz', 'bj') else sina_symbol
+        secid = ('1.' if sina_symbol[:2] == 'sh' else '0.') + code
+        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        params = {'fields1': 'f1,f2,f3,f4,f5,f6',
+                  'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+                  'klt': '101', 'fqt': '1', 'secid': secid,
+                  'end': '20500101', 'lmt': str(min(days + 60, 800))}
+        r = self.session.get(url, params=params, timeout=10,
+                             headers={'User-Agent': _rotate_ua(),
+                                      'Referer': 'https://quote.eastmoney.com/'})
+        if r.status_code != 200:
+            raise ValueError(f"东财 {r.status_code}")
+        d = r.json()
+        kl = (d.get('data') or {}).get('klines') or []
+        if not kl:
+            raise ValueError("东财无K线数据")
+        recs = []
+        for line in kl:
+            p = line.split(',')
+            if len(p) < 7:
+                continue
+            try:
+                recs.append({'date': datetime.strptime(p[0], '%Y-%m-%d'),
+                             'open': float(p[1]), 'close': float(p[2]),
+                             'high': float(p[3]), 'low': float(p[4]),
+                             'volume': float(p[5])})
+            except Exception:
+                continue
+        if not recs:
+            raise ValueError("东财K线解析为空")
+        df = pd.DataFrame(recs)
+        if len(df) > days:
+            df = df.tail(days).reset_index(drop=True)
+        return df
+
     def _swap_exchange(self, sina_symbol: str) -> str:
         """sh<->sz 前缀互换（用于取数失败时自动换市场重试）"""
         if sina_symbol.startswith('sh'):
@@ -426,9 +524,9 @@ class DataFetcher:
 
     def fetch_cn_stock(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
-        通过新浪财经接口获取A股数据。
-        若按启发式前缀（sh/sz）取不到数据，自动切换交易所前缀重试一次，
-        以应对部分 ETF/代码前缀与常规规则不符的情况（系统性兜底，无需逐只硬编码）。
+        通过新浪财经接口获取A股数据（主源）。
+        新浪失败则自动切换交易所前缀重试，仍失败则用东方财富 K 线（前复权）兜底，
+        形成「新浪 → 东方财富」双层权威源，显著降低单一源限流导致取不到行情的概率。
         """
         sina_symbol = self._normalize_cn_symbol(symbol)
         df = self._fetch_sina_kline(sina_symbol, days)
@@ -439,12 +537,26 @@ class DataFetcher:
                 if len(df2) > 0:
                     df = df2
         if len(df) == 0:
-            raise ValueError("新浪财经未返回数据，请检查股票代码")
+            # 东方财富 K 线兜底（前复权，权威性高）
+            try:
+                df = self._fetch_em_kline(sina_symbol, days)
+            except Exception:
+                pass
+        if len(df) == 0:
+            # 再试一次东方财富（换市场前缀）
+            try:
+                df = self._fetch_em_kline(self._swap_exchange(sina_symbol), days)
+            except Exception:
+                pass
+        if len(df) == 0:
+            raise ValueError("新浪/东方财富均未返回数据，请检查股票代码")
         return df.tail(days).reset_index(drop=True)
 
     def fetch(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
-        统一获取接口，自动判断美股/A股
+        统一获取接口，自动判断美股/A股。
+        带短时效（120s）内存缓存：同一标的短时间内（如看板刷新 + 详情页）只真实抓取一次，
+        显著降低重复请求导致的限流命中率。
 
         Args:
             symbol: 股票代码
@@ -455,11 +567,18 @@ class DataFetcher:
             pd.DataFrame with columns: date, open, high, low, close, volume
         """
         symbol = symbol.strip()
+        key = (symbol, days)
+        cached = _kline_cache_get(key)
+        if cached is not None:
+            return cached.copy()
 
         if self._is_us_index(symbol) or not self._is_cn_stock(symbol):
-            return self.fetch_us_stock(symbol, days)
+            df = self.fetch_us_stock(symbol, days)
         else:
-            return self.fetch_cn_stock(symbol, days)
+            df = self.fetch_cn_stock(symbol, days)
+
+        _kline_cache_set(key, df)
+        return df
 
     def search(self, keyword: str) -> list:
         """搜索股票代码，精确匹配优先"""
