@@ -6,6 +6,7 @@ pandas>=2.1
 numpy>=1.26
 requests>=2.28
 pydantic>=2.0
+python-multipart
 
 # === 可选依赖 ===
 # 仅在使用桌面版 (app.py) 或独立图表生成 (gen_chart.py) 时才需要，
