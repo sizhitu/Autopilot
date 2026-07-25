@@ -1,176 +1,68 @@
 """
-用户认证与会话管理
-====================
-  - 密码：pbkdf2_hmac 加盐哈希，不存明文
-  - 会话：随机 token 写入 sessions 表（30 天有效期），前端以
-          Authorization: Bearer <token> 携带
-  - 邮箱验证：6 位验证码存 users 表（5 分钟有效），由 mailer 发送
-  - FastAPI 依赖 get_current_user：从请求头取 token，校验后返回用户行
+用户认证（Supabase Auth 模式）
+==============================
+认证完全交给 Supabase Auth（前端 supabase-js 完成注册 / 邮箱 OTP / Magic Link）。
+本模块仅负责：
+  - 用 SUPABASE_JWT_SECRET（HS256）校验前端传来的 JWT，解出 sub / email / role
+  - 回查 profiles 表补 is_admin
+  - 提供 FastAPI 依赖 get_current_user / require_admin
 
-不引入额外依赖（stdlib 足以），便于免费部署。
+本地开发未配置 Supabase 时，自动进入「dev token」回退模式，便于沙箱自测：
+  Authorization: Bearer dev:<任意uid>  会被当作本地开发用户（is_admin=True）。
+该分支仅在 using_supabase()==False 时生效，绝不进入生产路径。
 """
 
-import hashlib
-import hmac
 import os
-import secrets
-import time
-from datetime import datetime, timedelta
 from typing import Optional
 
+import jwt
 from fastapi import Header, HTTPException
 
-import db
-from mailer import send_verification_email
+import supabase_client
 
-SESSION_TTL_DAYS = 30
-CODE_TTL_SECONDS = 5 * 60  # 验证码 5 分钟有效
-
-# 通过环境变量额外授予管理员权限的邮箱（逗号分隔）；首个注册用户也会自动成为管理员
+# 通过环境变量额外授予管理员权限的邮箱（逗号分隔）
 ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
 
 
-def is_admin(user: dict) -> bool:
-    """判断用户是否为管理员（库内 is_admin 标记 或 环境变量 ADMIN_EMAILS 命中）。"""
-    if not user:
-        return False
-    if user.get("is_admin"):
+def is_admin(user: dict = None, uid: str = None, email: str = None) -> bool:
+    """判断用户是否为管理员（profiles.is_admin 或 ADMIN_EMAILS 命中）。"""
+    if user:
+        uid = uid or user.get("id")
+        email = email or user.get("email")
+    if email and email.strip().lower() in ADMIN_EMAILS:
         return True
-    if (user.get("email") or "").strip().lower() in ADMIN_EMAILS:
-        return True
+    if supabase_client.using_supabase() and uid:
+        try:
+            row = (supabase_client.get_service_client()
+                   .table("profiles").select("is_admin").eq("id", uid).execute())
+            if row.data:
+                return bool(row.data[0].get("is_admin"))
+        except Exception:
+            pass
     return False
 
 
-# ----------------------------------------------------------------------
-#  密码哈希
-# ----------------------------------------------------------------------
-def hash_password(password: str) -> str:
-    """返回 'salt$iterations$hash' 形式的存储串。"""
-    salt = secrets.token_bytes(16)
-    iterations = 100_000
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return f"{iterations}${salt.hex()}${dk.hex()}"
-
-
-def verify_password(password: str, stored: str) -> bool:
+def _decode_supabase_jwt(token: str) -> dict:
+    """校验 Supabase 签发的 JWT（HS256），返回 payload。失败抛 401。"""
+    secret = supabase_client.get_jwt_secret()
+    if not secret:
+        raise HTTPException(status_code=500, detail="服务端未配置 SUPABASE_JWT_SECRET")
     try:
-        iterations_s, salt_hex, hash_hex = stored.split("$")
-        iterations = int(iterations_s)
-        salt = bytes.fromhex(salt_hex)
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-        return hmac.compare_digest(dk.hex(), hash_hex)
-    except Exception:
-        return False
+        # Supabase JWT 的 aud 通常为 "authenticated" 或项目 ref，这里跳过 aud 校验
+        return jwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="令牌无效")
 
 
-# ----------------------------------------------------------------------
-#  验证码
-# ----------------------------------------------------------------------
-def _gen_code() -> str:
-    return f"{secrets.randbelow(1_000_000):06d}"
-
-
-def set_verify_code(email: str, code: str) -> None:
-    exp = int(time.time()) + CODE_TTL_SECONDS
-    conn = db.get_conn()
-    with db.db_lock():
-        conn.execute(
-            "UPDATE users SET verify_code=?, verify_exp=? WHERE email=?",
-            (code, exp, email),
-        )
-        conn.commit()
-
-
-def check_verify_code(email: str, code: str) -> bool:
-    conn = db.get_conn()
-    with db.db_lock():
-        row = conn.execute(
-            "SELECT verify_code, verify_exp FROM users WHERE email=?", (email,)
-        ).fetchone()
-    if not row:
-        return False
-    if row["verify_exp"] and int(time.time()) > row["verify_exp"]:
-        return False
-    return hmac.compare_digest(row["verify_code"] or "", code)
-
-
-# ----------------------------------------------------------------------
-#  用户 / 会话 CRUD
-# ----------------------------------------------------------------------
-def get_user_by_email(email: str) -> Optional[dict]:
-    conn = db.get_conn()
-    with db.db_lock():
-        row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-    return dict(row) if row else None
-
-
-def create_user(email: str, password: str, display_name: str = "") -> dict:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    pw_hash = hash_password(password)
-    conn = db.get_conn()
-    with db.db_lock():
-        # 首个注册用户自动成为管理员
-        cnt = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
-        is_admin_flag = 1 if cnt == 0 else 0
-        cur = conn.execute(
-            "INSERT INTO users(email, display_name, password_hash, verified, is_admin, created_at) "
-            "VALUES(?,?,?,0,?,?)",
-            (email, display_name or email.split("@")[0], pw_hash, is_admin_flag, now),
-        )
-        conn.commit()
-        uid = cur.lastrowid
-    return get_user_by_email(email)
-
-
-def mark_verified(email: str) -> None:
-    conn = db.get_conn()
-    with db.db_lock():
-        conn.execute(
-            "UPDATE users SET verified=1, verify_code=NULL, verify_exp=NULL WHERE email=?",
-            (email,),
-        )
-        conn.commit()
-
-
-def create_session(user_id: int) -> str:
-    token = secrets.token_urlsafe(32)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    expires_at = int(time.time()) + SESSION_TTL_DAYS * 86400
-    conn = db.get_conn()
-    with db.db_lock():
-        conn.execute(
-            "INSERT INTO sessions(token, user_id, created_at, expires_at) VALUES(?,?,?,?)",
-            (token, user_id, now, expires_at),
-        )
-        conn.commit()
-    return token
-
-
-def get_user_by_token(token: str) -> Optional[dict]:
-    if not token:
-        return None
-    conn = db.get_conn()
-    with db.db_lock():
-        srow = conn.execute(
-            "SELECT user_id, expires_at FROM sessions WHERE token=?", (token,)
-        ).fetchone()
-        if not srow or int(time.time()) > srow["expires_at"]:
-            if srow:
-                conn.execute("DELETE FROM sessions WHERE token=?", (token,))
-                conn.commit()
-            return None
-        urow = conn.execute(
-            "SELECT * FROM users WHERE id=?", (srow["user_id"],)
-        ).fetchone()
-    return dict(urow) if urow else None
-
-
-def touch_login(user_id: int) -> None:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = db.get_conn()
-    with db.db_lock():
-        conn.execute("UPDATE users SET last_login=? WHERE id=?", (now, user_id))
-        conn.commit()
+def _dev_user(token: str) -> dict:
+    """本地开发回退：把 Bearer 内容当作 uid（dev: 前缀可省略）。"""
+    uid = token[4:] if token.startswith("dev:") else token
+    if not uid:
+        raise HTTPException(status_code=401, detail="缺少开发令牌")
+    email = f"{uid}@dev.local"
+    return {"id": uid, "email": email, "is_admin": is_admin(email=email) or True}
 
 
 # ----------------------------------------------------------------------
@@ -180,85 +72,43 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="未登录或缺少令牌")
     token = authorization.split(" ", 1)[1].strip()
-    user = get_user_by_token(token)
-    if not user:
-        raise HTTPException(status_code=401, detail="令牌无效或已过期")
-    return user
+    if not token:
+        raise HTTPException(status_code=401, detail="令牌为空")
+
+    if supabase_client.using_supabase():
+        payload = _decode_supabase_jwt(token)
+        uid = payload.get("sub")
+        if not uid:
+            raise HTTPException(status_code=401, detail="令牌缺少用户标识")
+        email = (payload.get("email") or "").lower()
+        return {"id": uid, "email": email, "is_admin": is_admin(uid=uid, email=email)}
+    # 本地开发回退
+    return _dev_user(token)
 
 
 def require_admin(authorization: Optional[str] = Header(None)) -> dict:
     """管理员依赖：非管理员返回 403。"""
     user = get_current_user(authorization)
-    if not is_admin(user):
+    if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return user
 
 
-# ----------------------------------------------------------------------
-#  业务封装：注册 / 验证 / 登录 / 重发
-# ----------------------------------------------------------------------
-def register(email: str, password: str, display_name: str = ""):
-    email = (email or "").strip().lower()
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="邮箱格式不正确")
-    if len(password or "") < 6:
-        raise HTTPException(status_code=400, detail="密码至少 6 位")
-    if get_user_by_email(email):
-        raise HTTPException(status_code=409, detail="该邮箱已注册")
-
-    create_user(email, password, display_name)
-    code = _gen_code()
-    set_verify_code(email, code)
-    sent = send_verification_email(email, code)
-    return {
-        "success": True,
-        "email": email,
-        "email_sent": bool(sent),        # 是否真实发出（未配置 SMTP 时为 False）
-        "dev_code": code if not sent else None,
-    }
-
-
-def verify_email(email: str, code: str):
-    email = (email or "").strip().lower()
-    if not check_verify_code(email, code):
-        raise HTTPException(status_code=400, detail="验证码错误或已过期")
-    mark_verified(email)
-    return {"success": True, "email": email}
-
-
-def login(email: str, password: str):
-    email = (email or "").strip().lower()
-    user = get_user_by_email(email)
-    if not user or not verify_password(password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="邮箱或密码错误")
-    if not user["verified"]:
-        raise HTTPException(status_code=403, detail="请先完成邮箱验证再登录")
-    token = create_session(user["id"])
-    touch_login(user["id"])
-    return {
-        "success": True,
-        "token": token,
-        "user": {
-            "id": user["id"],
-            "email": user["email"],
-            "display_name": user["display_name"],
-            "verified": bool(user["verified"]),
-            "is_admin": bool(user["is_admin"]),
-        },
-    }
-
-
-def resend_code(email: str):
-    email = (email or "").strip().lower()
-    user = get_user_by_email(email)
-    if not user:
-        raise HTTPException(status_code=404, detail="账号不存在")
-    code = _gen_code()
-    set_verify_code(email, code)
-    sent = send_verification_email(email, code)
-    return {
-        "success": True,
-        "email": email,
-        "email_sent": bool(sent),
-        "dev_code": code if not sent else None,
-    }
+def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    """与 get_current_user 类似，但失败/缺失时返回 None（用于看板回退默认）。"""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    try:
+        if supabase_client.using_supabase():
+            payload = _decode_supabase_jwt(token)
+            uid = payload.get("sub")
+            if not uid:
+                return None
+            email = (payload.get("email") or "").lower()
+            return {"id": uid, "email": email, "is_admin": is_admin(uid=uid, email=email)}
+        return _dev_user(token)
+    except Exception:
+        return None

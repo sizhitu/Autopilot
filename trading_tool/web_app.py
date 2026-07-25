@@ -43,6 +43,13 @@ import db
 import auth
 import mailer
 import daily_store
+import user_store
+import ticket_store
+import settings_store
+import supabase_client
+import symbols
+import watchlist_store
+import cache
 
 app = FastAPI(title="藤本茂融合策略 Web 工具 API", version="3.0")
 fetcher = DataFetcher()
@@ -240,10 +247,14 @@ def _df_from_stored(rows: list) -> Optional[pd.DataFrame]:
 
 def _optional_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
     """可选登录：有合法令牌则返回用户，否则返回 None（用于看板回退到默认）。"""
-    if not authorization or not authorization.lower().startswith("bearer "):
-        return None
-    token = authorization.split(" ", 1)[1].strip()
-    return auth.get_user_by_token(token)
+    return auth.get_optional_user(authorization)
+
+
+def _bearer(authorization: Optional[str] = Header(None)) -> str:
+    """从 Authorization 头提取原始 Bearer token（用于用户态 RLS 客户端）。"""
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    return ""
 
 
 # ================================================================
@@ -254,68 +265,36 @@ async def health():
     return {"success": True, "service": "autopilot-api", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 
+@app.get("/api/config")
+async def public_config():
+    """公开配置：前端用其初始化 supabase-js（anon key / url 均为公开安全值）。"""
+    return {
+        "success": True,
+        "supabase_url": supabase_client.SUPABASE_URL,
+        "supabase_anon_key": supabase_client.SUPABASE_ANON_KEY,
+        "support_email": mailer.SUPPORT_EMAIL,
+        "site_name": mailer.SITE_NAME,
+        "using_supabase": supabase_client.using_supabase(),
+    }
+
+
 # ================================================================
 #  认证 API
+#  认证本身由前端 supabase-js + Supabase Auth 完成（注册 / 邮箱 OTP / Magic Link）。
+#  后端只校验前端传来的 JWT，并返回/同步用户资料。
 # ================================================================
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    display_name: str = ""
-
-
-class VerifyRequest(BaseModel):
-    email: str
-    code: str
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-class ResendRequest(BaseModel):
-    email: str
-
-
-@app.post("/api/auth/register")
-async def api_register(req: RegisterRequest):
-    """注册（发送邮箱验证码）。未配置 SMTP 时返回 dev_code 便于调试。"""
-    r = auth.register(req.email, req.password, req.display_name)
-    return JSONResponse(content=r)
-
-
-@app.post("/api/auth/verify")
-async def api_verify(req: VerifyRequest):
-    """邮箱验证码校验。"""
-    r = auth.verify_email(req.email, req.code)
-    return JSONResponse(content=r)
-
-
-@app.post("/api/auth/login")
-async def api_login(req: LoginRequest):
-    """登录（需已完成邮箱验证）。"""
-    r = auth.login(req.email, req.password)
-    return JSONResponse(content=r)
-
-
-@app.post("/api/auth/resend")
-async def api_resend(req: ResendRequest):
-    """重新发送验证码。"""
-    r = auth.resend_code(req.email)
-    return JSONResponse(content=r)
-
-
 @app.get("/api/auth/me")
 async def api_me(user: dict = Depends(auth.get_current_user)):
-    """返回当前登录用户信息。"""
+    """返回当前登录用户信息（并防御性同步 profiles 行）。"""
+    profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
     return {
         "success": True,
         "user": {
             "id": user["id"],
-            "email": user["email"],
-            "display_name": user["display_name"],
-            "verified": bool(user["verified"]),
-            "is_admin": bool(user["is_admin"]),
+            "email": user.get("email", ""),
+            "display_name": profile.get("display_name") or (user.get("email", "").split("@")[0]),
+            "verified": True,
+            "is_admin": bool(profile.get("is_admin") or user.get("is_admin")),
         },
     }
 
@@ -351,56 +330,32 @@ class TicketReplyRequest(BaseModel):
 
 @app.get("/api/admin/stats")
 async def admin_stats(admin: dict = Depends(auth.require_admin)):
-    """注册用户统计：总数 / 已验证 / 近7天 / 近30天。"""
-    conn = db.get_conn()
-    with db.db_lock():
-        total = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
-        verified = conn.execute("SELECT COUNT(*) AS c FROM users WHERE verified=1").fetchone()["c"]
-        now = datetime.now()
-        d7 = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-        d30 = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-        recent_7 = conn.execute("SELECT COUNT(*) AS c FROM users WHERE created_at>=?", (d7,)).fetchone()["c"]
-        recent_30 = conn.execute("SELECT COUNT(*) AS c FROM users WHERE created_at>=?", (d30,)).fetchone()["c"]
-        tickets_open = conn.execute("SELECT COUNT(*) AS c FROM tickets WHERE status='open'").fetchone()["c"]
-    return {
-        "success": True,
-        "total_users": total,
-        "verified_users": verified,
-        "recent_7d": recent_7,
-        "recent_30d": recent_30,
-        "open_tickets": tickets_open,
-    }
+    """注册用户统计：总数 / 已验证 / 近7天 / 近30天 / 未处理工单。"""
+    s = user_store.user_stats()
+    s["open_tickets"] = ticket_store.count_open()
+    s["success"] = True
+    return s
 
 
 @app.get("/api/admin/users")
 async def admin_users(limit: int = 100, offset: int = 0, admin: dict = Depends(auth.require_admin)):
     """注册用户列表（脱敏：不含密码哈希）。"""
-    conn = db.get_conn()
-    with db.db_lock():
-        rows = conn.execute(
-            "SELECT id, email, display_name, verified, is_admin, created_at, last_login "
-            "FROM users ORDER BY id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
-    users = [{
-        "id": r["id"], "email": r["email"], "display_name": r["display_name"],
-        "verified": bool(r["verified"]), "is_admin": bool(r["is_admin"]),
-        "created_at": r["created_at"], "last_login": r["last_login"],
-    } for r in rows]
-    return {"success": True, "count": len(users), "users": users}
+    users, total = user_store.list_profiles(limit, offset)
+    return {"success": True, "count": len(users), "total": total, "users": users}
 
 
 @app.get("/api/admin/settings/smtp")
 async def admin_get_smtp(admin: dict = Depends(auth.require_admin)):
-    """查看当前 SMTP 配置（密码脱敏）。"""
+    """查看当前 SMTP 配置（密码脱敏）。Resend 优先，SMTP 作为回退。"""
     def g(k, env):
-        v = db.get_setting(k)
+        v = settings_store.get_setting(k)
         return v if v is not None else os.getenv(env, "")
     host = g("smtp_host", "SMTP_HOST")
     user = g("smtp_user", "SMTP_USER")
     frm = g("smtp_from", "SMTP_FROM") or user
     return {
         "success": True,
+        "resend_configured": bool(mailer.RESEND_API_KEY),
         "configured": bool(host),
         "smtp_host": host,
         "smtp_port": g("smtp_port", "SMTP_PORT") or "465",
@@ -413,7 +368,7 @@ async def admin_get_smtp(admin: dict = Depends(auth.require_admin)):
 
 @app.post("/api/admin/settings/smtp")
 async def admin_set_smtp(req: SmtpSettingsRequest, admin: dict = Depends(auth.require_admin)):
-    """后台配置 SMTP（保存到 settings 表，覆盖环境变量）。空字符串=保留/不覆盖。"""
+    """后台配置 SMTP（保存到 settings 层，覆盖环境变量）。空字符串=保留/不覆盖。"""
     mapping = {
         "smtp_host": req.smtp_host, "smtp_port": req.smtp_port,
         "smtp_user": req.smtp_user, "smtp_pass": req.smtp_pass,
@@ -422,7 +377,7 @@ async def admin_set_smtp(req: SmtpSettingsRequest, admin: dict = Depends(auth.re
     written = {}
     for k, v in mapping.items():
         if v not in (None, ""):
-            db.set_setting(k, v)
+            settings_store.set_setting(k, v)
             written[k] = True
     # 测试连通性（发一封到管理员自己的邮箱）
     ok = mailer.send_email(
@@ -435,16 +390,20 @@ async def admin_set_smtp(req: SmtpSettingsRequest, admin: dict = Depends(auth.re
 
 @app.post("/api/admin/edm/send")
 async def admin_edm_send(req: EdmRequest, admin: dict = Depends(auth.require_admin)):
-    """向注册用户群发 EDM（新特性通知等）。scope=all|verified。"""
+    """向注册用户群发 EDM（新特性通知等）。scope=all|verified（Supabase 模式均已验证）。"""
     if not req.subject or not req.body:
         raise HTTPException(400, "主题与正文不能为空")
-    conn = db.get_conn()
-    with db.db_lock():
-        if req.scope == "verified":
-            rows = conn.execute("SELECT email FROM users WHERE verified=1").fetchall()
-        else:
-            rows = conn.execute("SELECT email FROM users").fetchall()
-    recipients = [r["email"] for r in rows]
+    # 分页拉取全部用户邮箱
+    recipients = []
+    offset = 0
+    while True:
+        rows, _ = user_store.list_profiles(limit=500, offset=offset)
+        if not rows:
+            break
+        recipients.extend([r["email"] for r in rows if r.get("email")])
+        if len(rows) < 500:
+            break
+        offset += 500
     sent = mailer.send_edm(req.subject, req.body, recipients)
     return {"success": True, "targets": len(recipients), "sent": sent}
 
@@ -458,17 +417,8 @@ async def api_contact(req: ContactRequest):
         raise HTTPException(400, "请填写有效邮箱")
     if len(message) < 3:
         raise HTTPException(400, "请填写咨询内容")
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = db.get_conn()
-    with db.db_lock():
-        cur = conn.execute(
-            "INSERT INTO tickets(name, email, country, message, status, created_at) "
-            "VALUES(?,?,?,?,'open',?)",
-            (req.name.strip(), email, req.country.strip(), message, now),
-        )
-        conn.commit()
-        tid = cur.lastrowid
-    # 立即转发到客服邮箱
+    # 落库（service 操作）+ 立即转发到客服邮箱
+    tid = ticket_store.create_ticket(req.name.strip(), email, req.country.strip(), message)
     mailed = mailer.send_ticket_notification(req.name, email, req.country, message, tid)
     return {"success": True, "ticket_id": tid, "notified": bool(mailed)}
 
@@ -476,13 +426,7 @@ async def api_contact(req: ContactRequest):
 @app.get("/api/admin/tickets")
 async def admin_tickets(limit: int = 50, admin: dict = Depends(auth.require_admin)):
     """工单列表（最新在前）。"""
-    conn = db.get_conn()
-    with db.db_lock():
-        rows = conn.execute(
-            "SELECT id, name, email, country, message, status, reply, created_at "
-            "FROM tickets ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
-    tickets = [dict(r) for r in rows]
+    tickets = ticket_store.list_tickets(limit)
     return {"success": True, "count": len(tickets), "tickets": tickets}
 
 
@@ -492,18 +436,10 @@ async def admin_ticket_reply(ticket_id: int, req: TicketReplyRequest, admin: dic
     reply = (req.reply or "").strip()
     if not reply:
         raise HTTPException(400, "回复内容不能为空")
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = db.get_conn()
-    with db.db_lock():
-        row = conn.execute("SELECT email FROM tickets WHERE id=?", (ticket_id,)).fetchone()
-        if not row:
-            raise HTTPException(404, "工单不存在")
-        conn.execute(
-            "UPDATE tickets SET status='replied', reply=?, replied_at=? WHERE id=?",
-            (reply, now, ticket_id),
-        )
-        conn.commit()
-        to_email = row["email"]
+    to_email = ticket_store.get_ticket_email(ticket_id)
+    if not to_email:
+        raise HTTPException(404, "工单不存在")
+    ticket_store.reply_ticket(ticket_id, reply)
     mailer.send_email(
         to_email=to_email,
         subject=f"【{mailer.SITE_NAME}】关于您的咨询（工单 #{ticket_id}）的回复",
@@ -531,37 +467,44 @@ class QuoteRequest(BaseModel):
 async def get_quote(req: QuoteRequest):
     """
     获取真实行情并自动分析。
-    容错：实时拉取失败时，回退到本地已存储的每日行情（daily_data），
-    并在响应中标记 stale=True 告知前端数据为缓存。
+    数据分层：原始 K 线写入缓存层（不落业务库）；实时拉取失败时，
+    优先回退行情缓存，再回退每日 K 线缓存，并标记 stale=True 告知前端数据可能延迟。
     """
     try:
         df = fetcher.fetch(req.symbol, req.days)
         source = "live"
         stale = False
     except Exception as e:
-        # 实时失败 → 尝试本地存储兜底
-        stored = daily_store.get_stored_daily(req.symbol)
-        df = _df_from_stored(stored)
+        # 第一层兜底：直接用此前缓存的完整行情分析结果
+        cached = cache.get_quote_cache(req.symbol)
+        if cached:
+            cached["stale"] = True
+            return JSONResponse(content=cached,
+                                headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+        # 第二层兜底：用缓存的每日 K 线重建 DataFrame
+        stored = cache.get_daily_cache(req.symbol)
+        df = _df_from_stored(stored) if stored else None
         if df is None or len(df) < 5:
-            raise HTTPException(400, f"获取数据失败且无本地缓存: {str(e)}")
+            raise HTTPException(400, f"获取数据失败且无缓存，请稍后重试: {str(e)}")
         source = "cache"
         stale = True
 
     if len(df) < 5:
         raise HTTPException(400, f"数据不足: 仅{len(df)}根K线，无法分析")
 
-    # 落库每日数据（live 时覆盖最新；cache 兜底时补全可能缺失的日期）
-    try:
-        daily_store.store_daily_bars(req.symbol, df, source=source)
-    except Exception:
-        pass
+    # 实时成功时，把每日 K 线写入缓存层（供回测 / 指标分析 / 容错）
+    if source == "live":
+        try:
+            daily_store.store_daily_bars(req.symbol, df, source=source)
+        except Exception:
+            pass
 
     strategy = FujimotoStrategy(total_capital=100000)
     result = strategy.analyze(df)
     nine_turn = calc_nine_turn_display(df)
     extra = _extra_metrics(df, req.symbol)
 
-    return JSONResponse(content=_to_jsonable({
+    payload = _to_jsonable({
         "success": True,
         "symbol": req.symbol,
         "stale": stale,
@@ -576,7 +519,17 @@ async def get_quote(req: QuoteRequest):
             "start_date": df['date'].iloc[0].strftime('%Y-%m-%d') if 'date' in df.columns else "",
             "end_date": df['date'].iloc[-1].strftime('%Y-%m-%d') if 'date' in df.columns else "",
         }
-    }), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    })
+
+    # 实时成功时，把完整行情分析结果写入缓存层（短时 TTL，供失败兜底）
+    if source == "live":
+        try:
+            cache.set_quote_cache(req.symbol, payload)
+        except Exception:
+            pass
+
+    return JSONResponse(content=payload,
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 # ================================================================
@@ -599,11 +552,23 @@ async def get_daily(symbol: str, limit: int = Query(0, description="0=全部，>
 # ================================================================
 @app.get("/api/watchlist")
 async def get_watchlist(user: Optional[dict] = Depends(_optional_user)):
-    """获取自选看板。已登录用其自选，未登录回退默认看板。"""
+    """获取自选看板。已登录用其自选（按用户排序、附带备注），未登录回退默认看板。"""
     user_id = user["id"] if user else None
     try:
         data = get_watchlist_status(user_id)
         data["user_scoped"] = user_id is not None
+        # 已登录：按用户排序顺序重排看板，并附带每只备注
+        if user_id:
+            try:
+                items = watchlist_store.get_all(user_id)
+                order = [i["symbol"] for i in items]
+                notes = {i["symbol"]: (i.get("note") or "") for i in items}
+                if order:
+                    rank = {s: i for i, s in enumerate(order)}
+                    data["stocks"].sort(key=lambda x: rank.get(x["code"], 1 << 30))
+                data["notes"] = notes
+            except Exception:
+                data["notes"] = {}
         return JSONResponse(content=_to_jsonable(data),
                             headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
     except Exception as e:
@@ -616,37 +581,68 @@ class WatchAddRequest(BaseModel):
 
 
 @app.post("/api/watchlist/add")
-async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_current_user)):
-    """添加自选（需登录）。支持「代码」或「名称」输入：名称会先解析成代码再入库。"""
-    raw = req.symbol.strip()
+async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_current_user),
+                        authorization: Optional[str] = Header(None)):
+    """添加自选（需登录）。支持「代码」或「名称」输入；多市场自动归一化。"""
+    raw = (req.symbol or "").strip()
     if not raw:
         raise HTTPException(400, "代码/名称不能为空")
-    # 代码型（不含中文）直接当作代码；否则视为名称，走搜索解析
-    is_code = bool(re.fullmatch(r"[A-Za-z0-9.\-^]+", raw.upper()))
-    symbol = raw.upper()
     name = (req.name or "").strip()
-    if not is_code:
+    # 代码型（不含中文）直接当作代码；否则视为名称，走搜索解析
+    if not symbols.is_code_like(raw):
         try:
             hits = fetcher.search(raw)
             if hits:
-                symbol = hits[0]["code"].upper()
+                raw = hits[0]["code"]
                 name = name or hits[0].get("name", "")
         except Exception:
             pass
+    norm = symbols.normalize_symbol(raw)
     if not name:
         try:
-            name = fetcher.lookup_name(symbol) or ""
+            name = fetcher.lookup_name(norm["symbol"]) or ""
         except Exception:
             name = ""
-    ok = add_user_watchlist(user["id"], symbol, name)
-    return {"success": ok, "symbol": symbol, "name": name}
+    ok = watchlist_store.add(user["id"], norm["symbol"], name, norm["market"], "",
+                             _bearer(authorization))
+    return {"success": ok, "symbol": norm["symbol"], "name": name, "market": norm["market"]}
 
 
 @app.delete("/api/watchlist/remove")
-async def watchlist_remove(symbol: str = Query(...), user: dict = Depends(auth.get_current_user)):
+async def watchlist_remove(symbol: str = Query(...), user: dict = Depends(auth.get_current_user),
+                           authorization: Optional[str] = Header(None)):
     """删除自选（需登录）。"""
-    symbol = symbol.strip().upper()
-    ok = remove_user_watchlist(user["id"], symbol)
+    symbol = (symbol or "").strip().upper()
+    ok = watchlist_store.remove(user["id"], symbol, _bearer(authorization))
+    return {"success": ok, "symbol": symbol}
+
+
+class WatchReorderRequest(BaseModel):
+    order: list = []   # 期望的完整 symbol 顺序
+
+
+@app.post("/api/watchlist/reorder")
+async def watchlist_reorder(req: WatchReorderRequest, user: dict = Depends(auth.get_current_user),
+                            authorization: Optional[str] = Header(None)):
+    """调整自选顺序（需登录）。传入期望的 symbol 顺序列表。"""
+    ok = watchlist_store.reorder(user["id"], [str(s).upper() for s in req.order],
+                                 _bearer(authorization))
+    return {"success": ok}
+
+
+class WatchNoteRequest(BaseModel):
+    symbol: str
+    note: str = ""
+
+
+@app.post("/api/watchlist/note")
+async def watchlist_note(req: WatchNoteRequest, user: dict = Depends(auth.get_current_user),
+                         authorization: Optional[str] = Header(None)):
+    """为某自选添加/修改备注（需登录）。"""
+    symbol = (req.symbol or "").strip().upper()
+    if not symbol:
+        raise HTTPException(400, "代码不能为空")
+    ok = watchlist_store.set_note(user["id"], symbol, req.note or "", _bearer(authorization))
     return {"success": ok, "symbol": symbol}
 
 

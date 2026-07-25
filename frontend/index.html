@@ -177,6 +177,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   #watchlistTable th, #watchlistTable td { padding: 5px 6px !important; }
 }
 </style>
+<!-- Supabase JS SDK（认证：邮箱 OTP / Magic Link）-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -201,8 +203,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <div id="authMsg" style="font-size:11px;margin-bottom:8px;min-height:14px;color:var(--orange);"></div>
     <input id="authEmail" type="email" placeholder="邮箱" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
     <input id="authName" type="text" placeholder="昵称（注册可选）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
-    <input id="authPwd" type="password" placeholder="密码（≥6位）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
-    <input id="authCode" type="text" placeholder="邮箱验证码（注册后查收）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
+    <input id="authPwd" type="password" placeholder="密码（≥6位）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
+    <input id="authCode" type="text" placeholder="邮箱验证码 / 一次性密码（6位）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
     <button class="btn" style="width:100%;margin-bottom:6px;" onclick="submitAuth()">提交</button>
     <div style="text-align:right;font-size:11px;margin-top:2px;display:none;" id="resendLink">
       <a href="javascript:void(0)" style="color:var(--text-dim);" onclick="resendCode()">重新发送验证码</a>
@@ -502,10 +504,15 @@ async function apiJSON(path, opts = {}) {
     const res = await api(path, opts);
     const ct = res.headers.get('content-type') || '';
     const json = ct.includes('application/json') ? await res.json() : { success: false, detail: await res.text() };
+    if (res.status === 429) {
+      showToast('请求过于频繁，请稍后再试');
+      throw new Error('请求过于频繁（限流）');
+    }
     if (!res.ok) throw new Error(json.detail || ('HTTP ' + res.status));
     return json;
   } catch (e) {
-    if (!String(e.message).includes('HTTP')) showToast('请求失败: ' + e.message);
+    if (!String(e.message).includes('HTTP') && !String(e.message).includes('限流') && !String(e.message).includes('频繁'))
+      showToast('网络异常，请稍后重试: ' + e.message);
     throw e;
   }
 }
@@ -523,10 +530,22 @@ function showToast(msg, type = 'error') {
   clearTimeout(t._timer); t._timer = setTimeout(() => { t.style.opacity = '0'; }, 2800);
 }
 
-// ===================== 登录 / 注册 =====================
-let authMode = 'login';     // login | register | verify
+// ===================== Supabase 客户端（认证）=====================
+let sb = null;                 // supabase-js client
 let pendingEmail = '';
-let pendingPwd = '';
+let pendingOtpType = 'email';  // signup | email（注册 / 登录）
+
+async function initSupabase() {
+  try {
+    const cfg = await (await fetch(BACKEND + '/api/config')).json();
+    if (cfg.supabase_url && cfg.supabase_anon_key && window.supabase) {
+      sb = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+    }
+  } catch (e) { console.warn('Supabase 初始化失败', e); }
+}
+
+// ===================== 登录 / 注册（Supabase Auth：OTP / Magic Link）=====================
+let authMode = 'login';     // login | register | verify
 
 function openLogin() { authMode = 'login'; showAuth('登录'); }
 function openRegister() { authMode = 'register'; showAuth('注册'); }
@@ -534,76 +553,77 @@ function showAuth(title) {
   document.getElementById('authTitle').textContent = title;
   document.getElementById('authMsg').textContent = '';
   document.getElementById('authCode').style.display = 'none';
-  document.getElementById('devCodeHint').style.display = 'none';
   document.getElementById('resendLink').style.display = 'none';
-  document.getElementById('authSwitch').textContent = authMode === 'login' ? '注册' : '登录';
   document.getElementById('authName').style.display = authMode === 'register' ? 'block' : 'none';
   document.getElementById('authModal').classList.remove('hidden');
+  document.getElementById('authSwitch').textContent = authMode === 'login' ? '注册' : '登录';
 }
 function switchAuthMode() { authMode = authMode === 'login' ? 'register' : 'login'; showAuth(authMode === 'login' ? '登录' : '注册'); }
 function closeAuth() { document.getElementById('authModal').classList.add('hidden'); }
 
 async function submitAuth() {
   const email = document.getElementById('authEmail').value.trim();
-  const pwd = document.getElementById('authPwd').value;
   const name = document.getElementById('authName').value.trim();
   const code = document.getElementById('authCode').value.trim();
   const msg = m => document.getElementById('authMsg').textContent = m;
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg('请填写有效邮箱'); return; }
   try {
-    if (authMode === 'register') {
-      if (!email || !pwd) { msg('请填写邮箱与密码'); return; }
-      const r = await apiJSON('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pwd, display_name: name }) });
-      pendingEmail = email; pendingPwd = pwd;
-      authMode = 'verify';
-      document.getElementById('authTitle').textContent = '邮箱验证';
-      document.getElementById('authCode').style.display = 'block';
-      document.getElementById('authSwitch').textContent = '登录';
-      document.getElementById('resendLink').style.display = 'inline';
-      if (r.email_sent) {
-        const masked = email.replace(/(.{2}).*(@.*)/, '$1***$2');
-        msg('验证码已发送至 ' + masked + '，请查收邮箱');
-      } else {
-        msg('后端未配置 SMTP 发信，验证码见下方（开发模式）');
-      }
-      if (r.dev_code) { const h = document.getElementById('devCodeHint'); h.style.display = 'block'; h.textContent = '开发模式验证码: ' + r.dev_code; }
-      return;
-    }
     if (authMode === 'verify') {
       if (!code) { msg('请输入验证码'); return; }
-      await apiJSON('/api/auth/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingEmail, code }) });
-      msg('验证成功，正在登录…');
-      const login = await apiJSON('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingEmail, password: pendingPwd }) });
-      finishLogin(login);
+      const { data, error } = await sb.auth.verifyOTP({ email: pendingEmail, token: code, type: pendingOtpType });
+      if (error) throw error;
+      if (data.session) return finishSession(data.session);
       return;
     }
-    if (!email || !pwd) { msg('请填写邮箱与密码'); return; }
-    const login = await apiJSON('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pwd }) });
-    finishLogin(login);
-  } catch (e) { msg('错误: ' + e.message); }
+    if (!sb) { msg('认证服务未就绪，请稍后重试'); return; }
+    // 登录 / 注册均走无密码 OTP（具体发验证码还是 Magic Link 由 Supabase 项目设置决定）
+    const { error } = await sb.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: location.href.split('#')[0],
+        shouldCreateUser: authMode === 'register',
+        data: authMode === 'register' ? { display_name: name } : undefined,
+      },
+    });
+    if (error) throw error;
+    pendingEmail = email;
+    pendingOtpType = authMode === 'register' ? 'signup' : 'email';
+    authMode = 'verify';
+    document.getElementById('authTitle').textContent = '邮箱验证';
+    document.getElementById('authCode').style.display = 'block';
+    document.getElementById('authSwitch').textContent = '登录';
+    document.getElementById('resendLink').style.display = 'inline';
+    const masked = email.replace(/(.{2}).*(@.*)/, '$1***$2');
+    msg('验证码已发送至 ' + masked + '（若开启 Magic Link，请直接点击邮件中的登录链接）');
+  } catch (e) { msg('错误: ' + (e.message || e)); }
 }
 
 async function resendCode() {
-  if (!pendingEmail) { showToast('请先注册或输入邮箱'); return; }
+  if (!pendingEmail) { showToast('请先输入邮箱并提交'); return; }
   try {
-    const r = await apiJSON('/api/auth/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingEmail }) });
-    if (r.email_sent) {
-      const masked = pendingEmail.replace(/(.{2}).*(@.*)/, '$1***$2');
-      showToast('验证码已重新发送至 ' + masked, 'ok');
-    } else {
-      showToast('后端未配置 SMTP，开发模式验证码见下方');
-      if (r.dev_code) { const h = document.getElementById('devCodeHint'); h.style.display = 'block'; h.textContent = '开发模式验证码: ' + r.dev_code; }
-    }
-  } catch (e) { showToast('重发失败: ' + e.message); }
+    const { error } = await sb.auth.signInWithOtp({
+      email: pendingEmail,
+      options: { emailRedirectTo: location.href.split('#')[0], shouldCreateUser: authMode === 'register' },
+    });
+    if (error) throw error;
+    showToast('验证码已重新发送', 'ok');
+  } catch (e) { showToast('重发失败: ' + (e.message || e)); }
 }
 
-function finishLogin(login) {
-  authToken = login.token; currentUser = login.user;
+async function finishSession(session) {
+  authToken = session.access_token;
   localStorage.setItem('autopilot_token', authToken);
-  localStorage.setItem('autopilot_user', JSON.stringify(login.user));
+  try {
+    const me = await apiJSON('/api/auth/me');
+    currentUser = me.user;
+    localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
+  } catch (e) { currentUser = { email: pendingEmail || '' }; }
   refreshAuthUI(); closeAuth(); showToast('登录成功', 'ok');
   loadWatchlist();
 }
+
 function doLogout() {
+  if (sb) sb.auth.signOut().catch(() => {});
   authToken = ''; currentUser = null;
   localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user');
   refreshAuthUI(); showToast('已退出'); loadWatchlist();
@@ -650,12 +670,28 @@ function openSettings() {
 
 // ===================== 启动鉴权态 =====================
 async function initAuth() {
-  const t = localStorage.getItem('autopilot_token');
-  const u = localStorage.getItem('autopilot_user');
-  if (t && u) {
-    authToken = t; currentUser = JSON.parse(u);
-    try { const me = await apiJSON('/api/auth/me'); currentUser = me.user; localStorage.setItem('autopilot_user', JSON.stringify(me.user)); }
-    catch (e) { authToken = ''; currentUser = null; localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user'); }
+  await initSupabase();
+  // Magic Link 回跳：URL 片段携带 access_token 等
+  if (sb && location.hash && location.hash.includes('access_token')) {
+    try {
+      const { data, error } = await sb.auth.getSessionFromUrl();
+      if (!error && data.session) {
+        authToken = data.session.access_token;
+        localStorage.setItem('autopilot_token', authToken);
+        const me = await apiJSON('/api/auth/me');
+        currentUser = me.user;
+        localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
+        history.replaceState(null, '', location.pathname + location.search);
+      }
+    } catch (e) { console.warn('Magic Link 回跳解析失败', e); }
+  } else {
+    const t = localStorage.getItem('autopilot_token');
+    const u = localStorage.getItem('autopilot_user');
+    if (t && u) {
+      authToken = t; currentUser = JSON.parse(u);
+      try { const me = await apiJSON('/api/auth/me'); currentUser = me.user; localStorage.setItem('autopilot_user', JSON.stringify(me.user)); }
+      catch (e) { authToken = ''; currentUser = null; localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user'); }
+    }
   }
   refreshAuthUI();
 }
@@ -1060,6 +1096,9 @@ document.addEventListener('touchend', function(e){
 }, {passive:true});
 
 // === 自选看板 ===
+let watchNotes = {};
+let watchOrder = [];
+
 async function loadWatchlist() {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
@@ -1074,6 +1113,8 @@ async function loadWatchlist() {
       setTimeout(loadWatchlist, 3000);
       return;
     }
+    watchNotes = json.notes || {};
+    watchOrder = (json.stocks || []).map(s => s.code);
     document.getElementById('watchlistUpdated').textContent = `更新: ${json.updated_at}`;
     renderWatchlistSummary(json.summary);
     renderWatchlist(json.stocks);
@@ -1082,6 +1123,31 @@ async function loadWatchlist() {
   } finally {
     loading.classList.add('hidden');
   }
+}
+
+// 上移/下移某只自选
+async function moveWatch(code, dir) {
+  if (!currentUser) { showToast('请先登录'); return; }
+  const i = watchOrder.indexOf(code);
+  const j = i + (dir === 'up' ? -1 : 1);
+  if (i < 0 || j < 0 || j >= watchOrder.length) return;
+  [watchOrder[i], watchOrder[j]] = [watchOrder[j], watchOrder[i]];
+  try {
+    await apiJSON('/api/watchlist/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: watchOrder }) });
+    showToast('顺序已更新', 'ok'); loadWatchlist();
+  } catch (e) { showToast('排序失败: ' + e.message); }
+}
+
+// 编辑某只自选备注
+async function editNote(code) {
+  if (!currentUser) { showToast('请先登录'); return; }
+  const cur = watchNotes[code] || '';
+  const note = prompt('为 ' + code + ' 添加/修改备注：', cur);
+  if (note === null) return;
+  try {
+    await apiJSON('/api/watchlist/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: code, note }) });
+    showToast('备注已保存', 'ok'); loadWatchlist();
+  } catch (e) { showToast('备注失败: ' + e.message); }
 }
 
 function renderWatchlistSummary(summary) {
@@ -1146,7 +1212,9 @@ function renderWatchlist(stocks) {
       (s.valuation_detail ? ` <span style="color:var(--text-dim);font-size:10px;">${s.valuation_detail}</span>` : '') +
       ` <span style="color:${_rColor};font-size:9px;border:1px solid currentColor;border-radius:3px;padding:0 3px;white-space:nowrap;">${s.role||''}</span>`;
     html += `<tr onclick="fetchQuote('${s.code}','${s.name}','${s.market}')" style="border-bottom:1px solid var(--border); cursor:pointer;">
-      <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${currentUser ? `<button onclick="removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-right:4px;">✕</button>` : ''}${s.code}</td>
+      <td style="padding:6px 8px;font-weight:600;color:var(--gold);white-space:nowrap;">${
+        currentUser ? `<button onclick="event.stopPropagation();moveWatch('${s.code}','up')" title="上移" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;">↑</button><button onclick="event.stopPropagation();moveWatch('${s.code}','down')" title="下移" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;">↓</button><button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin:0 2px;">✕</button>` : ''
+      }<span onclick="event.stopPropagation();editNote('${s.code}')" title="${(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};border-bottom:${watchNotes[s.code]?'1px dotted var(--gold)':'none'};">${s.code}</span></td>
       <td style="padding:6px 8px;">${s.name}</td>
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${s.price}</td>
       <td style="padding:6px 8px;text-align:right;color:${dayColor};font-weight:600;">${dayText}</td>

@@ -13,30 +13,43 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
-      # SQLite 路径：免费版文件系统临时，重启后会清空。
-      # 如需持久化，可在 Render 挂一个 Disk 并指向该路径（付费），或改用 Render Postgres。
+
+      # ===== Supabase（认证 + 唯一业务数据库）=====
+      # 在 Supabase 控制台 Project Settings → API 中获取；并在 SQL Editor 执行
+      # ../supabase/migrations/0001_init.sql 建立表与 RLS。
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # 用于后端校验前端传来的 JWT（Project Settings → API → JWT Secret）
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+
+      # ===== 本地开发回退（仅未配置 SUPABASE_URL 时使用 SQLite）=====
       - key: DATABASE_PATH
         value: /tmp/autopilot.db
-      # 允许跨域的前端来源（Cloudflare Pages 域名），逗号分隔
-      - key: CORS_ORIGINS
-        value: "https://timebricks.bid,https://autopilot.pages.dev"
-      # 以下为邮件 SMTP 配置（不填则进入开发模式，验证码打印到日志/返回 dev_code）
-      # 也可在后台「管理 → SMTP 配置」里保存（写入数据库，覆盖此处环境变量）
-      - key: SMTP_HOST
+
+      # ===== 缓存层 =====
+      # 早期可留空，自动回退到 Postgres `cache` 表；后期接入 Upstash Redis：
+      - key: UPSTASH_REDIS_REST_URL
         sync: false
-      - key: SMTP_PORT
+      - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
-      - key: SMTP_USER
+
+      # ===== 应用邮件（EDM / 客服工单，走 Resend API）=====
+      # 认证邮件（验证码 / Magic Link）在 Supabase 后台把 Auth 邮件绑定到 Resend。
+      - key: RESEND_API_KEY
         sync: false
-      - key: SMTP_PASS
-        sync: false
-      - key: SMTP_FROM
-        sync: false
-      # 客服工单收件邮箱（用户咨询会自动发到这里并建单）
       - key: SUPPORT_EMAIL
         value: support@timebricks.bid
-      # 额外授予管理员权限的邮箱（逗号分隔）；首个注册用户也会自动成为管理员
-      - key: ADMIN_EMAILS
-        sync: false
       - key: SITE_NAME
         value: Autopilot 投资分析
+
+      # ===== 跨域 / 管理员 =====
+      - key: CORS_ORIGINS
+        value: "https://timebricks.bid,https://autopilot.pages.dev"
+      # 额外授予管理员权限的邮箱（逗号分隔）
+      - key: ADMIN_EMAILS
+        sync: false

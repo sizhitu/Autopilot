@@ -15,6 +15,8 @@ import os
 import sqlite3
 import threading
 
+import supabase_client
+
 # 数据库文件路径：本地默认 ./autopilot.db；Render 上可用环境变量指向持久盘
 DB_PATH = os.getenv(
     "DATABASE_PATH",
@@ -24,6 +26,16 @@ DB_PATH = os.getenv(
 # 全局连接 + 锁（sqlite 单连接多线程需串行化）
 _conn = None
 _db_lock = threading.Lock()
+
+
+def using_supabase() -> bool:
+    """是否以 Supabase Postgres 作为业务数据库。
+
+    返回 True 时，用户业务数据（profiles / watchlists / analysis_history /
+    user_preferences）一律走 supabase_client，本文件仅作为未配置 Supabase
+    时的本地开发 / 沙箱回退。
+    """
+    return supabase_client.using_supabase()
 
 
 def get_conn() -> sqlite3.Connection:
@@ -66,6 +78,9 @@ CREATE TABLE IF NOT EXISTS user_watchlist (
     user_id    INTEGER NOT NULL,
     symbol     TEXT NOT NULL,
     name       TEXT,
+    market     TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    note       TEXT,
     created_at TEXT NOT NULL,
     PRIMARY KEY(user_id, symbol),
     FOREIGN KEY(user_id) REFERENCES users(id)
@@ -134,6 +149,17 @@ def _migrate() -> None:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
         if "is_admin" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        # user_watchlist 增加 market / sort_order / note（多市场 + 排序 + 备注）
+        wcols = {r["name"] for r in conn.execute("PRAGMA table_info(user_watchlist)").fetchall()}
+        for ddl in (
+            "ALTER TABLE user_watchlist ADD COLUMN market TEXT",
+            "ALTER TABLE user_watchlist ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE user_watchlist ADD COLUMN note TEXT",
+        ):
+            try:
+                conn.execute(ddl)
+            except Exception:
+                pass
         conn.commit()
 
 

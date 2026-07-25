@@ -25,6 +25,8 @@ from strategy_engine import FujimotoStrategy
 from nine_turn import calc_nine_turn_display
 from db import get_conn, db_lock
 from daily_store import store_daily_bars
+import symbols
+import watchlist_store
 
 fetcher = DataFetcher()
 
@@ -52,46 +54,28 @@ WATCHLIST = {
 #  未登录 / 尚未添加任何自选的用户，回退到上方全局 WATCHLIST。
 # ----------------------------------------------------------------------
 def get_user_watchlist_symbols(user_id: int) -> list:
-    """返回 [(symbol, name), ...]，按添加时间升序。"""
-    conn = get_conn()
-    with db_lock():
-        rows = conn.execute(
-            "SELECT symbol, name FROM user_watchlist WHERE user_id=? ORDER BY created_at ASC",
-            (user_id,),
-        ).fetchall()
-    return [(r["symbol"], r["name"]) for r in rows]
+    """返回 [(symbol, name), ...]，按 sort_order, created_at 升序。"""
+    items = watchlist_store.get_items(user_id)
+    return items if items else []
 
 
 def add_user_watchlist(user_id: int, symbol: str, name: str = "") -> bool:
-    symbol = (symbol or "").strip().upper()
+    symbol = (symbol or "").strip()
     if not symbol:
         return False
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_conn()
-    with db_lock():
-        conn.execute(
-            "INSERT OR REPLACE INTO user_watchlist(user_id, symbol, name, created_at) "
-            "VALUES(?,?,?,?)",
-            (user_id, symbol, name, now),
-        )
-        conn.commit()
+    norm = symbols.normalize_symbol(symbol)
+    ok = watchlist_store.add(user_id, norm["symbol"], name or "", norm["market"], "")
     # 让该用户看板缓存立即失效，下一次请求会即时重算（修复"添加后不刷新"）
     _invalidate_cache(user_id)
-    return True
+    return ok
 
 
 def remove_user_watchlist(user_id: int, symbol: str) -> bool:
     symbol = (symbol or "").strip().upper()
-    conn = get_conn()
-    with db_lock():
-        conn.execute(
-            "DELETE FROM user_watchlist WHERE user_id=? AND symbol=?",
-            (user_id, symbol),
-        )
-        conn.commit()
+    ok = watchlist_store.remove(user_id, symbol)
     # 同上：删除后让看板缓存立即失效
     _invalidate_cache(user_id)
-    return True
+    return ok
 
 
 def _invalidate_cache(user_id: int) -> None:
