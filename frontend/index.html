@@ -504,6 +504,11 @@ async function apiJSON(path, opts = {}) {
     const res = await api(path, opts);
     const ct = res.headers.get('content-type') || '';
     const json = ct.includes('application/json') ? await res.json() : { success: false, detail: await res.text() };
+    if (res.status === 401) {
+      showToast('登录已过期，请重新登录');
+      if (typeof doLogout === 'function') doLogout();
+      throw new Error('登录已过期');
+    }
     if (res.status === 429) {
       showToast('请求过于频繁，请稍后再试');
       throw new Error('请求过于频繁（限流）');
@@ -511,21 +516,24 @@ async function apiJSON(path, opts = {}) {
     if (!res.ok) throw new Error(json.detail || ('HTTP ' + res.status));
     return json;
   } catch (e) {
-    if (!String(e.message).includes('HTTP') && !String(e.message).includes('限流') && !String(e.message).includes('频繁'))
+    if (!String(e.message).includes('HTTP') && !String(e.message).includes('限流')
+        && !String(e.message).includes('频繁') && !String(e.message).includes('登录已过期')
+        && !String(e.message).includes('401'))
       showToast('网络异常，请稍后重试: ' + e.message);
     throw e;
   }
 }
 
-// 顶部轻量提示
+// 顶部轻量提示（error 红 / ok 绿 / info 灰蓝）
 function showToast(msg, type = 'error') {
   let t = document.getElementById('toast');
   if (!t) {
     t = document.createElement('div'); t.id = 'toast';
-    t.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:9999;padding:8px 16px;border-radius:6px;font-size:13px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.35);transition:opacity .3s;';
+    t.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:9999;padding:8px 16px;border-radius:6px;font-size:13px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.35);transition:opacity .3s;max-width:80vw;';
     document.body.appendChild(t);
   }
-  t.style.background = type === 'ok' ? 'rgba(46,204,113,.95)' : 'rgba(231,76,60,.95)';
+  const bg = type === 'ok' ? 'rgba(46,204,113,.95)' : type === 'info' ? 'rgba(52,152,219,.95)' : 'rgba(231,76,60,.95)';
+  t.style.background = bg;
   t.textContent = msg; t.style.opacity = '1';
   clearTimeout(t._timer); t._timer = setTimeout(() => { t.style.opacity = '0'; }, 2800);
 }
@@ -534,14 +542,34 @@ function showToast(msg, type = 'error') {
 let sb = null;                 // supabase-js client
 let pendingEmail = '';
 let pendingOtpType = 'email';  // signup | email（注册 / 登录）
+let realtimeEnabled = false;   // 多设备实时同步（watchlists 变更订阅），默认关闭
+let _rtChannel = null;         // 当前 Realtime 频道
 
 async function initSupabase() {
   try {
     const cfg = await (await fetch(BACKEND + '/api/config')).json();
+    realtimeEnabled = !!cfg.realtime_enabled;
     if (cfg.supabase_url && cfg.supabase_anon_key && window.supabase) {
       sb = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
     }
   } catch (e) { console.warn('Supabase 初始化失败', e); }
+}
+
+// 多设备实时同步：订阅当前用户的 watchlists 变更，自动刷新看板（需 ENABLE_REALTIME=true）
+function setupRealtime() {
+  if (!realtimeEnabled || !sb || !currentUser) return;
+  try {
+    if (_rtChannel) sb.removeChannel(_rtChannel);
+    _rtChannel = sb.channel('watchlists:' + currentUser.id)
+      .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'watchlists', filter: `user_id=eq.${currentUser.id}` },
+          () => loadWatchlist())
+      .subscribe();
+  } catch (e) { console.warn('Realtime 订阅失败（已忽略）', e); }
+}
+
+function teardownRealtime() {
+  if (sb && _rtChannel) { try { sb.removeChannel(_rtChannel); } catch (e) {} _rtChannel = null; }
 }
 
 // ===================== 登录 / 注册（Supabase Auth：OTP / Magic Link）=====================
@@ -619,11 +647,12 @@ async function finishSession(session) {
     localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
   } catch (e) { currentUser = { email: pendingEmail || '' }; }
   refreshAuthUI(); closeAuth(); showToast('登录成功', 'ok');
-  loadWatchlist();
+  setupRealtime(); loadWatchlist();
 }
 
 function doLogout() {
   if (sb) sb.auth.signOut().catch(() => {});
+  teardownRealtime();
   authToken = ''; currentUser = null;
   localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user');
   refreshAuthUI(); showToast('已退出'); loadWatchlist();
@@ -694,6 +723,7 @@ async function initAuth() {
     }
   }
   refreshAuthUI();
+  setupRealtime();
 }
 
 let currentSymbol = '';
@@ -987,6 +1017,7 @@ async function fetchQuote(symbol, name, market) {
     info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${json.meta.rows}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
 
     updateResults(json.data, json.meta, json.nine_turn);
+    if (json.stale) showToast('⚠ 当前行情为缓存快照，可能延迟', 'info');
     updateNineTurnDetail(json.nine_turn);
     updateHlVal(json.high_low, json.valuation);
     fetchProfile(symbol);   // 异步补充公司主营业务（不阻塞图表）
@@ -1150,6 +1181,21 @@ async function editNote(code) {
   } catch (e) { showToast('备注失败: ' + e.message); }
 }
 
+// 拖拽排序：把 dragCode 拖到 targetCode 之前/之后
+let dragCode = null;
+function dragWatchStart(code) { dragCode = code; }
+async function dropWatch(targetCode) {
+  if (!currentUser || !dragCode || dragCode === targetCode) return;
+  const from = watchOrder.indexOf(dragCode);
+  const to = watchOrder.indexOf(targetCode);
+  if (from < 0 || to < 0) return;
+  watchOrder.splice(to, 0, watchOrder.splice(from, 1)[0]);  // 移动到目标位置
+  try {
+    await apiJSON('/api/watchlist/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: watchOrder }) });
+    showToast('顺序已更新', 'ok'); loadWatchlist();
+  } catch (e) { showToast('排序失败: ' + e.message); }
+}
+
 function renderWatchlistSummary(summary) {
   const el = document.getElementById('watchlistSummary');
   if (!summary) { el.innerHTML = ''; return; }
@@ -1211,7 +1257,10 @@ function renderWatchlist(stocks) {
     const hlHtml = `${hlPart}<br><span style="color:${_vColor};font-weight:600;">${s.valuation||'合理'}</span>` +
       (s.valuation_detail ? ` <span style="color:var(--text-dim);font-size:10px;">${s.valuation_detail}</span>` : '') +
       ` <span style="color:${_rColor};font-size:9px;border:1px solid currentColor;border-radius:3px;padding:0 3px;white-space:nowrap;">${s.role||''}</span>`;
-    html += `<tr onclick="fetchQuote('${s.code}','${s.name}','${s.market}')" style="border-bottom:1px solid var(--border); cursor:pointer;">
+    const dragAttrs = currentUser
+      ? `draggable="true" ondragstart="dragWatchStart('${s.code}')" ondragover="event.preventDefault()" ondrop="dropWatch('${s.code}')" style="border-bottom:1px solid var(--border); cursor:grab;"`
+      : `style="border-bottom:1px solid var(--border); cursor:pointer;"`;
+    html += `<tr ${dragAttrs} onclick="fetchQuote('${s.code}','${s.name}','${s.market}')">
       <td style="padding:6px 8px;font-weight:600;color:var(--gold);white-space:nowrap;">${
         currentUser ? `<button onclick="event.stopPropagation();moveWatch('${s.code}','up')" title="上移" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;">↑</button><button onclick="event.stopPropagation();moveWatch('${s.code}','down')" title="下移" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;">↓</button><button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin:0 2px;">✕</button>` : ''
       }<span onclick="event.stopPropagation();editNote('${s.code}')" title="${(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};border-bottom:${watchNotes[s.code]?'1px dotted var(--gold)':'none'};">${s.code}</span></td>

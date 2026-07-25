@@ -301,6 +301,8 @@ async def public_config():
         "support_email": mailer.SUPPORT_EMAIL,
         "site_name": mailer.SITE_NAME,
         "using_supabase": supabase_client.using_supabase(),
+        # 多设备实时同步（Supabase Realtime 订阅 watchlists），默认关闭，需显式开启
+        "realtime_enabled": os.getenv("ENABLE_REALTIME", "false").lower() in ("1", "true", "yes", "on"),
     }
 
 

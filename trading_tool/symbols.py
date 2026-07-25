@@ -15,7 +15,10 @@ def detect_market(raw: str) -> str:
     s = (raw or "").strip().upper()
     if not s:
         return "其他"
-    # 港股：5 位数字 + 可选 .HK / .HK 后缀
+    # 指数：雅虎风格 ^ 前缀（^IXIC / ^GSPC 等）
+    if s.startswith("^"):
+        return "指数"
+    # 港股：5 位数字 + 可选 .HK 后缀
     if s.endswith(".HK"):
         return "港股"
     if s.isdigit() and len(s) == 5:
@@ -23,9 +26,10 @@ def detect_market(raw: str) -> str:
     # A股：6 位纯数字（沪 60/68、深 00/30、京 8/4 等）
     if s.isdigit() and len(s) == 6:
         return "A股"
-    # 含字母的视为美股 / ETF / 指数
+    # 含字母的视为美股 / ETF：以 .ETF / .ETF 等后缀或常见指数代码识别
     if any(c.isalpha() for c in s):
-        # 常见指数/ETF 关键词（可选扩展）
+        if s.endswith(".ETF") or s.endswith((".IXIC", ".INX", ".DJI", ".HSI", ".CSI")):
+            return "指数" if s.startswith("^") or s.endswith((".IXIC", ".INX", ".DJI", ".HSI", ".CSI")) else "ETF"
         return "美股"
     if s.isdigit():
         return "指数" if len(s) <= 6 else "其他"

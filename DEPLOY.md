@@ -1,151 +1,157 @@
-# 部署指南（前后端分离版）
+# 部署指南（Supabase 架构版）
 
-> 架构：**前端 Cloudflare Pages（静态 + CDN）** + **后端 Render（FastAPI + pandas/numpy + SQLite）**
+> 架构：**前端 Cloudflare Pages（静态 + CDN）** + **后端 Render（FastAPI + pandas/numpy）** + **Supabase（Auth / Postgres + RLS）** + **Upstash Redis（缓存层）** + **外部行情 API（Yahoo / 新浪 / Eastmoney 等）**
 >
-> 之前「Cloudflare Workers / Containers 免费部署 Python」的方案已废弃——
-> 免费 Worker 有 5MB 体积限制、无法运行 Python/pandas，物理上跑不了本项目的后端。
+> 认证完全交给 **Supabase Auth**（邮箱 OTP 验证码 / Magic Link），业务数据存 **Supabase Postgres** 并开启 **RLS**（用户只能访问自己的数据）。
+> 未配置 `SUPABASE_*` 时，后端**自动回退 SQLite**，本地开发与沙箱冒烟照常可跑。
 
 ```
-浏览器 ──(HTTPS, 跨域 fetch)──▶ Cloudflare Pages  (frontend/index.html, 纯静态, CDN)
-                                       │
-                                       ▼ fetch('/api/...') 带 Bearer 令牌
-                                 Render  Web Service  (trading_tool/, FastAPI)
-                                       │
-                                       ├── 行情源：Yahoo / 新浪 / Nasdaq / Eastmoney
-                                       └── SQLite：用户 / 会话 / 自选看板 / 每日行情
+浏览器 ──(HTTPS)──▶ Cloudflare Pages  (frontend/index.html, 纯静态, CDN)
+                        │  supabase-js 直连 Supabase Auth（OTP / Magic Link）
+                        ▼ fetch('/api/...') 带 Bearer(JWT)
+                  Render  Web Service  (trading_tool/, FastAPI)
+                        │  PyJWT 校验 JWT → 注入 access_token 走 RLS
+                        ├── Supabase Postgres（profiles / watchlists / analysis_history，开启 RLS）
+                        ├── Upstash Redis（实时行情 / AI 报告缓存，TTL 分层）
+                        └── 外部行情源：Yahoo / 新浪 / Nasdaq / Eastmoney
 ```
 
 ---
 
-## 一、后端 → Render
+## 一、Supabase 初始化（必做）
+
+1. 登录 [supabase.com](https://supabase.com) → 新建项目，记下 **Project URL** 与 **anon key / service_role key / JWT Secret**（Project Settings → API）。
+2. 打开 **SQL Editor**，把本仓库 `supabase/migrations/0001_init.sql` 整段粘贴执行。
+   该脚本会建好全部业务表并开启 RLS：
+   - `profiles` / `watchlists` / `analysis_history` / `user_preferences`（业务永久数据，**全部开启 RLS**，`auth.uid() = user_id`）
+   - `cache`（应用级缓存，**仅 service_role 可访问**，绝不向终端用户开放）
+   - `tickets`（客服工单，仅 service_role）
+   - 触发器：新注册用户自动建 `profiles` 行
+3. **人工核对 RLS**（上线前必查）：每张业务表的策略必须 `USING (auth.uid() = user_id)` 且 `WITH CHECK` 同条件；`cache` / `tickets` 仅 `TO service_role`。
+
+> ⚠️ 安全红线：`SUPABASE_SERVICE_ROLE_KEY` 仅在后端环境变量里，**严禁**进前端、严禁进代码仓库。
+
+---
+
+## 二、认证邮件（Supabase Auth → Resend）
+
+1. Supabase 控制台 → **Authentication → Providers → Email**，在「Custom SMTP」处选择 **Resend** 并填入 Resend 的 API Key 与发信域名（如 `noreply@timebricks.bid`）。
+   - 这样注册 / 登录的 **OTP 验证码** 与 **Magic Link** 由 Supabase 经 Resend 真实发出。
+2. 应用层邮件（EDM 群发 / 客服工单通知）由后端 `trading_tool/mailer.py` 直连 **Resend REST API**（`RESEND_API_KEY`）。
+   - 未配 `RESEND_API_KEY` 时回退 SMTP（开发用，见旧 SMTP 配置）；但**生产建议一律走 Resend**。
+
+---
+
+## 三、缓存层（Upstash Redis，可选但推荐）
+
+实时行情、AI 分析结果属高频临时数据，不应大量落业务库。配置 `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` 后：
+- 实时行情缓存 TTL 短（`CACHE_QUOTE_TTL`，默认 300s）
+- AI 报告 / 每日 K 线缓存 TTL 中长（`CACHE_REPORT_TTL`，默认 21600s = 6h）
+
+未配 Upstash 但配了 Supabase 时，自动复用 Postgres `cache` 表；两者皆无时回退进程内内存（仅单实例开发用）。
+
+---
+
+## 四、后端 → Render
 
 1. 登录 [render.com](https://render.com) → **New → Web Service** → 连接 GitHub 仓库 `sizhitu/Autopilot`。
-2. 在部署方式里**选择 `render.yaml`**（会自动读取本仓库根目录配置）；或手动填：
+2. 部署方式选择 **`render.yaml`**（自动读取根目录配置）；或手动：
    - **Root Directory**: `trading_tool`
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `uvicorn web_app:app --host 0.0.0.0 --port $PORT`
    - **Health Check Path**: `/api/health`
    - **Instance Type**: Free
-3. 在 **Environment** 里设置（SMTP 可暂不填，先用开发模式跑通）：
-   - `DATABASE_PATH` = `/tmp/autopilot.db`（免费版临时盘，重启清空；持久化请挂 Render Disk 或改用 Postgres）
-   - `CORS_ORIGINS` = `https://timebricks.bid,https://你的pages子域.pages.dev`
-   - `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM`（见下文邮件配置）
-4. 部署完成后，记下后端地址，形如 `https://autopilot-api.onrender.com`。
+3. **Environment**（在 `render.yaml` 里已声明，sync:false 表示需在 Render 控制台手动填入真实值）：
 
-> 验证：浏览器打开 `https://<你的后端>/api/health` 应返回 `{"success":true,...}`。
+| 变量 | 默认 / 说明 |
+|------|------|
+| `SUPABASE_URL` | 项目 URL（生产必填，否则回退 SQLite） |
+| `SUPABASE_ANON_KEY` | anon key（前端公开，受 RLS 约束） |
+| `SUPABASE_SERVICE_ROLE_KEY` | service_role key（**仅后端**，绕过 RLS，**严禁进前端**） |
+| `SUPABASE_JWT_SECRET` | 用于后端校验前端 JWT（HS256） |
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | 缓存层（可选） |
+| `RESEND_API_KEY` | 应用邮件（可选，否则回退 SMTP） |
+| `SUPPORT_EMAIL` | `support@timebricks.bid` 客服工单收件 |
+| `SITE_NAME` | `Autopilot 投资分析` 邮件标题前缀 |
+| `ADMIN_EMAILS` | 额外管理员邮箱（逗号分隔） |
+| `CORS_ORIGINS` | `https://timebricks.bid,https://你的pages子域.pages.dev` |
+| `DATABASE_PATH` | `/tmp/autopilot.db`（仅本地/未配 Supabase 时使用的 SQLite 回退；注释保留） |
+| `ENABLE_REALTIME` | `false`（多设备实时同步开关，默认关；设 `true` 开启 Supabase Realtime 订阅自选变更） |
+| `CACHE_QUOTE_TTL` / `CACHE_REPORT_TTL` | 300 / 21600 |
+
+4. 部署完成后记下后端地址 `https://autopilot-api.onrender.com`。
+
+> 验证：`https://<后端>/api/health` 返回 `{"success":true,...}`；`/api/config` 的 `using_supabase` 在配好 Supabase 后为 `true`。
 
 ---
 
-## 二、前端 → Cloudflare Pages
+## 五、前端 → Cloudflare Pages
 
-1. 登录 Cloudflare → **Workers & Pages → Create → Pages → 连接 GitHub**。
-2. 选择仓库 `sizhitu/Autopilot`，构建设置：
+1. Cloudflare → **Workers & Pages → Create → Pages → 连接 GitHub**。
+2. 仓库 `sizhitu/Autopilot`，构建设置：
    - **Framework preset**: `None`
    - **Build command**: 留空
-   - **Build output directory**: `frontend`   ← 关键，指向静态目录
-3. 部署完成后得到 `*.pages.dev` 地址；再到 **Custom domains** 绑定 `timebricks.bid`。
-4. 在前端页面右上角点 **⚙** 可手动填写后端地址（存 localStorage），或用 `?api=https://你的后端` 覆盖。
-   - 也可直接改 `frontend/index.html` 里的默认 `BACKEND`（搜索 `autopilot-api.onrender.com` 替换为你真实地址）。
+   - **Build output directory**: `frontend`
+3. 部署后得 `*.pages.dev`；到 **Custom domains** 绑定 `timebricks.bid`。
+4. 前端通过 `/api/config` 自动拿到 `supabase_url` / `anon_key` 初始化 `supabase-js`，无需在前端硬编码密钥。
 
-> 注意：之前 `timebricks.bid` 上跑的是旧的 Cloudflare Worker（已 1101 报错）。
-> 请到 Cloudflare **Workers** 里删除那个旧 Worker，再把 `timebricks.bid` 作为自定义域绑定到本 Pages 项目。
+> 旧版 `timebricks.bid` 上跑的是已废弃的 Cloudflare Worker（1101 报错）。请到 Cloudflare **Workers** 删除旧 Worker，再把 `timebricks.bid` 作为自定义域绑定到本 Pages 项目。
 
 ---
 
-## 三、邮件（邮箱验证）— 真实收验证码的关键
-
-> ⚠️ **重要**：只有在本节配置了正确的 `SMTP_*` 环境变量后，注册验证码才会**真实发到用户邮箱**。
-> 不配置时后端处于「开发模式」：验证码只打印到 Render 日志、并作为 `dev_code` 在接口返回，
-> 页面上会提示「后端未配置 SMTP 发信」。这是为了防止你遇到「收不到邮件」的根本原因。
-
-### 1) 在 Render 配置环境变量（以 QQ 邮箱为例）
-Render 控制台 → 你的 Web Service → **Environment** → 添加：
-- `SMTP_HOST` = `smtp.qq.com`
-- `SMTP_PORT` = `465`
-- `SMTP_USER` = `你的邮箱@qq.com`
-- `SMTP_PASS` = **授权码**（注意：**不是邮箱登录密码**，要去邮箱设置里生成「授权码」）
-- `SMTP_FROM` = `你的邮箱@qq.com`（可不填，默认同 SMTP_USER）
-- 不填 `SMTP_TLS` 时默认按 465 走 SSL；其它端口（如 587）会自动 STARTTLS。
-
-### 2) 其它常见邮箱
-| 服务商 | SMTP_HOST | 端口 | 备注 |
-|--------|-----------|------|------|
-| QQ 邮箱 | `smtp.qq.com` | 465 | 用**授权码** |
-| 163 邮箱 | `smtp.163.com` | 465 | 用**授权码** |
-| Gmail | `smtp.gmail.com` | 465 | 用「应用专用密码」(App Password) |
-| 阿里云邮件推送 / SendGrid | 见各自控制台 | 465/587 | 用 API Key 或 SMTP 凭据 |
-
-### 3) 改完变量后**必须重新 Deploy 一次**
-改环境变量不会自动重新部署。Render 控制台 → 你的服务 → **Manual Deploy → Deploy latest commit**，
-让新配置在进程启动时加载（启动时会 `print` 是否进入开发模式，可在日志里确认）。
-
-### 4) 自查清单（收不到邮件时）
-- [ ] `SMTP_HOST` 是否已设置（留空 = 开发模式，必然不发信）
-- [ ] `SMTP_PASS` 是**授权码/应用专用密码**，不是登录密码
-- [ ] 是否触发了一次新的 Deploy（环境变量已生效）
-- [ ] 注册后页面提示是「验证码已发送至 …」还是「未配置 SMTP」
-- [ ] Render 日志里是否出现 `[MAIL-ERROR] ...`（一般是账号/密码/端口问题）
-
----
-
-## 四、本地开发
+## 六、本地开发（SQLite 回退）
 
 ```bash
 cd trading_tool
 pip install -r requirements.txt
+# 不设置 SUPABASE_* → 自动回退 SQLite，本地照常可跑
 export DATABASE_PATH=./dev.db
-# 可选：export SMTP_HOST=... 等
 uvicorn web_app:app --reload --port 8000
 
-# 另开终端起一个静态服务预览前端（默认指向上面的本地后端）
+# 另开终端预览前端（默认指向上面的本地后端）
 cd ../frontend
 python3 -m http.server 5500
 # 浏览器打开 http://localhost:5500
 ```
 
+本地登录：前端走 Supabase Auth（需配 Supabase 才能真实收发邮件）；若只想本地自测接口，后端在 `using_supabase()==False` 时支持 **dev token**——请求头 `Authorization: Bearer dev:<任意uid>` 会被当作本地开发用户（管理员），仅限本地、绝不进生产。
+
 ---
 
-## 五、新增能力速览
+## 七、新增能力速览（Supabase 版）
 
 | 能力 | 说明 |
 |------|------|
-| 用户系统 | `/api/auth/register` `/verify` `/login` `/resend` `/me`，SQLite 存账号，pbkdf2 哈希，会话令牌 |
-| 自选看板（按用户） | 登录后 `/api/watchlist/add` `remove` 增删；未登录回退到默认看板 |
-| 每日行情落库 | 每次行情/回测请求顺手写入 `daily_data`（按 symbol+日期），容错时可回退 |
-| 容错 | 实时行情拉取失败时，自动回退到本地已存每日数据并标记 `stale` |
-| CORS | 后端已放开跨域，允许 Pages 前端调用 |
+| 认证 | 前端 supabase-js 走 **邮箱 OTP 验证码 / Magic Link**；后端仅用 PyJWT 校验 JWT 并同步 `profiles` |
+| 自选看板 | `/api/watchlist` 按用户排序 + 备注；`/api/watchlist/add` `remove` `reorder` `note`；未登录回退默认看板 |
+| 多市场 | `symbols.normalize_symbol` 统一格式：港股(`00700.HK`) / A股(6位) / 美股(字母) / 指数(`^IXIC`) |
+| 分析历史 | `/api/quote` `/api/analyze` 成功后自动写入 `analysis_history`（关联 user+symbol）；`/api/history` 可分页回溯 |
+| 接口限流 | `/api/quote /search /backtest /analyze` 固定窗口限流（Upstash 优先，否则进程内），超限返回 `429` 友好提示 |
+| 容错 | 实时行情拉取失败 → 回退行情缓存 → 回退每日 K 线缓存，并标记 `stale`；前端提示「数据可能延迟」 |
+| 缓存分层 | 原始 K 线只进缓存层（Redis / `cache` 表），**不大量写业务库**（严格分离） |
+| 多设备同步 | `ENABLE_REALTIME=true` 时前端订阅 `watchlists` 变更自动刷新看板（默认关） |
 
-## 六、管理员后台 · EDM 群发 · 客服工单
+---
 
-### 1) 管理员身份
-- **首个注册用户自动成为管理员**（库内 `is_admin=1`）。
-- 也可在 Render 环境变量 `ADMIN_EMAILS` 配置逗号分隔的邮箱，命中即管理员。
-- 登录后页面顶部出现「管理」标签（仅管理员可见）。
+## 八、管理员后台 · EDM 群发 · 客服工单
 
-### 2) SMTP 真实发信（后台可配置）
-除了在 Render 配 `SMTP_*` 环境变量外，管理员可在 **管理 → SMTP 配置** 里直接填写并保存，
-配置写入数据库 `settings` 表（优先级高于环境变量），保存后会**自动发一封测试邮件**验证连通性。
-配置项：`smtp_host / smtp_port / smtp_user / smtp_pass(授权码) / smtp_from / smtp_tls`。
-> 验证码、EDM、工单通知都走这套配置；未配置则仍是开发模式（验证码打印到日志 + 返回 dev_code）。
+1. **管理员身份**：`ADMIN_EMAILS` 命中即管理员；登录后顶部出现「管理」标签。
+2. **SMTP 真实发信（后台可配置）**：管理 → SMTP 配置 写入 `settings` 表（优先级高于环境变量），保存后自动发测试邮件。未配置则回退开发模式（或走 Resend）。
+3. **用户管理与 EDM**：`GET /api/admin/stats`、`GET /api/admin/users`、`POST /api/admin/edm/send`（向全部/已验证用户群发）。
+4. **客服咨询 + 自动工单**：右下角「💬 客服咨询」提交 → `POST /api/contact` 写入 `tickets` 并发邮件到 `SUPPORT_EMAIL`；管理员可回复并邮件通知客户。
 
-### 3) 用户管理与 EDM 统计
-- `GET /api/admin/stats`：注册总数 / 已验证数 / 近 7 天 / 近 30 天 / 未结工单数。
-- `GET /api/admin/users`：注册用户列表（脱敏，不含密码）。
-- `POST /api/admin/edm/send`：向全部或仅已验证用户**群发邮件**（新特性通知等）。
-  适合「有新特性发布时一键通知所有客户」。
+---
 
-### 4) 客服咨询 + 自动工单
-- 页面右下角常驻「💬 客服咨询」按钮，用户填写 **称呼 / 邮箱 / 国家 / 问题** 提交。
-- `POST /api/contact`（无需登录）会把咨询写入 `tickets` 表，并**立即发邮件到 `SUPPORT_EMAIL`（默认 support@timebricks.bid）**，即自动建单。
-- 管理员在「管理 → 客服工单」中查看、回复；回复会**邮件通知客户**。
+## 九、上线自查清单（Supabase 相关）
 
-### 环境变量（新增）
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `SUPPORT_EMAIL` | `support@timebricks.bid` | 客服工单收件邮箱 |
-| `ADMIN_EMAILS` | 空 | 额外管理员邮箱（逗号分隔） |
-| `SITE_NAME` | `Autopilot 投资分析` | 邮件标题前缀 |
-| 自选看板（按用户） | 登录后 `/api/watchlist/add` `remove` 增删；未登录回退到默认看板 |
-| 每日行情落库 | 每次行情/回测请求顺手写入 `daily_data`（按 symbol+日期），容错时可回退 |
-| 容错 | 实时行情拉取失败时，自动回退到本地已存每日数据并标记 `stale` |
-| CORS | 后端已放开跨域，允许 Pages 前端调用 |
+- [ ] `0001_init.sql` 已在 Supabase SQL Editor 执行成功
+- [ ] 业务表 RLS 策略均为 `auth.uid() = user_id`（USING + WITH CHECK）
+- [ ] `cache` / `tickets` 仅 `service_role` 可访问
+- [ ] `SUPABASE_SERVICE_ROLE_KEY` 仅存在于 Render 环境变量，**未进前端/仓库**
+- [ ] Supabase Auth 邮件投递已绑定 Resend（能真实收到 OTP / Magic Link）
+- [ ] `RESEND_API_KEY` 已配置（应用邮件）
+- [ ] `UPSTASH_REDIS_*` 已配置（或接受 `cache` 表回退）
+- [ ] `CORS_ORIGINS` 包含前端域名
+- [ ] `render.yaml` 中 `sync:false` 的变量已在 Render 控制台填好真实值
+- [ ] `/api/config` 返回 `using_supabase: true`
+- [ ] 改完环境变量后 **Manual Deploy 一次** 让配置在启动时加载
