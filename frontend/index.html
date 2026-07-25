@@ -183,6 +183,33 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 <div class="header">
   <h1>藤本茂融合策略 <span>· 智能分析工具 v2.3</span></h1>
   <div class="ver">美股 · A股 · 回测 · 三层一体</div>
+  <div id="authArea" style="display:flex; gap:6px; align-items:center;">
+    <button class="btn btn-outline btn-sm" onclick="openLogin()">登录</button>
+    <button class="btn btn-sm" onclick="openRegister()">注册</button>
+  </div>
+  <div id="userArea" class="hidden" style="display:none; gap:6px; align-items:center;">
+    <span id="userName" style="font-size:12px;color:var(--text-dim);"></span>
+    <button class="btn btn-outline btn-sm" onclick="openSettings()" title="设置后端地址">⚙</button>
+    <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
+  </div>
+</div>
+
+<!-- 登录/注册 弹窗 -->
+<div id="authModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;">
+  <div class="card" style="width:340px;max-width:92vw;">
+    <div class="card-title" id="authTitle">登录 / 注册</div>
+    <div id="authMsg" style="font-size:11px;margin-bottom:8px;min-height:14px;color:var(--orange);"></div>
+    <input id="authEmail" type="email" placeholder="邮箱" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
+    <input id="authName" type="text" placeholder="昵称（注册可选）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
+    <input id="authPwd" type="password" placeholder="密码（≥6位）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
+    <input id="authCode" type="text" placeholder="邮箱验证码（注册后查收）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
+    <button class="btn" style="width:100%;margin-bottom:6px;" onclick="submitAuth()">提交</button>
+    <div style="display:flex;justify-content:space-between;font-size:11px;">
+      <a href="javascript:void(0)" style="color:var(--blue);" onclick="switchAuthMode()">切换到<span id="authSwitch">注册</span></a>
+      <a href="javascript:void(0)" style="color:var(--text-dim);" onclick="closeAuth()">关闭</a>
+    </div>
+    <div id="devCodeHint" style="font-size:10px;color:var(--gold);margin-top:6px;display:none;"></div>
+  </div>
 </div>
 
 <!-- 主Tab：自选看板 / 分析工具（自选看板前置） -->
@@ -198,6 +225,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div class="card-title" style="margin:0;">自选股票状态看板</div>
       <div>
         <span id="watchlistUpdated" style="color:var(--text-dim); font-size:11px; margin-right:10px;"></span>
+        <span id="addWatchRow" style="display:none; gap:4px; align-items:center;">
+          <input id="watchInput" type="text" placeholder="加代码 如 NVDA/600519" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:160px;">
+          <button class="btn btn-green btn-sm" onclick="addWatch()">+ 添加</button>
+        </span>
         <button class="btn btn-gold btn-sm" onclick="loadWatchlist()">🔄 刷新</button>
       </div>
     </div>
@@ -208,6 +239,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <span><span style="color:var(--text-dim);font-weight:700;">●</span> 下跌观望（仍在调整，观望等待）</span>
       <span><span style="color:var(--green);font-weight:700;">●</span> 低估 / <span style="color:var(--red);font-weight:700;">●</span> 高估 / <span style="color:var(--text-dim);font-weight:700;">●</span> 合理</span>
       <span>估值按定位差异化：压舱石(MA250±8%) · 高赔率(MA250±35%) · 周期弹性(MA120±18%) · 卫星仓(区间分位80/20)</span>
+      <span id="watchLoginHint" style="color:var(--blue);cursor:pointer;" onclick="openLogin()">· 登录后可自定义自选看板</span>
     </div>
   </div>
   <div class="card" style="overflow-x:auto;">
@@ -231,7 +263,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div>加载中...</div>
     </div>
   </div>
-  <div class="footer-note">点击任意一行可加载该股票详细分析 · 操盘建议基于三层策略 · 九转基于TD Sequential逻辑 <span style="color:var(--text-dim);">· 页面时间: __SERVE_TS__</span></div>
+  <div class="footer-note">点击任意一行可加载该股票详细分析 · 操盘建议基于三层策略 · 九转基于TD Sequential逻辑 <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
 </div>
 
 <!-- 分析模式视图 -->
@@ -242,7 +274,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div class="toolbar">
         <div class="search-box" style="position:relative;">
           <input type="text" id="searchInput" placeholder="搜索: AAPL / 600519 / 茅台" style="width:200px;">
-          <button class="btn btn-gold btn-sm" onclick="searchStock()">搜索</button>
+          <button class="btn btn-gold btn-sm" onclick="searchStock().catch(()=>{})">搜索</button>
           <div class="search-results" id="searchResults"></div>
         </div>
         <label>资金</label>
@@ -382,6 +414,171 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 <!-- /分析模式视图 -->
 
 <script>
+// ===================== 前后端分离配置 =====================
+// 后端 API 地址（Render）。优先级：?api=xxx > localStorage > 下方默认。
+function getBackend() {
+  const q = new URLSearchParams(location.search).get('api');
+  if (q) return q.replace(/\/$/, '');
+  const saved = localStorage.getItem('autopilot_api');
+  if (saved) return saved.replace(/\/$/, '');
+  return 'https://autopilot-api.onrender.com'; // TODO: 替换为你的 Render 服务地址
+}
+const BACKEND = getBackend();
+
+// 登录态
+let authToken = localStorage.getItem('autopilot_token') || '';
+let currentUser = null;
+
+// 统一请求封装：拼接后端地址 + 自动注入 Bearer 令牌
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  return fetch(BACKEND + path, Object.assign({}, opts, { headers }));
+}
+// 取 JSON（带容错）：网络/HTTP 错误时弹提示并抛出
+async function apiJSON(path, opts = {}) {
+  try {
+    const res = await api(path, opts);
+    const ct = res.headers.get('content-type') || '';
+    const json = ct.includes('application/json') ? await res.json() : { success: false, detail: await res.text() };
+    if (!res.ok) throw new Error(json.detail || ('HTTP ' + res.status));
+    return json;
+  } catch (e) {
+    if (!String(e.message).includes('HTTP')) showToast('请求失败: ' + e.message);
+    throw e;
+  }
+}
+
+// 顶部轻量提示
+function showToast(msg, type = 'error') {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div'); t.id = 'toast';
+    t.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:9999;padding:8px 16px;border-radius:6px;font-size:13px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.35);transition:opacity .3s;';
+    document.body.appendChild(t);
+  }
+  t.style.background = type === 'ok' ? 'rgba(46,204,113,.95)' : 'rgba(231,76,60,.95)';
+  t.textContent = msg; t.style.opacity = '1';
+  clearTimeout(t._timer); t._timer = setTimeout(() => { t.style.opacity = '0'; }, 2800);
+}
+
+// ===================== 登录 / 注册 =====================
+let authMode = 'login';     // login | register | verify
+let pendingEmail = '';
+let pendingPwd = '';
+
+function openLogin() { authMode = 'login'; showAuth('登录'); }
+function openRegister() { authMode = 'register'; showAuth('注册'); }
+function showAuth(title) {
+  document.getElementById('authTitle').textContent = title;
+  document.getElementById('authMsg').textContent = '';
+  document.getElementById('authCode').style.display = 'none';
+  document.getElementById('devCodeHint').style.display = 'none';
+  document.getElementById('authSwitch').textContent = authMode === 'login' ? '注册' : '登录';
+  document.getElementById('authName').style.display = authMode === 'register' ? 'block' : 'none';
+  document.getElementById('authModal').classList.remove('hidden');
+}
+function switchAuthMode() { authMode = authMode === 'login' ? 'register' : 'login'; showAuth(authMode === 'login' ? '登录' : '注册'); }
+function closeAuth() { document.getElementById('authModal').classList.add('hidden'); }
+
+async function submitAuth() {
+  const email = document.getElementById('authEmail').value.trim();
+  const pwd = document.getElementById('authPwd').value;
+  const name = document.getElementById('authName').value.trim();
+  const code = document.getElementById('authCode').value.trim();
+  const msg = m => document.getElementById('authMsg').textContent = m;
+  try {
+    if (authMode === 'register') {
+      if (!email || !pwd) { msg('请填写邮箱与密码'); return; }
+      const r = await apiJSON('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pwd, display_name: name }) });
+      pendingEmail = email; pendingPwd = pwd;
+      authMode = 'verify';
+      document.getElementById('authTitle').textContent = '邮箱验证';
+      document.getElementById('authCode').style.display = 'block';
+      document.getElementById('authSwitch').textContent = '登录';
+      msg('验证码已发送，请输入（开发模式下见下方提示）');
+      if (r.dev_code) { const h = document.getElementById('devCodeHint'); h.style.display = 'block'; h.textContent = '开发模式验证码: ' + r.dev_code; }
+      return;
+    }
+    if (authMode === 'verify') {
+      if (!code) { msg('请输入验证码'); return; }
+      await apiJSON('/api/auth/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingEmail, code }) });
+      msg('验证成功，正在登录…');
+      const login = await apiJSON('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingEmail, password: pendingPwd }) });
+      finishLogin(login);
+      return;
+    }
+    if (!email || !pwd) { msg('请填写邮箱与密码'); return; }
+    const login = await apiJSON('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pwd }) });
+    finishLogin(login);
+  } catch (e) { msg('错误: ' + e.message); }
+}
+
+function finishLogin(login) {
+  authToken = login.token; currentUser = login.user;
+  localStorage.setItem('autopilot_token', authToken);
+  localStorage.setItem('autopilot_user', JSON.stringify(login.user));
+  refreshAuthUI(); closeAuth(); showToast('登录成功', 'ok');
+  loadWatchlist();
+}
+function doLogout() {
+  authToken = ''; currentUser = null;
+  localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user');
+  refreshAuthUI(); showToast('已退出'); loadWatchlist();
+}
+function refreshAuthUI() {
+  const a = document.getElementById('authArea'), u = document.getElementById('userArea');
+  if (currentUser) {
+    a.classList.add('hidden'); u.style.display = 'flex';
+    document.getElementById('userName').textContent = currentUser.display_name || currentUser.email;
+    document.getElementById('addWatchRow').style.display = 'inline-flex';
+    const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';
+  } else {
+    a.classList.remove('hidden'); u.style.display = 'none';
+    document.getElementById('addWatchRow').style.display = 'none';
+    const h = document.getElementById('watchLoginHint'); if (h) h.style.display = '';
+  }
+}
+
+// ===================== 自选管理（增删） =====================
+async function addWatch() {
+  const inp = document.getElementById('watchInput');
+  const sym = inp.value.trim().toUpperCase();
+  if (!sym) { showToast('请输入股票代码'); return; }
+  try {
+    await apiJSON('/api/watchlist/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: sym }) });
+    inp.value = ''; showToast('已添加 ' + sym, 'ok'); loadWatchlist();
+  } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
+}
+async function removeWatch(sym) {
+  try {
+    await apiJSON('/api/watchlist/remove?symbol=' + encodeURIComponent(sym), { method: 'DELETE' });
+    showToast('已删除 ' + sym, 'ok'); loadWatchlist();
+  } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
+}
+
+// ===================== 设置（后端地址） =====================
+function openSettings() {
+  const v = prompt('后端 API 地址（留空恢复默认）:', BACKEND);
+  if (v !== null) {
+    const u = v.trim();
+    localStorage.setItem('autopilot_api', u ? u.replace(/\/$/, '') : '');
+    location.reload();
+  }
+}
+
+// ===================== 启动鉴权态 =====================
+async function initAuth() {
+  const t = localStorage.getItem('autopilot_token');
+  const u = localStorage.getItem('autopilot_user');
+  if (t && u) {
+    authToken = t; currentUser = JSON.parse(u);
+    try { const me = await apiJSON('/api/auth/me'); currentUser = me.user; localStorage.setItem('autopilot_user', JSON.stringify(me.user)); }
+    catch (e) { authToken = ''; currentUser = null; localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user'); }
+  }
+  refreshAuthUI();
+}
+
 let currentSymbol = '';
 let currentName = '';
 let currentMarket = '';
@@ -405,7 +602,7 @@ function switchView(view) {
 async function searchStock() {
   const q = document.getElementById('searchInput').value.trim();
   if (!q) return;
-  const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+  const res = await api('/api/search?q=' + encodeURIComponent(q));
   const data = await res.json();
   const box = document.getElementById('searchResults');
   box.innerHTML = '';
@@ -429,7 +626,7 @@ async function searchStock() {
   }
 }
 document.getElementById('searchInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') searchStock();
+  if (e.key === 'Enter') searchStock().catch(()=>{});
 });
 document.addEventListener('click', e => {
   if (!e.target.closest('.search-box')) document.getElementById('searchResults').style.display = 'none';
@@ -451,7 +648,7 @@ async function fetchQuote(symbol, name, market) {
   info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中...</span>`;
 
   try {
-    const res = await fetch('/api/quote', {
+    const res = await api('/api/quote', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({symbol: symbol, days: 300})
     });
@@ -480,7 +677,7 @@ async function fetchProfile(symbol) {
   const el = document.getElementById('businessSummary');
   const tagEl = document.getElementById('industryTag');
   try {
-    const res = await fetch(`/api/profile?symbol=${encodeURIComponent(symbol)}`);
+    const res = await api(`/api/profile?symbol=${encodeURIComponent(symbol)}`);
     const json = await res.json();
 
     // 行业分类小标签（代码/名称下方）
@@ -523,7 +720,7 @@ async function runAnalysis() {
 
   document.getElementById('chartMeta').textContent = '分析中...';
   try {
-    const res = await fetch('/api/analyze', {method: 'POST', body: formData});
+    const res = await api('/api/analyze', {method: 'POST', body: formData});
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '分析失败');
     updateResults(json.data, json.meta);
@@ -577,7 +774,7 @@ async function loadWatchlist() {
   const body = document.getElementById('watchlistBody');
   loading.classList.remove('hidden');
   try {
-    const res = await fetch('/api/watchlist');
+    const res = await api('/api/watchlist');
     const json = await res.json();
     if (!json.success) throw new Error('获取失败');
     // 首次/刷新中：服务端仍在后台计算，显示提示并短延迟后轮询
@@ -658,7 +855,7 @@ function renderWatchlist(stocks) {
       (s.valuation_detail ? ` <span style="color:var(--text-dim);font-size:10px;">${s.valuation_detail}</span>` : '') +
       ` <span style="color:${_rColor};font-size:9px;border:1px solid currentColor;border-radius:3px;padding:0 3px;white-space:nowrap;">${s.role||''}</span>`;
     html += `<tr onclick="fetchQuote('${s.code}','${s.name}','${s.market}')" style="border-bottom:1px solid var(--border); cursor:pointer;">
-      <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${s.code}</td>
+      <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${currentUser ? `<button onclick="removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-right:4px;">✕</button>` : ''}${s.code}</td>
       <td style="padding:6px 8px;">${s.name}</td>
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${s.price}</td>
       <td style="padding:6px 8px;text-align:right;color:${dayColor};font-weight:600;">${dayText}</td>
@@ -831,7 +1028,7 @@ async function calcLadder() {
   const change = parseFloat(document.getElementById('calcChange').value);
   if (isNaN(change)) { document.getElementById('calcResult').innerHTML = '<span style="color:var(--red);">请输入数字</span>'; return; }
   try {
-    const res = await fetch('/api/ladder', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price_change:change})});
+    const res = await api('/api/ladder', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price_change:change})});
     const d = await res.json();
     const el = document.getElementById('calcResult');
     if (d.action_type === 'buy') el.innerHTML = `<span style="color:var(--green);font-weight:700;">${d.desc}</span><br><span style="color:var(--text-dim);font-size:11px;">加仓 ${d.delta}%</span>`;
@@ -854,7 +1051,7 @@ async function runBacktest() {
   switchView('backtest');
 
   try {
-    const res = await fetch('/api/backtest', {
+    const res = await api('/api/backtest', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({symbol, days, initial_capital: capital, risk_per_trade: risk, max_position: maxPos, commission, warmup})
     });
@@ -1157,7 +1354,7 @@ window.addEventListener('resize', () => {
 
 // === 初始化 ===
 async function loadLadderTable() {
-  const res = await fetch('/api/ladder_table');
+  const res = await api('/api/ladder_table');
   const data = await res.json();
   const bt = document.getElementById('buyLadderTable');
   bt.innerHTML = '<tr><th>触发</th><th>操作</th><th>说明</th></tr>';
@@ -1166,9 +1363,11 @@ async function loadLadderTable() {
   st.innerHTML = '<tr><th>触发</th><th>操作</th><th>说明</th></tr>';
   data.sell_ladder.forEach(i => { const c = i.action === '持有' ? 'hold' : 'sell'; st.innerHTML += `<tr><td>${i.trigger}</td><td class="${c}">${i.action}</td><td>${i.desc}</td></tr>`; });
 }
-loadLadderTable();
+loadLadderTable().catch(()=>{});
 loadSample();
 loadWatchlist();  // 自选看板为默认页，打开即加载
+initAuth();
+if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
 </script>
 </body>
 </html>

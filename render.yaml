@@ -1,0 +1,33 @@
+# Render 部署配置：后端 FastAPI（位于 trading_tool/）
+# 在 Render 控制台「New → Web Service → 连接 GitHub 仓库」后，
+# 选择本文件即可自动识别；也可在控制台手动填写下方对应项。
+services:
+  - type: web
+    name: autopilot-api
+    runtime: python
+    rootDir: trading_tool        # 代码与依赖都在 trading_tool 目录
+    plan: free                   # 免费额度；注意免费版会休眠（首次访问有冷启动）
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn web_app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      # SQLite 路径：免费版文件系统临时，重启后会清空。
+      # 如需持久化，可在 Render 挂一个 Disk 并指向该路径（付费），或改用 Render Postgres。
+      - key: DATABASE_PATH
+        value: /tmp/autopilot.db
+      # 允许跨域的前端来源（Cloudflare Pages 域名），逗号分隔
+      - key: CORS_ORIGINS
+        value: "https://timebricks.bid,https://autopilot.pages.dev"
+      # 以下为邮件 SMTP 配置（不填则进入开发模式，验证码打印到日志/返回 dev_code）
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false

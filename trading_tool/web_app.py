@@ -1,13 +1,14 @@
 """
-藤本茂融合策略 - Web API 后端
-=================================
-FastAPI 后端，提供：
-  - POST /api/analyze     上传CSV并分析
-  - POST /api/quote       获取真实行情数据（美股/A股）
-  - POST /api/backtest    策略回测
-  - GET  /api/search      搜索股票代码
-  - POST /api/ladder      藤本茂阶梯仓位计算器
-  - GET  /               前端页面
+藤本茂融合策略 - Web API 后端（前后端分离版）
+============================================
+FastAPI 纯 API 服务，前端部署在 Cloudflare Pages，后端部署在 Render。
+新增能力：
+  - 用户注册 / 邮箱验证 / 登录（sqlite 存储，SMTP 发验证码）
+  - 按用户的自选看板（增删，sqlite 持久化）
+  - 每日粒度行情落库（daily_data），支持实时失败时回退到本地存储
+  - CORS，允许 Pages 前端跨域调用
+
+原有分析能力（analyze / quote / backtest / search / ladder / profile）保留。
 """
 
 import sys
@@ -15,48 +16,65 @@ import os
 import io
 import json
 import math
-from datetime import datetime
-
+import time
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from datetime import datetime
 from typing import Optional
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Depends
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 # 导入策略引擎和数据源
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from strategy_engine import FujimotoStrategy, generate_sample_data, SignalType, TrendType
 from data_fetcher import DataFetcher
 from backtest import Backtester, result_to_dict as bt_to_dict
-from watchlist import get_watchlist_status, _detect_high_low, _calc_valuation, STOCK_ROLE, DEFAULT_ROLE
+from watchlist import (
+    get_watchlist_status, get_user_watchlist_symbols,
+    add_user_watchlist, remove_user_watchlist,
+    _detect_high_low, _calc_valuation, STOCK_ROLE, DEFAULT_ROLE,
+)
 from nine_turn import calc_nine_turn_display
-import threading
+import db
+import auth
+import daily_store
 
-app = FastAPI(title="藤本茂融合策略 Web 工具", version="2.0")
+app = FastAPI(title="藤本茂融合策略 Web 工具 API", version="3.0")
 fetcher = DataFetcher()
 
-# 服务启动后预热自选看板缓存，避免用户首次加载等待过久
-def _warmup_watchlist():
-    try:
-        import time
-        time.sleep(3)
-        get_watchlist_status()
-    except Exception:
-        pass
+# ----------------------------------------------------------------------
+#  CORS：允许 Cloudflare Pages 前端跨域调用。
+#  通过 CORS_ORIGINS 环境变量配置（逗号分隔），默认放行所有来源。
+# ----------------------------------------------------------------------
+_cors_origins = os.getenv("CORS_ORIGINS", "*")
+if _cors_origins == "*":
+    allow_origins = ["*"]
+else:
+    allow_origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allow_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# 服务启动：初始化数据库
 @app.on_event("startup")
 def _on_startup():
-    threading.Thread(target=_warmup_watchlist, daemon=True).start()
+    db.init_db()
+
 
 # ================================================================
 #  辅助：策略结果转 JSON
 # ================================================================
-
 def _to_jsonable(v):
     """递归将 numpy 类型转为原生 Python 类型"""
-    import numpy as np
     if isinstance(v, (np.bool_, bool)):
         return bool(v)
     if isinstance(v, (np.integer,)):
@@ -184,12 +202,7 @@ def df_to_chart_json(df: pd.DataFrame, result, show_last=120) -> dict:
 
 
 def _extra_metrics(df: pd.DataFrame, symbol: str = None) -> dict:
-    """计算新高/新低 与 估值状态，供股票详情页（分析页）展示。
-
-    - high_low: {text, type} 新高/新低状态文本与方向(high/low/none)
-    - valuation: {text, type, detail, role} 估值状态、依据明细、持仓定位
-    该信息原仅在自选看板展示，现下沉到个股详情页，看板侧只保留紧凑信号。
-    """
+    """计算新高/新低 与 估值状态，供股票详情页（分析页）展示。"""
     role = STOCK_ROLE.get(symbol, DEFAULT_ROLE) if symbol else DEFAULT_ROLE
     try:
         hl_text, hl_type = _detect_high_low(df)
@@ -210,24 +223,230 @@ def _extra_metrics(df: pd.DataFrame, symbol: str = None) -> dict:
     }
 
 
+def _df_from_stored(rows: list) -> Optional[pd.DataFrame]:
+    """将 daily_data 行转为分析用的 DataFrame。"""
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    df = df.rename(columns={"trade_date": "date"})
+    df['date'] = pd.to_datetime(df['date'])
+    for c in ['open', 'high', 'low', 'close', 'volume']:
+        df[c] = pd.to_numeric(df[c], errors='coerce')
+    df = df.sort_values('date').reset_index(drop=True)
+    return df
+
+
+def _optional_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    """可选登录：有合法令牌则返回用户，否则返回 None（用于看板回退到默认）。"""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    return auth.get_user_by_token(token)
+
+
 # ================================================================
-#  API 路由
+#  健康检查
 # ================================================================
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    """返回前端页面（禁用缓存，避免移动端 WebView 加载旧版本）"""
-    html_path = os.path.join(os.path.dirname(__file__), "index.html")
-    with open(html_path, "r", encoding="utf-8") as f:
-        html = f.read()
-    # 注入服务端时间戳，便于用户确认是否加载了最新页面（排查缓存）
-    html = html.replace('__SERVE_TS__', datetime.now().strftime('%m-%d %H:%M:%S'))
-    return HTMLResponse(
-        content=html,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-    )
+@app.get("/api/health")
+async def health():
+    return {"success": True, "service": "autopilot-api", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 
+# ================================================================
+#  认证 API
+# ================================================================
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: str = ""
+
+
+class VerifyRequest(BaseModel):
+    email: str
+    code: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ResendRequest(BaseModel):
+    email: str
+
+
+@app.post("/api/auth/register")
+async def api_register(req: RegisterRequest):
+    """注册（发送邮箱验证码）。未配置 SMTP 时返回 dev_code 便于调试。"""
+    r = auth.register(req.email, req.password, req.display_name)
+    return JSONResponse(content=r)
+
+
+@app.post("/api/auth/verify")
+async def api_verify(req: VerifyRequest):
+    """邮箱验证码校验。"""
+    r = auth.verify_email(req.email, req.code)
+    return JSONResponse(content=r)
+
+
+@app.post("/api/auth/login")
+async def api_login(req: LoginRequest):
+    """登录（需已完成邮箱验证）。"""
+    r = auth.login(req.email, req.password)
+    return JSONResponse(content=r)
+
+
+@app.post("/api/auth/resend")
+async def api_resend(req: ResendRequest):
+    """重新发送验证码。"""
+    r = auth.resend_code(req.email)
+    return JSONResponse(content=r)
+
+
+@app.get("/api/auth/me")
+async def api_me(user: dict = Depends(auth.get_current_user)):
+    """返回当前登录用户信息。"""
+    return {
+        "success": True,
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+            "display_name": user["display_name"],
+            "verified": bool(user["verified"]),
+        },
+    }
+
+
+# ================================================================
+#  真实数据源 API
+# ================================================================
+@app.get("/api/search")
+async def search_stocks(q: str = Query(..., description="股票代码或名称关键词")):
+    """搜索股票代码"""
+    results = fetcher.search(q)
+    return {"success": True, "results": results, "count": len(results)}
+
+
+class QuoteRequest(BaseModel):
+    symbol: str
+    days: int = 300
+
+
+@app.post("/api/quote")
+async def get_quote(req: QuoteRequest):
+    """
+    获取真实行情并自动分析。
+    容错：实时拉取失败时，回退到本地已存储的每日行情（daily_data），
+    并在响应中标记 stale=True 告知前端数据为缓存。
+    """
+    try:
+        df = fetcher.fetch(req.symbol, req.days)
+        source = "live"
+        stale = False
+    except Exception as e:
+        # 实时失败 → 尝试本地存储兜底
+        stored = daily_store.get_stored_daily(req.symbol)
+        df = _df_from_stored(stored)
+        if df is None or len(df) < 5:
+            raise HTTPException(400, f"获取数据失败且无本地缓存: {str(e)}")
+        source = "cache"
+        stale = True
+
+    if len(df) < 5:
+        raise HTTPException(400, f"数据不足: 仅{len(df)}根K线，无法分析")
+
+    # 落库每日数据（live 时覆盖最新；cache 兜底时补全可能缺失的日期）
+    try:
+        daily_store.store_daily_bars(req.symbol, df, source=source)
+    except Exception:
+        pass
+
+    strategy = FujimotoStrategy(total_capital=100000)
+    result = strategy.analyze(df)
+    nine_turn = calc_nine_turn_display(df)
+    extra = _extra_metrics(df, req.symbol)
+
+    return JSONResponse(content=_to_jsonable({
+        "success": True,
+        "symbol": req.symbol,
+        "stale": stale,
+        "data": result_to_dict(result),
+        "chart": df_to_chart_json(df, result),
+        "nine_turn": nine_turn,
+        "high_low": extra["high_low"],
+        "valuation": extra["valuation"],
+        "meta": {
+            "rows": len(df),
+            "last_close": round(float(df['close'].iloc[-1]), 2),
+            "start_date": df['date'].iloc[0].strftime('%Y-%m-%d') if 'date' in df.columns else "",
+            "end_date": df['date'].iloc[-1].strftime('%Y-%m-%d') if 'date' in df.columns else "",
+        }
+    }), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
+
+# ================================================================
+#  每日行情存储 API（回测 / 指标分析）
+# ================================================================
+@app.get("/api/daily/{symbol}")
+async def get_daily(symbol: str, limit: int = Query(0, description="0=全部，>0 取最近 N 天")):
+    """取回某标的已存储的每日行情，用于数据回测与指标分析。"""
+    rows = daily_store.get_stored_daily(symbol, limit=limit or None)
+    return {
+        "success": True,
+        "symbol": symbol,
+        "count": len(rows),
+        "data": rows,
+    }
+
+
+# ================================================================
+#  自选看板 API（按用户）
+# ================================================================
+@app.get("/api/watchlist")
+async def get_watchlist(user: Optional[dict] = Depends(_optional_user)):
+    """获取自选看板。已登录用其自选，未登录回退默认看板。"""
+    user_id = user["id"] if user else None
+    try:
+        data = get_watchlist_status(user_id)
+        data["user_scoped"] = user_id is not None
+        return JSONResponse(content=_to_jsonable(data),
+                            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    except Exception as e:
+        raise HTTPException(500, f"获取自选列表失败: {str(e)}")
+
+
+class WatchAddRequest(BaseModel):
+    symbol: str
+    name: str = ""
+
+
+@app.post("/api/watchlist/add")
+async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_current_user)):
+    """添加自选（需登录）。"""
+    symbol = req.symbol.strip().upper()
+    if not symbol:
+        raise HTTPException(400, "代码不能为空")
+    name = req.name.strip()
+    if not name:
+        try:
+            name = fetcher.lookup_name(symbol) or ""
+        except Exception:
+            name = ""
+    ok = add_user_watchlist(user["id"], symbol, name)
+    return {"success": ok, "symbol": symbol, "name": name}
+
+
+@app.delete("/api/watchlist/remove")
+async def watchlist_remove(symbol: str = Query(...), user: dict = Depends(auth.get_current_user)):
+    """删除自选（需登录）。"""
+    symbol = symbol.strip().upper()
+    ok = remove_user_watchlist(user["id"], symbol)
+    return {"success": ok, "symbol": symbol}
+
+
+# ================================================================
+#  分析 / 回测 / 阶梯 / 公司简介
+# ================================================================
 @app.post("/api/analyze")
 async def analyze_csv(
     file: UploadFile = File(None),
@@ -244,7 +463,6 @@ async def analyze_csv(
             content = await file.read()
             df = pd.read_csv(io.BytesIO(content))
 
-            # 标准化列名
             col_map = {}
             for c in df.columns:
                 cl = c.lower().strip()
@@ -275,10 +493,7 @@ async def analyze_csv(
         strategy = FujimotoStrategy(total_capital=capital, entry_price=entry)
         result = strategy.analyze(df, current_position_pct=position / 100.0)
 
-        # 神奇九转（日级+月级）
         nine_turn = calc_nine_turn_display(df)
-
-        # 新高/新低 + 估值（原自选看板列，现下沉到个股详情页展示）
         extra = _extra_metrics(df)
 
         response_data = {
@@ -305,8 +520,8 @@ async def analyze_csv(
 
 
 class LadderRequest(BaseModel):
-    price_change: float       # 涨跌幅百分比，如 -15 表示下跌15%
-    current_position: float = 0  # 当前持仓比例
+    price_change: float
+    current_position: float = 0
 
 
 @app.post("/api/ladder")
@@ -316,7 +531,6 @@ async def calc_ladder(req: LadderRequest):
     change = req.price_change / 100.0
     desc, delta = strategy._fujimoto_action(change, req.current_position)
 
-    # 判断是买入还是卖出
     action_type = "none"
     if delta > 0:
         action_type = "buy"
@@ -354,66 +568,9 @@ async def ladder_table():
     }
 
 
-# ================================================================
-#  真实数据源 API
-# ================================================================
-
-@app.get("/api/search")
-async def search_stocks(q: str = Query(..., description="股票代码或名称关键词")):
-    """搜索股票代码"""
-    results = fetcher.search(q)
-    return {"success": True, "results": results, "count": len(results)}
-
-
-class QuoteRequest(BaseModel):
-    symbol: str
-    days: int = 300
-
-
-@app.post("/api/quote")
-async def get_quote(req: QuoteRequest):
-    """获取真实行情数据并自动分析"""
-    try:
-        df = fetcher.fetch(req.symbol, req.days)
-        if len(df) < 5:
-            raise ValueError(f"数据不足: 仅{len(df)}根K线，无法分析")
-
-        # 自动执行策略分析
-        strategy = FujimotoStrategy(total_capital=100000)
-        result = strategy.analyze(df)
-
-        # 神奇九转（日级+月级，月级形成则展示月级）
-        nine_turn = calc_nine_turn_display(df)
-
-        # 新高/新低 + 估值（原自选看板列，现下沉到个股详情页展示）
-        extra = _extra_metrics(df, req.symbol)
-
-        return JSONResponse(content=_to_jsonable({
-            "success": True,
-            "symbol": req.symbol,
-            "data": result_to_dict(result),
-            "chart": df_to_chart_json(df, result),
-            "nine_turn": nine_turn,
-            "high_low": extra["high_low"],
-            "valuation": extra["valuation"],
-            "meta": {
-                "rows": len(df),
-                "last_close": round(float(df['close'].iloc[-1]), 2),
-                "start_date": df['date'].iloc[0].strftime('%Y-%m-%d') if 'date' in df.columns else "",
-                "end_date": df['date'].iloc[-1].strftime('%Y-%m-%d') if 'date' in df.columns else "",
-            }
-        }), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
-    except Exception as e:
-        raise HTTPException(400, f"获取数据失败: {str(e)}")
-
-
-# ================================================================
-#  回测 API
-# ================================================================
-
 class BacktestRequest(BaseModel):
-    symbol: str = ""           # 股票代码（留空则用模拟数据）
-    days: int = 300            # 回测天数
+    symbol: str = ""
+    days: int = 300
     initial_capital: float = 100000
     risk_per_trade: float = 0.02
     max_position: float = 0.70
@@ -425,16 +582,19 @@ class BacktestRequest(BaseModel):
 async def run_backtest(req: BacktestRequest):
     """执行策略回测"""
     try:
-        # 获取数据
         if req.symbol:
             df = fetcher.fetch(req.symbol, req.days)
+            # 回测同样落库每日数据
+            try:
+                daily_store.store_daily_bars(req.symbol, df, source="backtest")
+            except Exception:
+                pass
         else:
             df = generate_sample_data(req.days)
 
         if len(df) < req.warmup + 30:
             raise ValueError(f"数据不足: 需要{req.warmup+30}根，实际{len(df)}根")
 
-        # 执行回测
         bt = Backtester(
             initial_capital=req.initial_capital,
             risk_per_trade=req.risk_per_trade,
@@ -456,13 +616,9 @@ async def run_backtest(req: BacktestRequest):
         raise HTTPException(400, f"回测失败: {str(e)}")
 
 
-# ================================================================
-#  自选看板 API
-# ================================================================
-
 @app.get("/api/profile")
 async def get_profile(symbol: str = Query(..., description="股票代码")):
-    """获取公司主营业务简介 + 行业分类（最简短描述，best-effort，失败返回 null）"""
+    """获取公司主营业务简介 + 行业分类（best-effort，失败返回 null）"""
     try:
         summary = fetcher.fetch_profile(symbol)
         industry = fetcher.fetch_industry(symbol)
@@ -473,20 +629,8 @@ async def get_profile(symbol: str = Query(..., description="股票代码")):
                 "business_summary": None, "industry": None}
 
 
-@app.get("/api/watchlist")
-async def get_watchlist():
-    """获取所有关注股票状态看板"""
-    try:
-        data = get_watchlist_status()
-        return JSONResponse(content=_to_jsonable(data), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
-    except Exception as e:
-        raise HTTPException(500, f"获取自选列表失败: {str(e)}")
-
-
 if __name__ == "__main__":
-    import os
     import uvicorn
-    # 支持通过环境变量配置监听地址/端口，方便本地与容器部署
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(app, host=host, port=port)

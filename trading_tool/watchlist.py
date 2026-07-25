@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data_fetcher import DataFetcher
 from strategy_engine import FujimotoStrategy
 from nine_turn import calc_nine_turn_display
+from db import get_conn, db_lock
+from daily_store import store_daily_bars
 
 fetcher = DataFetcher()
 
@@ -43,6 +45,59 @@ WATCHLIST = {
     # 指数
     '000001': '上证指数', '399300': '沪深300',
 }
+
+
+# ----------------------------------------------------------------------
+#  按用户的自选看板（sqlite 持久化）
+#  未登录 / 尚未添加任何自选的用户，回退到上方全局 WATCHLIST。
+# ----------------------------------------------------------------------
+def get_user_watchlist_symbols(user_id: int) -> list:
+    """返回 [(symbol, name), ...]，按添加时间升序。"""
+    conn = get_conn()
+    with db_lock():
+        rows = conn.execute(
+            "SELECT symbol, name FROM user_watchlist WHERE user_id=? ORDER BY created_at ASC",
+            (user_id,),
+        ).fetchall()
+    return [(r["symbol"], r["name"]) for r in rows]
+
+
+def add_user_watchlist(user_id: int, symbol: str, name: str = "") -> bool:
+    symbol = (symbol or "").strip().upper()
+    if not symbol:
+        return False
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn()
+    with db_lock():
+        conn.execute(
+            "INSERT OR REPLACE INTO user_watchlist(user_id, symbol, name, created_at) "
+            "VALUES(?,?,?,?)",
+            (user_id, symbol, name, now),
+        )
+        conn.commit()
+    return True
+
+
+def remove_user_watchlist(user_id: int, symbol: str) -> bool:
+    symbol = (symbol or "").strip().upper()
+    conn = get_conn()
+    with db_lock():
+        conn.execute(
+            "DELETE FROM user_watchlist WHERE user_id=? AND symbol=?",
+            (user_id, symbol),
+        )
+        conn.commit()
+    return True
+
+
+def resolve_watchlist_items(user_id: int = None) -> list:
+    """解析实际要计算的自选列表：有用户列表用用户的，否则用全局默认。"""
+    if user_id:
+        items = get_user_watchlist_symbols(user_id)
+        if items:
+            return items
+    return list(WATCHLIST.items())
+
 
 # 新高新低检测窗口（天数，从大到小）
 HIGH_LOW_WINDOWS = [
@@ -303,6 +358,12 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         status.valuation_type = val_type
         status.valuation_detail = val_detail
 
+        # 顺手把当日粒度行情落库（daily_data），供回测 / 指标分析 / 容错使用
+        try:
+            store_daily_bars(code, df, source="watchlist")
+        except Exception:
+            pass
+
     except Exception as e:
         status.error = str(e)[:50]
 
@@ -340,18 +401,17 @@ def _status_to_dict(st: StockStatus) -> dict:
     }
 
 
-# 缓存：避免每次刷新都重新拉取全部股票；后台刷新，接口永远秒回
-_watchlist_cache = None
-_watchlist_cache_ts = 0.0
+# 缓存：按 user_id 分桶（0 = 全局默认看板），后台刷新，接口永远秒回
+_CACHES = {}          # key -> {'data':..., 'ts':..., 'refreshing':...}
 _WATCHLIST_TTL = 300
-_refreshing = False
 _refresh_lock = threading.Lock()
 
 
-def _compute_watchlist() -> dict:
+def _compute_watchlist(items: list = None, user_id: int = None) -> dict:
     """真正计算全部关注股票状态（并行抓取提速，应在后台线程执行）"""
     results = []
-    items = list(WATCHLIST.items())
+    if items is None:
+        items = resolve_watchlist_items(user_id)
     # 并行抓取（控制并发=6，平衡速度与限流风险）；失败的单只记 error 不影响整体
     with ThreadPoolExecutor(max_workers=6) as ex:
         fut_to_code = {ex.submit(get_stock_status, code, name): code for code, name in items}
@@ -360,7 +420,7 @@ def _compute_watchlist() -> dict:
             try:
                 st = fut.result()
             except Exception:
-                st = StockStatus(code=code, name=WATCHLIST.get(code, code),
+                st = StockStatus(code=code, name=dict(items).get(code, code),
                                  market='美股' if not code.isdigit() else 'A股')
                 st.error = "获取失败"
             results.append(_status_to_dict(st))
@@ -385,41 +445,49 @@ def _compute_watchlist() -> dict:
     }
 
 
-def _background_refresh():
-    """后台刷新缓存（带熔断/兜底，已在 data_fetcher 内系统性处理限流）"""
-    global _watchlist_cache, _watchlist_cache_ts, _refreshing
+def _background_refresh(key, items, user_id):
+    """后台刷新某个看板缓存（带熔断/兜底，已在 data_fetcher 内系统性处理限流）"""
     try:
-        data = _compute_watchlist()
-        _watchlist_cache = data
-        _watchlist_cache_ts = time.time()
-    finally:
-        _refreshing = False
+        data = _compute_watchlist(items=items, user_id=user_id)
+        _CACHES[key] = {'data': data, 'ts': time.time(), 'refreshing': False}
+    except Exception:
+        if key in _CACHES:
+            _CACHES[key]['refreshing'] = False
+        else:
+            _CACHES[key] = {'data': None, 'ts': 0, 'refreshing': False}
 
 
-def get_watchlist_status() -> dict:
+def get_watchlist_status(user_id: int = None) -> dict:
     """
-    获取所有关注股票状态。
-    设计目标：接口永远秒回——
-      - 缓存命中（TTL 内）→ 直接返回；
-      - 缓存缺失/过期 → 触发一次后台刷新，立即返回旧缓存（或“计算中”占位），
-        不阻塞当前请求；后续请求自然拿到新数据。
+    获取关注股票看板状态（接口永远秒回）。
+      - user_id 给定且存在用户自选 → 计算该用户看板
+      - 否则回退到全局默认看板
+    缓存命中（TTL 内）直接返回；过期则后台刷新并返回旧缓存/“计算中”占位。
     """
-    global _refreshing
+    key = user_id if user_id else 0
+    items = resolve_watchlist_items(user_id) if user_id else list(WATCHLIST.items())
     now = time.time()
-    if _watchlist_cache is not None and (now - _watchlist_cache_ts) < _WATCHLIST_TTL:
-        _watchlist_cache["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return _watchlist_cache
+    cache = _CACHES.get(key)
 
-    # 需要刷新：确保仅一个后台刷新在跑（避免并发重复计算）
+    if cache and cache['data'] is not None and (now - cache['ts']) < _WATCHLIST_TTL:
+        cache['data']["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return cache['data']
+
+    # 需要刷新：确保仅一个后台刷新在跑
     with _refresh_lock:
-        if not _refreshing:
-            _refreshing = True
-            threading.Thread(target=_background_refresh, daemon=True).start()
+        if not (cache and cache.get('refreshing')):
+            if cache is None:
+                _CACHES[key] = {'data': None, 'ts': 0, 'refreshing': True}
+            else:
+                cache['refreshing'] = True
+            threading.Thread(
+                target=_background_refresh, args=(key, items, user_id), daemon=True
+            ).start()
 
-    if _watchlist_cache is not None:
-        # 返回稍旧的缓存，前端下次轮询即拿到新数据
-        _watchlist_cache["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return _watchlist_cache
+    cache = _CACHES.get(key)
+    if cache and cache['data'] is not None:
+        cache['data']["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return cache['data']
 
     # 首次加载、尚无任何缓存：返回“计算中”占位，前端轮询重试
     return {
