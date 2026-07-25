@@ -269,6 +269,30 @@ def calc_nine_turn_display(df: pd.DataFrame) -> dict:
     primary = monthly if monthly_formed else daily
     primary_level = "月" if monthly_formed else "日"
 
+    # —— 日/月九转冲突检测与统一操作建议 ——
+    # 仅当两边都是「有效信号」（计数≥4）且方向相反时才视为冲突，
+    # 避免把「日线刚起步 vs 月线微弱」这类不对称误判为矛盾。
+    daily_sig = daily.direction if daily.count >= 4 else "none"
+    monthly_sig = monthly.direction if monthly.count >= 4 else "none"
+    conflict = (daily_sig != "none" and monthly_sig != "none" and daily_sig != monthly_sig)
+
+    if conflict:
+        suggestion = "观望"
+        suggestion_detail = "九转矛盾（日/月方向相反）"
+    elif daily_sig == "down" or monthly_sig == "down":
+        suggestion = "买"
+        suggestion_detail = "下跌九转买点"
+    elif daily_sig == "up" or monthly_sig == "up":
+        suggestion = "卖"
+        suggestion_detail = "上涨九转卖点"
+    else:
+        suggestion = "无"
+        suggestion_detail = "无九转信号"
+
+    text = f"{daily_text}　|　{monthly_text}"
+    if conflict:
+        text += "（矛盾·观望）"
+
     return {
         "daily_text": daily_text,
         "monthly_text": monthly_text,
@@ -282,13 +306,16 @@ def calc_nine_turn_display(df: pd.DataFrame) -> dict:
         "monthly_count": monthly.count,
         "monthly_is_complete": monthly.is_complete,
         "monthly_is_completing": monthly.is_completing,
-        "text": f"{daily_text}　|　{monthly_text}",
+        "text": text,
         "level": primary_level,
         "direction": primary.direction,
         "count": primary.count,
         "status": primary.status,
         "is_complete": primary.is_complete,
         "is_completing": primary.is_completing,
+        "conflict": conflict,
+        "suggestion": suggestion,
+        "suggestion_detail": suggestion_detail,
     }
 
 
