@@ -184,7 +184,12 @@ def register(email: str, password: str, display_name: str = ""):
     code = _gen_code()
     set_verify_code(email, code)
     sent = send_verification_email(email, code)
-    return {"success": True, "email": email, "dev_code": code if not sent else None}
+    return {
+        "success": True,
+        "email": email,
+        "email_sent": bool(sent),        # 是否真实发出（未配置 SMTP 时为 False）
+        "dev_code": code if not sent else None,
+    }
 
 
 def verify_email(email: str, code: str):
@@ -224,4 +229,9 @@ def resend_code(email: str):
     code = _gen_code()
     set_verify_code(email, code)
     sent = send_verification_email(email, code)
-    return {"success": True, "email": email, "dev_code": code if not sent else None}
+    return {
+        "success": True,
+        "email": email,
+        "email_sent": bool(sent),
+        "dev_code": code if not sent else None,
+    }

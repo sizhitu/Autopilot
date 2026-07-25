@@ -204,6 +204,9 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <input id="authPwd" type="password" placeholder="密码（≥6位）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
     <input id="authCode" type="text" placeholder="邮箱验证码（注册后查收）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
     <button class="btn" style="width:100%;margin-bottom:6px;" onclick="submitAuth()">提交</button>
+    <div style="text-align:right;font-size:11px;margin-top:2px;display:none;" id="resendLink">
+      <a href="javascript:void(0)" style="color:var(--text-dim);" onclick="resendCode()">重新发送验证码</a>
+    </div>
     <div style="display:flex;justify-content:space-between;font-size:11px;">
       <a href="javascript:void(0)" style="color:var(--blue);" onclick="switchAuthMode()">切换到<span id="authSwitch">注册</span></a>
       <a href="javascript:void(0)" style="color:var(--text-dim);" onclick="closeAuth()">关闭</a>
@@ -225,8 +228,9 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div class="card-title" style="margin:0;">自选股票状态看板</div>
       <div>
         <span id="watchlistUpdated" style="color:var(--text-dim); font-size:11px; margin-right:10px;"></span>
-        <span id="addWatchRow" style="display:none; gap:4px; align-items:center;">
-          <input id="watchInput" type="text" placeholder="加代码 如 NVDA/600519" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:160px;">
+        <span id="addWatchRow" style="display:none; gap:4px; align-items:center; position:relative;">
+          <input id="watchInput" type="text" placeholder="加代码/名称 如 NVDA/伊利股份" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:170px;">
+          <div class="search-results" id="watchSuggest" style="top:100%; left:0; width:230px; display:none;"></div>
           <button class="btn btn-green btn-sm" onclick="addWatch()">+ 添加</button>
         </span>
         <button class="btn btn-gold btn-sm" onclick="loadWatchlist()">🔄 刷新</button>
@@ -474,6 +478,7 @@ function showAuth(title) {
   document.getElementById('authMsg').textContent = '';
   document.getElementById('authCode').style.display = 'none';
   document.getElementById('devCodeHint').style.display = 'none';
+  document.getElementById('resendLink').style.display = 'none';
   document.getElementById('authSwitch').textContent = authMode === 'login' ? '注册' : '登录';
   document.getElementById('authName').style.display = authMode === 'register' ? 'block' : 'none';
   document.getElementById('authModal').classList.remove('hidden');
@@ -496,7 +501,13 @@ async function submitAuth() {
       document.getElementById('authTitle').textContent = '邮箱验证';
       document.getElementById('authCode').style.display = 'block';
       document.getElementById('authSwitch').textContent = '登录';
-      msg('验证码已发送，请输入（开发模式下见下方提示）');
+      document.getElementById('resendLink').style.display = 'inline';
+      if (r.email_sent) {
+        const masked = email.replace(/(.{2}).*(@.*)/, '$1***$2');
+        msg('验证码已发送至 ' + masked + '，请查收邮箱');
+      } else {
+        msg('后端未配置 SMTP 发信，验证码见下方（开发模式）');
+      }
       if (r.dev_code) { const h = document.getElementById('devCodeHint'); h.style.display = 'block'; h.textContent = '开发模式验证码: ' + r.dev_code; }
       return;
     }
@@ -514,6 +525,20 @@ async function submitAuth() {
   } catch (e) { msg('错误: ' + e.message); }
 }
 
+async function resendCode() {
+  if (!pendingEmail) { showToast('请先注册或输入邮箱'); return; }
+  try {
+    const r = await apiJSON('/api/auth/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingEmail }) });
+    if (r.email_sent) {
+      const masked = pendingEmail.replace(/(.{2}).*(@.*)/, '$1***$2');
+      showToast('验证码已重新发送至 ' + masked, 'ok');
+    } else {
+      showToast('后端未配置 SMTP，开发模式验证码见下方');
+      if (r.dev_code) { const h = document.getElementById('devCodeHint'); h.style.display = 'block'; h.textContent = '开发模式验证码: ' + r.dev_code; }
+    }
+  } catch (e) { showToast('重发失败: ' + e.message); }
+}
+
 function finishLogin(login) {
   authToken = login.token; currentUser = login.user;
   localStorage.setItem('autopilot_token', authToken);
@@ -529,27 +554,22 @@ function doLogout() {
 function refreshAuthUI() {
   const a = document.getElementById('authArea'), u = document.getElementById('userArea');
   if (currentUser) {
-    a.classList.add('hidden'); u.style.display = 'flex';
+    a.classList.add('hidden');
+    u.classList.remove('hidden');          // 关键：移除 .hidden（其 display:none !important 会盖过 inline style）
+    u.style.display = 'flex';
     document.getElementById('userName').textContent = currentUser.display_name || currentUser.email;
     document.getElementById('addWatchRow').style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';
   } else {
-    a.classList.remove('hidden'); u.style.display = 'none';
+    a.classList.remove('hidden');
+    u.classList.add('hidden');
+    u.style.display = 'none';
     document.getElementById('addWatchRow').style.display = 'none';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = '';
   }
 }
 
 // ===================== 自选管理（增删） =====================
-async function addWatch() {
-  const inp = document.getElementById('watchInput');
-  const sym = inp.value.trim().toUpperCase();
-  if (!sym) { showToast('请输入股票代码'); return; }
-  try {
-    await apiJSON('/api/watchlist/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: sym }) });
-    inp.value = ''; showToast('已添加 ' + sym, 'ok'); loadWatchlist();
-  } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
-}
 async function removeWatch(sym) {
   try {
     await apiJSON('/api/watchlist/remove?symbol=' + encodeURIComponent(sym), { method: 'DELETE' });
@@ -599,37 +619,121 @@ function switchView(view) {
 }
 
 // === 搜索 ===
-async function searchStock() {
+// 是否为「代码型」输入（不含中文，仅英文字母/数字/点号/横线/^）。
+// 中文名称一律走搜索解析，避免把名称当代码去取数。
+function isCodeLike(s) { return /^[A-Za-z0-9.\-^]+$/.test(s); }
+
+async function searchStock(opts = {}) {
+  const live = !!opts.live;                       // live=true 时（边打字边搜）不做自动跳转
   const q = document.getElementById('searchInput').value.trim();
-  if (!q) return;
-  const res = await api('/api/search?q=' + encodeURIComponent(q));
-  const data = await res.json();
   const box = document.getElementById('searchResults');
-  box.innerHTML = '';
-  box.style.display = 'block';
-  if (data.results.length === 0) {
-    box.innerHTML = '<div class="search-result-item">未找到，尝试直接输入代码</div>';
-    // 如果像股票代码，直接尝试获取
-    if (q.length <= 6) {
-      box.innerHTML += `<div class="search-result-item" onclick="fetchQuote('${q}')"><span class="code">${q}</span><span class="name">直接获取数据</span></div>`;
+  if (!q) { box.style.display = 'none'; return; }
+  try {
+    const res = await api('/api/search?q=' + encodeURIComponent(q));
+    const data = await res.json();
+    box.innerHTML = '';
+    if (data.results.length === 0) {
+      // 仅当输入像代码时才提供「直接获取数据」；中文名不进入此分支
+      if (isCodeLike(q) && q.length <= 8) {
+        box.innerHTML = `<div class="search-result-item" onclick="fetchQuote('${q}')"><span class="code">${q}</span><span class="name">直接获取数据</span></div>`;
+      } else {
+        box.innerHTML = '<div class="search-result-item">未找到，请检查代码或名称</div>';
+      }
+      box.style.display = 'block';
+      return;
     }
-  } else {
     data.results.forEach(r => {
-      box.innerHTML += `<div class="search-result-item" onclick="fetchQuote('${r.code}','${r.name}','${r.market}')"><span class="code">${r.code}</span><span class="name">${r.name}</span><span class="market">${r.market}</span></div>`;
+      const safeName = (r.name || '').replace(/['"]/g, '');
+      box.innerHTML += `<div class="search-result-item" onclick="fetchQuote('${r.code}','${safeName}','${r.market}')"><span class="code">${r.code}</span><span class="name">${r.name}</span><span class="market">${r.market}</span></div>`;
     });
-    // 唯一精确匹配（如输入完整 6 位代码）直接打开分析页，省去二次点击，并直接展示公司简称
-    if (data.results.length === 1) {
+    box.style.display = 'block';
+    // 点击「搜索」按钮且唯一精确匹配时直接打开分析页；边打字搜索不自动跳转
+    if (!live && data.results.length === 1) {
       const r = data.results[0];
       box.style.display = 'none';
       fetchQuote(r.code, r.name, r.market);
     }
+  } catch (e) {
+    box.style.display = 'none';
   }
 }
+// 边打字边出下拉（防抖 250ms）
+let _searchTimer = null;
+document.getElementById('searchInput').addEventListener('input', () => {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => searchStock({ live: true }), 250);
+});
 document.getElementById('searchInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') searchStock().catch(()=>{});
+  if (e.key === 'Enter') { clearTimeout(_searchTimer); searchStock({ live: false }).catch(()=>{}); }
 });
 document.addEventListener('click', e => {
   if (!e.target.closest('.search-box')) document.getElementById('searchResults').style.display = 'none';
+  if (!e.target.closest('#addWatchRow')) document.getElementById('watchSuggest').style.display = 'none';
+});
+
+// 把任意输入（代码或名称）解析成 {code, name}。
+//   - 代码型直接返回（后端会再反查名称）
+//   - 中文名 → /api/search 取首个匹配
+async function resolveSymbol(input) {
+  input = (input || '').trim();
+  if (!input) return null;
+  if (isCodeLike(input)) return { code: input.toUpperCase(), name: '' };
+  try {
+    const res = await api('/api/search?q=' + encodeURIComponent(input));
+    const data = await res.json();
+    if (data.results && data.results.length) {
+      const r = data.results[0];
+      return { code: r.code.toUpperCase(), name: r.name };
+    }
+  } catch (e) {}
+  return null;
+}
+
+// === 自选添加（支持名称 → 代码）===
+async function addWatch() {
+  const inp = document.getElementById('watchInput');
+  const raw = inp.value.trim();
+  if (!raw) { showToast('请输入股票代码或名称'); return; }
+  try {
+    const resolved = await resolveSymbol(raw);
+    if (!resolved) { showToast('未找到对应股票，请检查代码或名称'); return; }
+    await apiJSON('/api/watchlist/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: resolved.code, name: resolved.name || '' }) });
+    inp.value = '';
+    document.getElementById('watchSuggest').style.display = 'none';
+    showToast('已添加 ' + resolved.code + (resolved.name ? ('（' + resolved.name + '）') : ''), 'ok');
+    loadWatchlist();
+  } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
+}
+// 从下拉直接点选后添加（无需再解析）
+async function addWatchResolved(code, name) {
+  try {
+    await apiJSON('/api/watchlist/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: code, name: name || '' }) });
+    document.getElementById('watchInput').value = '';
+    document.getElementById('watchSuggest').style.display = 'none';
+    showToast('已添加 ' + code + (name ? ('（' + name + '）') : ''), 'ok');
+    loadWatchlist();
+  } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
+}
+// 自选输入框：边打字边出匹配下拉
+let _watchTimer = null;
+document.getElementById('watchInput').addEventListener('input', () => {
+  clearTimeout(_watchTimer);
+  const q = document.getElementById('watchInput').value.trim();
+  const box = document.getElementById('watchSuggest');
+  if (!q) { box.style.display = 'none'; return; }
+  _watchTimer = setTimeout(async () => {
+    try {
+      const res = await api('/api/search?q=' + encodeURIComponent(q));
+      const data = await res.json();
+      box.innerHTML = '';
+      if (!data.results || !data.results.length) { box.style.display = 'none'; return; }
+      data.results.forEach(r => {
+        const safeName = (r.name || '').replace(/['"]/g, '');
+        box.innerHTML += `<div class="search-result-item" onclick="addWatchResolved('${r.code}','${safeName}')"><span class="code">${r.code}</span><span class="name">${r.name}</span><span class="market">${r.market}</span></div>`;
+      });
+      box.style.display = 'block';
+    } catch (e) { box.style.display = 'none'; }
+  }, 250);
 });
 
 // === 获取行情 ===

@@ -16,6 +16,7 @@ import os
 import io
 import json
 import math
+import re
 import time
 import pandas as pd
 import numpy as np
@@ -422,11 +423,22 @@ class WatchAddRequest(BaseModel):
 
 @app.post("/api/watchlist/add")
 async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_current_user)):
-    """添加自选（需登录）。"""
-    symbol = req.symbol.strip().upper()
-    if not symbol:
-        raise HTTPException(400, "代码不能为空")
-    name = req.name.strip()
+    """添加自选（需登录）。支持「代码」或「名称」输入：名称会先解析成代码再入库。"""
+    raw = req.symbol.strip()
+    if not raw:
+        raise HTTPException(400, "代码/名称不能为空")
+    # 代码型（不含中文）直接当作代码；否则视为名称，走搜索解析
+    is_code = bool(re.fullmatch(r"[A-Za-z0-9.\-^]+", raw.upper()))
+    symbol = raw.upper()
+    name = (req.name or "").strip()
+    if not is_code:
+        try:
+            hits = fetcher.search(raw)
+            if hits:
+                symbol = hits[0]["code"].upper()
+                name = name or hits[0].get("name", "")
+        except Exception:
+            pass
     if not name:
         try:
             name = fetcher.lookup_name(symbol) or ""

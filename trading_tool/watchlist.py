@@ -75,6 +75,8 @@ def add_user_watchlist(user_id: int, symbol: str, name: str = "") -> bool:
             (user_id, symbol, name, now),
         )
         conn.commit()
+    # 让该用户看板缓存立即失效，下一次请求会即时重算（修复"添加后不刷新"）
+    _invalidate_cache(user_id)
     return True
 
 
@@ -87,7 +89,17 @@ def remove_user_watchlist(user_id: int, symbol: str) -> bool:
             (user_id, symbol),
         )
         conn.commit()
+    # 同上：删除后让看板缓存立即失效
+    _invalidate_cache(user_id)
     return True
+
+
+def _invalidate_cache(user_id: int) -> None:
+    """使某用户的看板缓存失效（增删自选后调用）。"""
+    caches = globals().get("_CACHES")
+    if caches is not None:
+        caches.pop(user_id, None)
+    # 全局默认看板（未登录）不受影响；仅清理对应用户桶
 
 
 def resolve_watchlist_items(user_id: int = None) -> list:

@@ -1,0 +1,18 @@
+# 本地数据库（运行时生成，不入库）
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 预览截图等临时产物
+*.png
+*.jpg
+*.jpeg
+
+# 前端依赖 / 构建产物
+node_modules/
+dist/
