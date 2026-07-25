@@ -23,7 +23,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -50,6 +50,8 @@ import supabase_client
 import symbols
 import watchlist_store
 import cache
+import analysis_store
+import ratelimit
 
 app = FastAPI(title="藤本茂融合策略 Web 工具 API", version="3.0")
 fetcher = DataFetcher()
@@ -257,6 +259,30 @@ def _bearer(authorization: Optional[str] = Header(None)) -> str:
     return ""
 
 
+# ----------------------------------------------------------------------
+#  限流辅助：按「用户优先、否则客户端 IP」构造计数键，超限抛 429
+# ----------------------------------------------------------------------
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_check(authorization: Optional[str], request: Request, name: str,
+                max_req: int, window: int) -> None:
+    """对指定接口做固定窗口限流；超限时抛 429 友好提示。"""
+    user = auth.get_optional_user(authorization)
+    ident = user["id"] if user else _client_ip(request)
+    key = f"rl:{name}:{ident}"
+    res = ratelimit.limit(key, max_req, window)
+    if not res["allowed"]:
+        raise HTTPException(
+            status_code=429,
+            detail=f"请求过于频繁，请 {res['retry_after']} 秒后再试（接口限流保护）",
+        )
+
+
 # ================================================================
 #  健康检查
 # ================================================================
@@ -452,8 +478,11 @@ async def admin_ticket_reply(ticket_id: int, req: TicketReplyRequest, admin: dic
 #  真实数据源 API
 # ================================================================
 @app.get("/api/search")
-async def search_stocks(q: str = Query(..., description="股票代码或名称关键词")):
+async def search_stocks(q: str = Query(..., description="股票代码或名称关键词"),
+                        request: Request = None,
+                        authorization: Optional[str] = Header(None)):
     """搜索股票代码"""
+    _rate_check(authorization, request, "search", 60, 60)
     results = fetcher.search(q)
     return {"success": True, "results": results, "count": len(results)}
 
@@ -464,12 +493,14 @@ class QuoteRequest(BaseModel):
 
 
 @app.post("/api/quote")
-async def get_quote(req: QuoteRequest):
+async def get_quote(req: QuoteRequest, request: Request = None,
+                    authorization: Optional[str] = Header(None)):
     """
     获取真实行情并自动分析。
     数据分层：原始 K 线写入缓存层（不落业务库）；实时拉取失败时，
     优先回退行情缓存，再回退每日 K 线缓存，并标记 stale=True 告知前端数据可能延迟。
     """
+    _rate_check(authorization, request, "quote", 20, 60)
     try:
         df = fetcher.fetch(req.symbol, req.days)
         source = "live"
@@ -525,6 +556,22 @@ async def get_quote(req: QuoteRequest):
     if source == "live":
         try:
             cache.set_quote_cache(req.symbol, payload)
+        except Exception:
+            pass
+
+    # 已登录用户：把本次分析结果写入分析历史（关联 user + symbol），失败不阻断主流程
+    user = auth.get_optional_user(authorization)
+    if user:
+        try:
+            record = {
+                "symbol": req.symbol.upper(),
+                "data": payload["data"],
+                "nine_turn": payload["nine_turn"],
+                "high_low": payload["high_low"],
+                "valuation": payload["valuation"],
+                "meta": payload["meta"],
+            }
+            analysis_store.add(user["id"], req.symbol, "", record, _bearer(authorization))
         except Exception:
             pass
 
@@ -647,6 +694,23 @@ async def watchlist_note(req: WatchNoteRequest, user: dict = Depends(auth.get_cu
 
 
 # ================================================================
+#  分析历史（关联用户，可回溯查看）
+# ================================================================
+@app.get("/api/history")
+async def get_history(user: dict = Depends(auth.get_current_user),
+                      authorization: Optional[str] = Header(None),
+                      symbol: str = Query(None, description="可选：按标的过滤"),
+                      limit: int = Query(20, ge=1, le=100),
+                      offset: int = Query(0, ge=0)):
+    """返回当前用户的分析历史（按时间倒序）。需登录。"""
+    rows = analysis_store.list_for_user(
+        user["id"], symbol=symbol, limit=limit, offset=offset,
+        access_token=_bearer(authorization),
+    )
+    return {"success": True, "items": rows, "count": len(rows)}
+
+
+# ================================================================
 #  分析 / 回测 / 阶梯 / 公司简介
 # ================================================================
 @app.post("/api/analyze")
@@ -656,11 +720,15 @@ async def analyze_csv(
     position: float = Form(0),
     entry_price: float = Form(0),
     use_sample: bool = Form(False),
+    request: Request = None,
+    authorization: Optional[str] = Header(None),
 ):
     """分析上传的 CSV 或模拟数据"""
+    _rate_check(authorization, request, "analyze", 10, 60)
     try:
         if use_sample or file is None:
             df = generate_sample_data(300)
+            sym_label = "模拟数据"
         else:
             content = await file.read()
             df = pd.read_csv(io.BytesIO(content))
@@ -690,6 +758,7 @@ async def analyze_csv(
             if 'date' in df.columns:
                 df['date'] = pd.to_datetime(df['date'])
                 df = df.sort_values('date').reset_index(drop=True)
+            sym_label = (file.filename or "CSV上传")
 
         entry = entry_price if entry_price > 0 else None
         strategy = FujimotoStrategy(total_capital=capital, entry_price=entry)
@@ -713,6 +782,23 @@ async def analyze_csv(
                 "entry_price": entry,
             }
         }
+
+        # 已登录用户：把本次分析写入历史（CSV/模拟数据以标签作为 symbol）
+        user = auth.get_optional_user(authorization)
+        if user:
+            try:
+                record = {
+                    "symbol": sym_label,
+                    "data": response_data["data"],
+                    "nine_turn": nine_turn,
+                    "high_low": extra["high_low"],
+                    "valuation": extra["valuation"],
+                    "meta": response_data["meta"],
+                }
+                analysis_store.add(user["id"], sym_label, "", record, _bearer(authorization))
+            except Exception:
+                pass
+
         return JSONResponse(content=_to_jsonable(response_data))
     except HTTPException:
         raise
@@ -781,8 +867,10 @@ class BacktestRequest(BaseModel):
 
 
 @app.post("/api/backtest")
-async def run_backtest(req: BacktestRequest):
+async def run_backtest(req: BacktestRequest, request: Request = None,
+                       authorization: Optional[str] = Header(None)):
     """执行策略回测"""
+    _rate_check(authorization, request, "backtest", 10, 60)
     try:
         if req.symbol:
             df = fetcher.fetch(req.symbol, req.days)

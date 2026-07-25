@@ -99,6 +99,15 @@ CREATE TABLE IF NOT EXISTS daily_data (
     PRIMARY KEY(symbol, trade_date)
 );
 
+CREATE TABLE IF NOT EXISTS analysis_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    name        TEXT,
+    result_json TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key    TEXT PRIMARY KEY,
     value  TEXT
@@ -119,6 +128,8 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE INDEX IF NOT EXISTS idx_daily_symbol ON daily_data(symbol);
 CREATE INDEX IF NOT EXISTS idx_watch_user   ON user_watchlist(user_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_ct   ON tickets(created_at);
+CREATE INDEX IF NOT EXISTS idx_ah_user     ON analysis_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_ah_user_sym ON analysis_history(user_id, symbol);
 """
 
 
