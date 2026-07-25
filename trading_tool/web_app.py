@@ -20,7 +20,7 @@ import re
 import time
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Depends
@@ -41,6 +41,7 @@ from watchlist import (
 from nine_turn import calc_nine_turn_display
 import db
 import auth
+import mailer
 import daily_store
 
 app = FastAPI(title="藤本茂融合策略 Web 工具 API", version="3.0")
@@ -314,8 +315,201 @@ async def api_me(user: dict = Depends(auth.get_current_user)):
             "email": user["email"],
             "display_name": user["display_name"],
             "verified": bool(user["verified"]),
+            "is_admin": bool(user["is_admin"]),
         },
     }
+
+
+# ================================================================
+#  用户管理 / EDM / 工单（管理员 + 公开咨询）
+# ================================================================
+class SmtpSettingsRequest(BaseModel):
+    smtp_host: str = ""
+    smtp_port: str = ""
+    smtp_user: str = ""
+    smtp_pass: str = ""
+    smtp_from: str = ""
+    smtp_tls: str = ""
+
+
+class EdmRequest(BaseModel):
+    subject: str
+    body: str
+    scope: str = "all"   # all | verified
+
+
+class ContactRequest(BaseModel):
+    name: str = ""
+    email: str
+    country: str = ""
+    message: str
+
+
+class TicketReplyRequest(BaseModel):
+    reply: str
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(admin: dict = Depends(auth.require_admin)):
+    """注册用户统计：总数 / 已验证 / 近7天 / 近30天。"""
+    conn = db.get_conn()
+    with db.db_lock():
+        total = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        verified = conn.execute("SELECT COUNT(*) AS c FROM users WHERE verified=1").fetchone()["c"]
+        now = datetime.now()
+        d7 = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        d30 = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        recent_7 = conn.execute("SELECT COUNT(*) AS c FROM users WHERE created_at>=?", (d7,)).fetchone()["c"]
+        recent_30 = conn.execute("SELECT COUNT(*) AS c FROM users WHERE created_at>=?", (d30,)).fetchone()["c"]
+        tickets_open = conn.execute("SELECT COUNT(*) AS c FROM tickets WHERE status='open'").fetchone()["c"]
+    return {
+        "success": True,
+        "total_users": total,
+        "verified_users": verified,
+        "recent_7d": recent_7,
+        "recent_30d": recent_30,
+        "open_tickets": tickets_open,
+    }
+
+
+@app.get("/api/admin/users")
+async def admin_users(limit: int = 100, offset: int = 0, admin: dict = Depends(auth.require_admin)):
+    """注册用户列表（脱敏：不含密码哈希）。"""
+    conn = db.get_conn()
+    with db.db_lock():
+        rows = conn.execute(
+            "SELECT id, email, display_name, verified, is_admin, created_at, last_login "
+            "FROM users ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    users = [{
+        "id": r["id"], "email": r["email"], "display_name": r["display_name"],
+        "verified": bool(r["verified"]), "is_admin": bool(r["is_admin"]),
+        "created_at": r["created_at"], "last_login": r["last_login"],
+    } for r in rows]
+    return {"success": True, "count": len(users), "users": users}
+
+
+@app.get("/api/admin/settings/smtp")
+async def admin_get_smtp(admin: dict = Depends(auth.require_admin)):
+    """查看当前 SMTP 配置（密码脱敏）。"""
+    def g(k, env):
+        v = db.get_setting(k)
+        return v if v is not None else os.getenv(env, "")
+    host = g("smtp_host", "SMTP_HOST")
+    user = g("smtp_user", "SMTP_USER")
+    frm = g("smtp_from", "SMTP_FROM") or user
+    return {
+        "success": True,
+        "configured": bool(host),
+        "smtp_host": host,
+        "smtp_port": g("smtp_port", "SMTP_PORT") or "465",
+        "smtp_user": user,
+        "smtp_from": frm,
+        "smtp_tls": g("smtp_tls", "SMTP_TLS") or "true",
+        "support_email": mailer.SUPPORT_EMAIL,
+    }
+
+
+@app.post("/api/admin/settings/smtp")
+async def admin_set_smtp(req: SmtpSettingsRequest, admin: dict = Depends(auth.require_admin)):
+    """后台配置 SMTP（保存到 settings 表，覆盖环境变量）。空字符串=保留/不覆盖。"""
+    mapping = {
+        "smtp_host": req.smtp_host, "smtp_port": req.smtp_port,
+        "smtp_user": req.smtp_user, "smtp_pass": req.smtp_pass,
+        "smtp_from": req.smtp_from, "smtp_tls": req.smtp_tls,
+    }
+    written = {}
+    for k, v in mapping.items():
+        if v not in (None, ""):
+            db.set_setting(k, v)
+            written[k] = True
+    # 测试连通性（发一封到管理员自己的邮箱）
+    ok = mailer.send_email(
+        to_email=req.smtp_user or admin["email"],
+        subject=f"【{mailer.SITE_NAME}】SMTP 配置已生效",
+        body="这是一封测试邮件，说明你的 SMTP 发信配置已成功生效。",
+    )
+    return {"success": True, "written": list(written.keys()), "test_sent": bool(ok)}
+
+
+@app.post("/api/admin/edm/send")
+async def admin_edm_send(req: EdmRequest, admin: dict = Depends(auth.require_admin)):
+    """向注册用户群发 EDM（新特性通知等）。scope=all|verified。"""
+    if not req.subject or not req.body:
+        raise HTTPException(400, "主题与正文不能为空")
+    conn = db.get_conn()
+    with db.db_lock():
+        if req.scope == "verified":
+            rows = conn.execute("SELECT email FROM users WHERE verified=1").fetchall()
+        else:
+            rows = conn.execute("SELECT email FROM users").fetchall()
+    recipients = [r["email"] for r in rows]
+    sent = mailer.send_edm(req.subject, req.body, recipients)
+    return {"success": True, "targets": len(recipients), "sent": sent}
+
+
+@app.post("/api/contact")
+async def api_contact(req: ContactRequest):
+    """公开咨询入口：收集 姓名/邮箱/国家/问题，落库并立即转发到 support 邮箱（自动建单）。"""
+    email = (req.email or "").strip().lower()
+    message = (req.message or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(400, "请填写有效邮箱")
+    if len(message) < 3:
+        raise HTTPException(400, "请填写咨询内容")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = db.get_conn()
+    with db.db_lock():
+        cur = conn.execute(
+            "INSERT INTO tickets(name, email, country, message, status, created_at) "
+            "VALUES(?,?,?,?,'open',?)",
+            (req.name.strip(), email, req.country.strip(), message, now),
+        )
+        conn.commit()
+        tid = cur.lastrowid
+    # 立即转发到客服邮箱
+    mailed = mailer.send_ticket_notification(req.name, email, req.country, message, tid)
+    return {"success": True, "ticket_id": tid, "notified": bool(mailed)}
+
+
+@app.get("/api/admin/tickets")
+async def admin_tickets(limit: int = 50, admin: dict = Depends(auth.require_admin)):
+    """工单列表（最新在前）。"""
+    conn = db.get_conn()
+    with db.db_lock():
+        rows = conn.execute(
+            "SELECT id, name, email, country, message, status, reply, created_at "
+            "FROM tickets ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    tickets = [dict(r) for r in rows]
+    return {"success": True, "count": len(tickets), "tickets": tickets}
+
+
+@app.post("/api/admin/tickets/{ticket_id}/reply")
+async def admin_ticket_reply(ticket_id: int, req: TicketReplyRequest, admin: dict = Depends(auth.require_admin)):
+    """回复工单（保存回复文本，并邮件通知客户）。"""
+    reply = (req.reply or "").strip()
+    if not reply:
+        raise HTTPException(400, "回复内容不能为空")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = db.get_conn()
+    with db.db_lock():
+        row = conn.execute("SELECT email FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "工单不存在")
+        conn.execute(
+            "UPDATE tickets SET status='replied', reply=?, replied_at=? WHERE id=?",
+            (reply, now, ticket_id),
+        )
+        conn.commit()
+        to_email = row["email"]
+    mailer.send_email(
+        to_email=to_email,
+        subject=f"【{mailer.SITE_NAME}】关于您的咨询（工单 #{ticket_id}）的回复",
+        body=f"您好，\n\n我们对您提交的咨询回复如下：\n\n{reply}\n\n——{mailer.SITE_NAME} 客服团队",
+    )
+    return {"success": True, "ticket_id": ticket_id}
 
 
 # ================================================================

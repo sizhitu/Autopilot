@@ -21,6 +21,7 @@ services:
       - key: CORS_ORIGINS
         value: "https://timebricks.bid,https://autopilot.pages.dev"
       # 以下为邮件 SMTP 配置（不填则进入开发模式，验证码打印到日志/返回 dev_code）
+      # 也可在后台「管理 → SMTP 配置」里保存（写入数据库，覆盖此处环境变量）
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -31,3 +32,11 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      # 客服工单收件邮箱（用户咨询会自动发到这里并建单）
+      - key: SUPPORT_EMAIL
+        value: support@timebricks.bid
+      # 额外授予管理员权限的邮箱（逗号分隔）；首个注册用户也会自动成为管理员
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: SITE_NAME
+        value: Autopilot 投资分析

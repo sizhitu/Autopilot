@@ -12,6 +12,7 @@
 
 import hashlib
 import hmac
+import os
 import secrets
 import time
 from datetime import datetime, timedelta
@@ -24,6 +25,20 @@ from mailer import send_verification_email
 
 SESSION_TTL_DAYS = 30
 CODE_TTL_SECONDS = 5 * 60  # 验证码 5 分钟有效
+
+# 通过环境变量额外授予管理员权限的邮箱（逗号分隔）；首个注册用户也会自动成为管理员
+ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+
+
+def is_admin(user: dict) -> bool:
+    """判断用户是否为管理员（库内 is_admin 标记 或 环境变量 ADMIN_EMAILS 命中）。"""
+    if not user:
+        return False
+    if user.get("is_admin"):
+        return True
+    if (user.get("email") or "").strip().lower() in ADMIN_EMAILS:
+        return True
+    return False
 
 
 # ----------------------------------------------------------------------
@@ -94,10 +109,13 @@ def create_user(email: str, password: str, display_name: str = "") -> dict:
     pw_hash = hash_password(password)
     conn = db.get_conn()
     with db.db_lock():
+        # 首个注册用户自动成为管理员
+        cnt = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        is_admin_flag = 1 if cnt == 0 else 0
         cur = conn.execute(
-            "INSERT INTO users(email, display_name, password_hash, verified, created_at) "
-            "VALUES(?,?,?,0,?)",
-            (email, display_name or email.split("@")[0], pw_hash, now),
+            "INSERT INTO users(email, display_name, password_hash, verified, is_admin, created_at) "
+            "VALUES(?,?,?,0,?,?)",
+            (email, display_name or email.split("@")[0], pw_hash, is_admin_flag, now),
         )
         conn.commit()
         uid = cur.lastrowid
@@ -168,6 +186,14 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     return user
 
 
+def require_admin(authorization: Optional[str] = Header(None)) -> dict:
+    """管理员依赖：非管理员返回 403。"""
+    user = get_current_user(authorization)
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+
 # ----------------------------------------------------------------------
 #  业务封装：注册 / 验证 / 登录 / 重发
 # ----------------------------------------------------------------------
@@ -217,6 +243,7 @@ def login(email: str, password: str):
             "email": user["email"],
             "display_name": user["display_name"],
             "verified": bool(user["verified"]),
+            "is_admin": bool(user["is_admin"]),
         },
     }
 

@@ -84,17 +84,66 @@ CREATE TABLE IF NOT EXISTS daily_data (
     PRIMARY KEY(symbol, trade_date)
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key    TEXT PRIMARY KEY,
+    value  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tickets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT,
+    email      TEXT NOT NULL,
+    country    TEXT,
+    message    TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'open',
+    reply      TEXT,
+    created_at TEXT NOT NULL,
+    replied_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_daily_symbol ON daily_data(symbol);
 CREATE INDEX IF NOT EXISTS idx_watch_user   ON user_watchlist(user_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_ct   ON tickets(created_at);
 """
 
 
+def get_setting(key: str, default: str = None) -> "str | None":
+    """读取一条 key-value 设置（用于 SMTP 等可后台配置项）。"""
+    conn = get_conn()
+    with _db_lock:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    """写入/更新一条 key-value 设置。"""
+    conn = get_conn()
+    with _db_lock:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        conn.commit()
+
+
+def _migrate() -> None:
+    """对已有库做向后兼容迁移（新列/新表补齐）。"""
+    conn = get_conn()
+    with _db_lock:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "is_admin" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+
+
 def init_db() -> None:
-    """建表（幂等）。服务启动时调用一次。"""
+    """建表（幂等）+ 迁移。服务启动时调用一次。"""
     conn = get_conn()
     with _db_lock:
         conn.executescript(SCHEMA)
         conn.commit()
+    _migrate()
 
 
 if __name__ == "__main__":

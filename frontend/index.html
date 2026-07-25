@@ -383,6 +383,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
         <div class="tab" onclick="switchTab('ladder',this)">阶梯表</div>
         <div class="tab" onclick="switchTab('calculator',this)">计算器</div>
         <div class="tab" onclick="switchTab('backtest',this)">回测配置</div>
+        <div class="tab" id="adminTab" style="display:none;" onclick="switchTab('admin',this)">管理</div>
       </div>
       <div id="tab-indicators"><div style="color:var(--text-dim);text-align:center;padding:15px;">等待分析</div></div>
       <div id="tab-fibonacci" class="hidden"><div style="color:var(--text-dim);text-align:center;padding:15px;">等待分析</div></div>
@@ -409,6 +410,62 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
         </div>
         <button class="btn btn-orange btn-sm" style="width:100%;margin-top:8px;" onclick="runBacktest()">📊 执行回测</button>
         <div id="btResultSummary" style="margin-top:8px;font-size:11px;"></div>
+      </div>
+
+      <!-- 管理后台（仅管理员可见） -->
+      <div id="tab-admin" class="hidden">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">用户管理 · EDM 群发 · 客服工单 · SMTP 配置</div>
+
+        <!-- 统计 -->
+        <div class="bt-stats" id="adminStats" style="grid-template-columns:repeat(5,1fr);">
+          <div class="bt-stat"><div class="label">注册用户</div><div class="value" id="stTotal">-</div></div>
+          <div class="bt-stat"><div class="label">已验证</div><div class="value" id="stVerified">-</div></div>
+          <div class="bt-stat"><div class="label">近7天</div><div class="value" id="st7">-</div></div>
+          <div class="bt-stat"><div class="label">近30天</div><div class="value" id="st30">-</div></div>
+          <div class="bt-stat"><div class="label">未结工单</div><div class="value" id="stTickets">-</div></div>
+        </div>
+
+        <!-- SMTP 配置 -->
+        <div class="card" style="margin-bottom:10px;">
+          <div class="card-title">SMTP 发信配置 <span id="smtpState" style="font-size:10px;color:var(--text-dim);"></span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+            <input id="smtpHost" placeholder="SMTP_HOST 如 smtp.qq.com" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+            <input id="smtpPort" placeholder="端口 465" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+            <input id="smtpUser" placeholder="登录账号/邮箱" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+            <input id="smtpPass" type="password" placeholder="授权码（非登录密码）" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+            <input id="smtpFrom" placeholder="发件人（留空=同账号）" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+            <input id="smtpTls" placeholder="TLS true/false" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+          </div>
+          <button class="btn btn-sm" style="margin-top:6px;width:100%;" onclick="saveSmtp()">保存并发送测试邮件</button>
+          <div id="smtpMsg" style="font-size:11px;margin-top:6px;min-height:14px;color:var(--orange);"></div>
+        </div>
+
+        <!-- EDM 群发 -->
+        <div class="card" style="margin-bottom:10px;">
+          <div class="card-title">群发邮件（EDM）</div>
+          <input id="edmSubject" placeholder="邮件主题（如：新功能上线通知）" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;margin-bottom:6px;">
+          <textarea id="edmBody" placeholder="正文内容…" style="width:100%;height:70px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;margin-bottom:6px;resize:vertical;"></textarea>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select id="edmScope" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+              <option value="all">全部注册用户</option>
+              <option value="verified">仅已验证用户</option>
+            </select>
+            <button class="btn btn-green btn-sm" style="flex:1;" onclick="sendEdm()">发送群发</button>
+          </div>
+          <div id="edmMsg" style="font-size:11px;margin-top:6px;min-height:14px;color:var(--orange);"></div>
+        </div>
+
+        <!-- 用户列表 -->
+        <div class="card" style="margin-bottom:10px;">
+          <div class="card-title">注册用户</div>
+          <div id="adminUsers" style="font-size:12px;"></div>
+        </div>
+
+        <!-- 工单 -->
+        <div class="card">
+          <div class="card-title">客服工单</div>
+          <div id="adminTickets" style="font-size:12px;"></div>
+        </div>
       </div>
     </div>
 
@@ -553,6 +610,8 @@ function doLogout() {
 }
 function refreshAuthUI() {
   const a = document.getElementById('authArea'), u = document.getElementById('userArea');
+  const adminTab = document.getElementById('adminTab');
+  const isAdmin = !!(currentUser && currentUser.is_admin);
   if (currentUser) {
     a.classList.add('hidden');
     u.classList.remove('hidden');          // 关键：移除 .hidden（其 display:none !important 会盖过 inline style）
@@ -560,12 +619,14 @@ function refreshAuthUI() {
     document.getElementById('userName').textContent = currentUser.display_name || currentUser.email;
     document.getElementById('addWatchRow').style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';
+    if (adminTab && isAdmin) adminTab.style.display = '';
   } else {
     a.classList.remove('hidden');
     u.classList.add('hidden');
     u.style.display = 'none';
     document.getElementById('addWatchRow').style.display = 'none';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = '';
+    if (adminTab) adminTab.style.display = 'none';
   }
 }
 
@@ -610,12 +671,138 @@ function switchTab(name, el) {
   el.classList.add('active');
   document.querySelectorAll('[id^="tab-"]').forEach(t => t.classList.add('hidden'));
   document.getElementById('tab-' + name).classList.remove('hidden');
+  if (name === 'admin') loadAdmin();
 }
 function switchView(view) {
   document.getElementById('viewAnalysis').classList.toggle('active', view === 'analysis');
   document.getElementById('viewBacktest').classList.toggle('active', view === 'backtest');
   document.getElementById('analysisCanvas').classList.toggle('hidden', view !== 'analysis');
   document.getElementById('backtestView').classList.toggle('hidden', view !== 'backtest');
+}
+
+// ===================== 管理后台（管理员） =====================
+async function loadAdmin() {
+  if (!currentUser || !currentUser.is_admin) { showToast('无管理员权限'); return; }
+  try {
+    const st = await apiJSON('/api/admin/stats');
+    document.getElementById('stTotal').textContent = st.total_users;
+    document.getElementById('stVerified').textContent = st.verified_users;
+    document.getElementById('st7').textContent = st.recent_7d;
+    document.getElementById('st30').textContent = st.recent_30d;
+    document.getElementById('stTickets').textContent = st.open_tickets;
+  } catch (e) {}
+  // SMTP 当前配置
+  try {
+    const sm = await apiJSON('/api/admin/settings/smtp');
+    document.getElementById('smtpState').textContent = sm.configured ? '（已配置）' : '（未配置，将无法真实发信）';
+    if (sm.smtp_host) document.getElementById('smtpHost').value = sm.smtp_host;
+    if (sm.smtp_port) document.getElementById('smtpPort').value = sm.smtp_port;
+    if (sm.smtp_user) document.getElementById('smtpUser').value = sm.smtp_user;
+    if (sm.smtp_from) document.getElementById('smtpFrom').value = sm.smtp_from;
+    if (sm.smtp_tls) document.getElementById('smtpTls').value = sm.smtp_tls;
+  } catch (e) {}
+  // 用户列表
+  try {
+    const u = await apiJSON('/api/admin/users?limit=200');
+    const el = document.getElementById('adminUsers');
+    if (!u.users.length) { el.innerHTML = '<div style="color:var(--text-dim)">暂无注册用户</div>'; }
+    else {
+      el.innerHTML = u.users.map(r =>
+        `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);">
+           <span>${r.email} <span style="color:var(--text-dim)">${r.display_name ? '('+r.display_name+')' : ''}</span></span>
+           <span style="font-size:10px;color:var(--text-dim);">${r.verified ? '已验证' : '未验证'}${r.is_admin ? ' · 管理员' : ''} · ${r.created_at}</span>
+         </div>`).join('');
+    }
+  } catch (e) {}
+  // 工单
+  try {
+    const t = await apiJSON('/api/admin/tickets?limit=50');
+    renderAdminTickets(t.tickets || []);
+  } catch (e) {}
+}
+
+function renderAdminTickets(tickets) {
+  const el = document.getElementById('adminTickets');
+  if (!tickets.length) { el.innerHTML = '<div style="color:var(--text-dim)">暂无工单</div>'; return; }
+  el.innerHTML = tickets.map(t => {
+    const safeMsg = (t.message || '').replace(/[<>&]/g, '');
+    const safeReply = (t.reply || '').replace(/[<>&]/g, '');
+    const replied = t.status === 'replied';
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
+      <div style="display:flex;justify-content:space-between;font-size:11px;">
+        <b>#${t.id} ${t.email}</b><span style="color:var(--text-dim)">${t.created_at}${t.country ? ' · ' + t.country : ''}</span>
+      </div>
+      <div style="font-size:12px;margin:3px 0;">${safeMsg}</div>
+      ${replied ? `<div style="font-size:11px;color:var(--green);">已回复：${safeReply}</div>`
+        : `<div style="display:flex;gap:4px;margin-top:4px;">
+             <input id="tkReply${t.id}" placeholder="输入回复…" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:11px;">
+             <button class="btn btn-sm" onclick="replyTicket(${t.id})">回复并邮件通知</button>
+           </div>`}
+    </div>`;
+  }).join('');
+}
+
+async function replyTicket(id) {
+  const v = document.getElementById('tkReply' + id).value.trim();
+  if (!v) { showToast('请输入回复内容'); return; }
+  try {
+    await apiJSON('/api/admin/tickets/' + id + '/reply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reply: v }) });
+    showToast('已回复并通知客户', 'ok'); loadAdmin();
+  } catch (e) { showToast('回复失败: ' + e.message); }
+}
+
+async function saveSmtp() {
+  const m = document.getElementById('smtpMsg');
+  m.style.color = 'var(--orange)'; m.textContent = '保存中…';
+  const body = {
+    smtp_host: document.getElementById('smtpHost').value.trim(),
+    smtp_port: document.getElementById('smtpPort').value.trim(),
+    smtp_user: document.getElementById('smtpUser').value.trim(),
+    smtp_pass: document.getElementById('smtpPass').value,
+    smtp_from: document.getElementById('smtpFrom').value.trim(),
+    smtp_tls: document.getElementById('smtpTls').value.trim(),
+  };
+  if (!body.smtp_host || !body.smtp_user || !body.smtp_pass) { m.textContent = '请至少填写 主机/账号/授权码'; return; }
+  try {
+    const r = await apiJSON('/api/admin/settings/smtp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    m.style.color = r.test_sent ? 'var(--green)' : 'var(--orange)';
+    m.textContent = r.test_sent ? '已保存，测试邮件已发往你的邮箱 ✅' : '已保存（但测试邮件发送失败，请检查凭据/端口）';
+    loadAdmin();
+  } catch (e) { m.textContent = '保存失败: ' + e.message; }
+}
+
+async function sendEdm() {
+  const m = document.getElementById('edmMsg');
+  const subject = document.getElementById('edmSubject').value.trim();
+  const body = document.getElementById('edmBody').value.trim();
+  const scope = document.getElementById('edmScope').value;
+  if (!subject || !body) { m.textContent = '请填写主题与正文'; return; }
+  m.style.color = 'var(--orange)'; m.textContent = '群发中…';
+  try {
+    const r = await apiJSON('/api/admin/edm/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subject, body, scope }) });
+    m.style.color = 'var(--green)';
+    m.textContent = `已发送 ${r.sent}/${r.targets} 封（失败的可能因邮箱配置或限流）`;
+  } catch (e) { m.textContent = '发送失败: ' + e.message; }
+}
+
+// ===================== 客服咨询表单 =====================
+function openContact() { document.getElementById('contactModal').classList.remove('hidden'); }
+function closeContact() { document.getElementById('contactModal').classList.add('hidden'); }
+async function submitContact() {
+  const m = document.getElementById('ctMsg2');
+  const email = document.getElementById('ctEmail').value.trim();
+  const message = document.getElementById('ctMsg').value.trim();
+  const name = document.getElementById('ctName').value.trim();
+  const country = document.getElementById('ctCountry').value.trim();
+  if (!email || !/@/.test(email)) { m.textContent = '请填写有效邮箱'; return; }
+  if (message.length < 3) { m.textContent = '请填写咨询内容'; return; }
+  try {
+    const r = await apiJSON('/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, country, message }) });
+    m.style.color = 'var(--green)';
+    m.textContent = '已提交！工单 #' + r.ticket_id + ' 已发送至客服邮箱，我们会尽快回复。';
+    document.getElementById('ctMsg').value = '';
+    setTimeout(closeContact, 1800);
+  } catch (e) { m.style.color = 'var(--orange)'; m.textContent = '提交失败: ' + e.message; }
 }
 
 // === 搜索 ===
@@ -1473,5 +1660,23 @@ loadWatchlist();  // 自选看板为默认页，打开即加载
 initAuth();
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
 </script>
+
+<!-- 客服咨询悬浮入口 + 弹窗 -->
+<button id="contactFab" onclick="openContact()" style="position:fixed;right:18px;bottom:18px;z-index:900;border:none;border-radius:24px;background:var(--blue);color:#fff;padding:10px 16px;font-size:12px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.4);">💬 客服咨询</button>
+
+<div id="contactModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;">
+  <div class="card" style="width:360px;max-width:92vw;">
+    <div class="card-title">联系客服 · 提交咨询</div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">官方客服邮箱：<b>support@timebricks.bid</b>（提交后我们会立即收到工单并回复）</div>
+    <input id="ctName" placeholder="你的称呼（可选）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
+    <input id="ctEmail" type="email" placeholder="你的邮箱（用于接收回复）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
+    <input id="ctCountry" placeholder="国家/地区（可选）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
+    <textarea id="ctMsg" placeholder="请描述你的问题…" style="width:100%;height:84px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;margin-bottom:8px;resize:vertical;"></textarea>
+    <button class="btn" style="width:100%;" onclick="submitContact()">发送咨询</button>
+    <div style="text-align:right;font-size:11px;margin-top:4px;"><a href="javascript:void(0)" style="color:var(--text-dim);" onclick="closeContact()">关闭</a></div>
+    <div id="ctMsg2" style="font-size:11px;margin-top:6px;min-height:14px;color:var(--orange);"></div>
+  </div>
+</div>
+
 </body>
 </html>
