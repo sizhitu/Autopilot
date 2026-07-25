@@ -421,7 +421,7 @@ function getBackend() {
   if (q) return q.replace(/\/$/, '');
   const saved = localStorage.getItem('autopilot_api');
   if (saved) return saved.replace(/\/$/, '');
-  return 'https://autopilot-api.onrender.com'; // TODO: 替换为你的 Render 服务地址
+  return 'https://autopilot-598c.onrender.com'; // TODO: 替换为你的 Render 服务地址
 }
 const BACKEND = getBackend();
 
