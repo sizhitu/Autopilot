@@ -52,6 +52,7 @@ import watchlist_store
 import cache
 import analysis_store
 import ratelimit
+import reports
 
 app = FastAPI(title="藤本茂融合策略 Web 工具 API", version="3.0")
 fetcher = DataFetcher()
@@ -434,6 +435,27 @@ async def admin_edm_send(req: EdmRequest, admin: dict = Depends(auth.require_adm
         offset += 500
     sent = mailer.send_edm(req.subject, req.body, recipients)
     return {"success": True, "targets": len(recipients), "sent": sent}
+
+
+class ReportGenRequest(BaseModel):
+    period: str = "weekly"          # weekly | monthly
+    email: str = ""                 # 可选：仅给该邮箱生成一封（用于测试 / 预览）
+
+
+@app.post("/api/admin/reports/generate")
+async def admin_reports_generate(req: ReportGenRequest, admin: dict = Depends(auth.require_admin)):
+    """手动触发生成并发送 AI 周报/月报。生产由定时任务（Render Cron / 外部调度）调用。
+
+    - 不传 email：遍历全部用户生成并群发，返回 {sent, skipped}。
+    - 传 email：仅给该邮箱生成一封（便于预览/测试），返回 {sent}。
+    """
+    if req.period not in ("weekly", "monthly"):
+        raise HTTPException(400, "period 仅支持 weekly / monthly")
+    if req.email:
+        ok = reports.generate_for_user("", req.email, req.period)
+        return {"success": True, "sent": 1 if ok else 0}
+    stats = reports.run_reports(req.period)
+    return {"success": True, **stats}
 
 
 @app.post("/api/contact")

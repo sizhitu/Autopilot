@@ -53,3 +53,19 @@ services:
       # 额外授予管理员权限的邮箱（逗号分隔）
       - key: ADMIN_EMAILS
         sync: false
+
+      # ===== AI 周报 / 月报（OpenAI 兼容接口，可选）=====
+      # 未配置 AI_API_KEY 时报告降级为结构化纯文本 HTML，不中断主流程。
+      # 可对接 OpenAI / DeepSeek / 通义千问 / 智谱 GLM / 本地 vLLM（改 AI_BASE_URL）。
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: AI_MODEL
+        value: gpt-4o-mini
+      - key: REPORT_MAX_SYMBOLS
+        value: "15"
+
+      # ===== 多设备实时同步（默认关）=====
+      - key: ENABLE_REALTIME
+        value: "false"

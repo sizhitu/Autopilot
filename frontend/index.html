@@ -700,17 +700,20 @@ function openSettings() {
 // ===================== 启动鉴权态 =====================
 async function initAuth() {
   await initSupabase();
-  // Magic Link 回跳：URL 片段携带 access_token 等
-  if (sb && location.hash && location.hash.includes('access_token')) {
+  // Magic Link / OTP 回跳：兼容两种流程
+  //   - 隐式流（Implicit）：URL 片段带 #access_token=...
+  //   - PKCE 流（Supabase 默认）：查询参数带 ?code=...
+  const hasAuthRedirect =
+    (sb && location.hash && (location.hash.includes('access_token') || location.hash.includes('code'))) ||
+    /[?&]code=/.test(location.search);
+  if (hasAuthRedirect) {
     try {
       const { data, error } = await sb.auth.getSessionFromUrl();
       if (!error && data.session) {
-        authToken = data.session.access_token;
-        localStorage.setItem('autopilot_token', authToken);
-        const me = await apiJSON('/api/auth/me');
-        currentUser = me.user;
-        localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
+        await finishSession(data.session);   // 复用登录成功流程（写 token / 同步资料 / 刷新 UI）
         history.replaceState(null, '', location.pathname + location.search);
+      } else if (error) {
+        console.warn('Magic Link 回跳校验失败', error);
       }
     } catch (e) { console.warn('Magic Link 回跳解析失败', e); }
   } else {

@@ -40,6 +40,24 @@
 2. 应用层邮件（EDM 群发 / 客服工单通知）由后端 `trading_tool/mailer.py` 直连 **Resend REST API**（`RESEND_API_KEY`）。
    - 未配 `RESEND_API_KEY` 时回退 SMTP（开发用，见旧 SMTP 配置）；但**生产建议一律走 Resend**。
 
+### 3) 认证邮件模板（双模式：链接 + 验证码）
+
+前端统一用 `signInWithOtp` 发信；为兼容「点击链接」与「手动输入验证码」两种登录方式，
+请在 Supabase 控制台 **Authentication → Email Templates**（Sign In / Sign Up 模板）中放入**链接 + 验证码**：
+
+```html
+<h2>登录验证</h2>
+<p>你的验证码：<strong>{{ .Token }}</strong></p>
+<p>或者直接点击链接登录：</p>
+<p><a href="{{ .ConfirmationURL }}">点击登录</a></p>
+```
+
+> 前端两种登录路径均已支持：
+> - **点链接（Magic Link）**：邮件链接回跳到站点，前端 `initAuth()` 自动用 `getSessionFromUrl()` 建立会话
+>   （已兼容隐式流 `#access_token=` 与 Supabase 默认 PKCE 流 `?code=` 两种回调）。
+> - **手输验证码（OTP）**：在登录弹窗切换到「验证」模式，粘贴 `{{ .Token }}`，前端调用 `verifyOTP` 登录。
+> 若你倾向纯 OTP（不要链接），把模板里的链接行删掉即可；纯 Magic Link 则删掉 `{{ .Token }}` 行。
+
 ---
 
 ## 三、缓存层（Upstash Redis，可选但推荐）
@@ -130,6 +148,7 @@ python3 -m http.server 5500
 | 容错 | 实时行情拉取失败 → 回退行情缓存 → 回退每日 K 线缓存，并标记 `stale`；前端提示「数据可能延迟」 |
 | 缓存分层 | 原始 K 线只进缓存层（Redis / `cache` 表），**不大量写业务库**（严格分离） |
 | 多设备同步 | `ENABLE_REALTIME=true` 时前端订阅 `watchlists` 变更自动刷新看板（默认关） |
+| AI 周/月报 | 定时为每位用户生成关注股票总结邮件（周报只陈述事实、月报含趋势与操作参考）；AI 缺失时降级为结构化 HTML |
 
 ---
 
@@ -139,6 +158,39 @@ python3 -m http.server 5500
 2. **SMTP 真实发信（后台可配置）**：管理 → SMTP 配置 写入 `settings` 表（优先级高于环境变量），保存后自动发测试邮件。未配置则回退开发模式（或走 Resend）。
 3. **用户管理与 EDM**：`GET /api/admin/stats`、`GET /api/admin/users`、`POST /api/admin/edm/send`（向全部/已验证用户群发）。
 4. **客服咨询 + 自动工单**：右下角「💬 客服咨询」提交 → `POST /api/contact` 写入 `tickets` 并发邮件到 `SUPPORT_EMAIL`；管理员可回复并邮件通知客户。
+
+---
+
+## 八之二、AI 周报 / 月报（定时生成并群发）
+
+每个周末为**每位用户**自动生成一份关注股票的分析总结邮件：
+
+- **分析对象**：有自选 → 其自选股；无自选 → 回退「未登录默认看板」股票列表（`watchlist.WATCHLIST`）。
+- **数据来源**：藤本茂策略信号 / 神奇九转 / 估值 / 高低，由 `trading_tool/reports.py` 拉取行情后计算。
+- **周报**：仅陈述事实，**不给买卖建议**（AI prompt 强制约束）。
+- **月报**：含当下趋势、机会与风险、操作参考（标注为「参考」）。
+- **AI 缺失降级**：未配 `AI_API_KEY` 时，报告自动降级为结构化纯文本 HTML，主流程不中断。
+- **投资建议（后续）**：回测数据、策略占比、收益预测等投资建议能力预留，本期未实现。
+
+### 1) 配置 AI（OpenAI 兼容）
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `AI_API_KEY` | 空 | 必填才启用 AI 润色；可对接 OpenAI / DeepSeek / 通义千问 / 智谱 GLM / 本地 vLLM（改下一项） |
+| `AI_BASE_URL` | `https://api.openai.com/v1` | 兼容 OpenAI Chat Completions 的基址 |
+| `AI_MODEL` | `gpt-4o-mini` | 模型名 |
+| `REPORT_MAX_SYMBOLS` | `15` | 单封报告最多分析标的数量 |
+
+### 2) 触发方式
+
+- **手动 / 测试**：管理员调用 `POST /api/admin/reports/generate`
+  - `{"period":"weekly"}` 遍历全部用户群发；`{"period":"weekly","email":"x@y.com"}` 仅给该邮箱生成一封（预览）。
+- **命令行**：`cd trading_tool && python reports.py weekly`（或 `monthly`）。
+- **定时（生产）**：用 **Render Cron Job**（或 GitHub Actions scheduled workflow）每周末调用上面的命令 / 接口。
+  例：Render → Cron Job → Command `cd trading_tool && python reports.py weekly`，Schedule `0 9 * * 0`（每周日 9 点，UTC）。
+  月报单独建一个 Cron：`0 9 1 * *`（每月 1 号）。
+
+> 依赖发信：`reports.py` 复用 `mailer.send_email`（优先 Resend，回退 SMTP），需 `RESEND_API_KEY` 或 SMTP 配置可用。
 
 ---
 
