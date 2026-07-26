@@ -692,15 +692,30 @@ async function resendCode() {
   } catch (e) { showToast('重发失败: ' + (e.message || e)); }
 }
 
-async function finishSession(session) {
+async function finishSession(session, opts = {}) {
   authToken = session.access_token;
   localStorage.setItem('autopilot_token', authToken);
+  // 基线用户直接来自 supabase 会话本身（supabase 已校验过该会话，含 id/email）。
+  // 把 supabase 当作登录态的「真值来源」——后端 /api/auth/me 仅用于补全 display_name / is_admin，
+  // 即便它抖动或返回 401（令牌过期），也绝不清空会话，从根本上杜绝「刷新即登出」。
+  const su = session.user || {};
+  let user = {
+    id: su.id,
+    email: su.email || pendingEmail || '',
+    display_name: (su.user_metadata && su.user_metadata.display_name) || su.email || pendingEmail || '',
+  };
   try {
-    const me = await apiJSON('/api/auth/me');
-    currentUser = me.user;
-    localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
-  } catch (e) { currentUser = { email: pendingEmail || '' }; }
-  refreshAuthUI(); closeAuth(); showToast('登录成功', 'ok');
+    const res = await api('/api/auth/me');           // 用 api()（非 apiJSON），失败不触发 doLogout
+    if (res.ok) {
+      const j = await res.json();
+      if (j && j.user) user = Object.assign(user, j.user);
+    }
+    // 非 2xx（含 401 过期）一律忽略，保留 supabase 会话
+  } catch (e) { console.warn('获取用户资料失败（保留 supabase 会话）', e); }
+  currentUser = user;
+  localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
+  refreshAuthUI(); closeAuth();
+  if (!opts.silent) showToast('登录成功', 'ok');
   setupRealtime(); loadWatchlist();
 }
 
@@ -784,25 +799,31 @@ async function initAuth() {
     } catch (e) { console.warn('Magic Link 回跳解析失败', e); }
   }
 
-  // 2) 普通刷新：用 supabase-js 自身持久化的会话恢复（含 refresh token，刷新页面可自动续期，
-  //    不会因 access_token 过期或 /api/auth/me 抖动而被登出）
+  // 2) 普通刷新：用 supabase-js 恢复持久化会话。
+  //    关键：先 getUser()（会强制用 refresh token 续期——即便 access_token 已过期也能换到新令牌），
+  //    再 getSession() 取续期后的会话。这样后续 /api/auth/me、/api/watchlist 都不会因过期令牌 401 而误登出。
   if (!established && sb) {
     try {
-      const { data } = await sb.auth.getSession();
-      if (data && data.session) { await finishSession(data.session); established = true; }
+      let session = null;
+      try {
+        const { data: ud, error: ue } = await sb.auth.getUser();
+        if (!ue && ud.user) { const { data: sd } = await sb.auth.getSession(); session = sd && sd.session; }
+      } catch (e) { console.warn('getUser 续期失败，尝试本地会话', e); }
+      if (!session) { const { data: sd } = await sb.auth.getSession(); session = sd && sd.session; }
+      if (session) { await finishSession(session, { silent: true }); established = true; }
     } catch (e) { console.warn('getSession 恢复失败', e); }
   }
 
-  // 3) 兜底：本地保存的 token（非破坏性——/api/auth/me 失败也不要清空，避免误登出）
+  // 3) 兜底：仅本地有 token 时（supabase 会话未持久化），用 api() 非破坏性补全资料；
+  //    即便 /api/auth/me 失败也保留 token 与本地用户，绝不清空。
   if (!established) {
     const t = localStorage.getItem('autopilot_token');
     const u = localStorage.getItem('autopilot_user');
     if (t && u) {
       authToken = t; currentUser = JSON.parse(u);
       try {
-        const me = await apiJSON('/api/auth/me');
-        currentUser = me.user;
-        localStorage.setItem('autopilot_user', JSON.stringify(me.user));
+        const res = await api('/api/auth/me');
+        if (res.ok) { const j = await res.json(); if (j && j.user) { currentUser = j.user; localStorage.setItem('autopilot_user', JSON.stringify(currentUser)); } }
       } catch (e) { console.warn('恢复用户资料失败（保留本地会话）', e); }
     }
   }
