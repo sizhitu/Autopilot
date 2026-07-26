@@ -407,12 +407,27 @@ _WATCHLIST_TTL = 300
 _refresh_lock = threading.Lock()
 
 
-def _compute_watchlist(items: list = None, user_id: int = None) -> dict:
-    """真正计算全部关注股票状态（并行抓取提速，应在后台线程执行）"""
-    results = []
+def _compute_watchlist(items: list = None, user_id: int = None, key: int = None) -> dict:
+    """真正计算全部关注股票状态（并行抓取提速，应在后台线程执行）。
+
+    当传入 key 时，会“边算边写”：每完成一只就把已就绪的股票增量写入
+    _CACHES[key]['data']，使前端可以轮询到逐行就绪的看板，而不必傻等全部算完。
+    """
     if items is None:
         items = resolve_watchlist_items(user_id)
-    # 并行抓取（控制并发=6，平衡速度与限流风险）；失败的单只记 error 不影响整体
+    total = len(items)
+    # 初始化增量缓存（key 给定时），让前端可立即轮询到“计算中（含部分结果）”
+    if key is not None:
+        _CACHES[key] = {
+            'data': {'success': True, 'computing': True, 'updated_at': '',
+                     'count': 0, 'total': total, 'summary': {}, 'stocks': []},
+            'ts': time.time(), 'refreshing': True,
+        }
+
+    def _sort_key(x):
+        return (0 if (x.get('market') or '美股') == '美股' else 1, x['code'])
+
+    partial = []
     with ThreadPoolExecutor(max_workers=6) as ex:
         fut_to_code = {ex.submit(get_stock_status, code, name): code for code, name in items}
         for fut in as_completed(fut_to_code):
@@ -423,85 +438,111 @@ def _compute_watchlist(items: list = None, user_id: int = None) -> dict:
                 st = StockStatus(code=code, name=dict(items).get(code, code),
                                  market='美股' if not code.isdigit() else 'A股')
                 st.error = "获取失败"
-            results.append(_status_to_dict(st))
+            partial.append(_status_to_dict(st))
+            # 增量写回缓存：每完成一只就更新，前端即可逐行看到已就绪的股票
+            if key is not None:
+                sorted_partial = sorted(partial, key=_sort_key)
+                _CACHES[key]['data'] = {
+                    'success': True, 'computing': True, 'updated_at': '',
+                    'count': len(sorted_partial), 'total': total,
+                    'summary': {}, 'stocks': sorted_partial,
+                }
 
-    # 排序：美股在前，A股在后
-    results.sort(key=lambda x: (0 if x['market'] == '美股' else 1, x['code']))
+    # 最终排序：美股在前，A股在后
+    partial.sort(key=_sort_key)
 
     # 分类汇总（操盘建议）
     summary = {'即将上涨关注': 0, '上涨见顶关注': 0, '下跌观望': 0, 'error': 0}
-    for s in results:
+    for s in partial:
         if s.get('error'):
             summary['error'] += 1
         else:
             summary[s['signal']] = summary.get(s['signal'], 0) + 1
 
-    return {
+    final = {
         'success': True,
+        'computing': False,
         'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'count': len(results),
+        'count': len(partial),
+        'total': total,
         'summary': summary,
-        'stocks': results,
+        'stocks': partial,
     }
+    if key is not None:
+        _CACHES[key] = {'data': final, 'ts': time.time(), 'refreshing': False}
+    return final
 
 
 def _background_refresh(key, items, user_id):
-    """后台刷新某个看板缓存（带熔断/兜底，已在 data_fetcher 内系统性处理限流）"""
+    """后台刷新某个看板缓存（边算边增量写入 _CACHES[key]，带兜底熔断）"""
     try:
-        data = _compute_watchlist(items=items, user_id=user_id)
-        _CACHES[key] = {'data': data, 'ts': time.time(), 'refreshing': False}
+        _compute_watchlist(items=items, user_id=user_id, key=key)
     except Exception:
-        if key in _CACHES:
-            _CACHES[key]['refreshing'] = False
+        # 兜底：确保刷新标记被清除，避免前端一直轮询却永远算不完
+        entry = _CACHES.get(key)
+        if entry:
+            entry['refreshing'] = False
+            if entry['data'] is None:
+                entry['data'] = {'success': True, 'computing': False, 'updated_at': '',
+                                 'count': 0, 'total': len(items) if items else 0,
+                                 'summary': {}, 'stocks': []}
         else:
-            _CACHES[key] = {'data': None, 'ts': 0, 'refreshing': False}
+            _CACHES[key] = {'data': {'success': True, 'computing': False, 'updated_at': '',
+                                     'count': 0, 'total': len(items) if items else 0,
+                                     'summary': {}, 'stocks': []},
+                            'ts': 0, 'refreshing': False}
 
 
-def get_watchlist_status(user_id: int = None) -> dict:
+def get_watchlist_status(user_id: int = None, force: bool = False) -> dict:
     """
     获取关注股票看板状态（接口永远秒回）。
-      - user_id 给定且存在用户自选 → 计算该用户看板
+      - user_id 给定且存在用户自选 → 计算该用户看板（按用户顺序）
+      - user_id 给定但无自选 → 复用全局默认看板（默认看板已被首个访问者预热），
+        即时展示，无需等待
       - 否则回退到全局默认看板
-    缓存命中（TTL 内）直接返回；过期则后台刷新并返回旧缓存/“计算中”占位。
+    命中缓存（TTL 内）直接返回；过期或强制刷新则后台“增量计算”，
+    前端可轮询拿到逐行就绪的部分结果。
     """
-    key = user_id if user_id else 0
-    items = resolve_watchlist_items(user_id) if user_id else list(WATCHLIST.items())
+    if user_id:
+        user_items = resolve_watchlist_items(user_id)
+        if user_items:
+            key, items = user_id, user_items
+        else:
+            # 登录但尚无自选：直接复用默认看板缓存（已预热），即时展示
+            key, items = 0, list(WATCHLIST.items())
+    else:
+        key, items = 0, list(WATCHLIST.items())
+
     now = time.time()
     cache = _CACHES.get(key)
-
-    if cache and cache['data'] is not None and (now - cache['ts']) < _WATCHLIST_TTL:
+    # 命中且未过期且非强制刷新 → 直接返回
+    if not force and cache and cache['data'] is not None and (now - cache['ts']) < _WATCHLIST_TTL:
         cache['data']["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return cache['data']
 
-    # 需要刷新：确保仅一个后台刷新在跑
+    # 需要刷新：确保仅一个后台刷新在跑，并先种下“计算中（含部分结果）”的占位
     with _refresh_lock:
+        cache = _CACHES.get(key)
         if not (cache and cache.get('refreshing')):
-            if cache is None:
-                _CACHES[key] = {'data': None, 'ts': 0, 'refreshing': True}
-            else:
-                cache['refreshing'] = True
+            _CACHES[key] = {
+                'data': {'success': True, 'computing': True, 'updated_at': '',
+                         'count': 0, 'total': len(items), 'summary': {}, 'stocks': []},
+                'ts': time.time(), 'refreshing': True,
+            }
             threading.Thread(
                 target=_background_refresh, args=(key, items, user_id), daemon=True
             ).start()
 
     cache = _CACHES.get(key)
     if cache and cache['data'] is not None:
-        cache['data']["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return cache['data']
-
-    # 首次加载、尚无任何缓存：返回“计算中”占位，前端轮询重试
-    return {
-        'success': True,
-        'computing': True,
-        'updated_at': '',
-        'count': 0,
-        'summary': {},
-        'stocks': [],
-    }
+    return {'success': True, 'computing': True, 'updated_at': '',
+            'count': 0, 'total': len(items), 'summary': {}, 'stocks': []}
 
 
 if __name__ == "__main__":
-    data = get_watchlist_status()
+    # CLI 直接同步计算（不走后台增量缓存，便于本地排障）
+    data = _compute_watchlist(items=list(WATCHLIST.items()), key=None)
     print(f"关注股票: {data['count']}只  更新时间: {data['updated_at']}")
     print(f"{'代码':8s} {'名称':12s} {'现价':>10s} {'5日%':>7s} {'信号':6s} {'九转':20s} {'高低':12s}")
     print("-" * 90)

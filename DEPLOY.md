@@ -53,10 +53,15 @@
 ```
 
 > 前端两种登录路径均已支持：
-> - **点链接（Magic Link）**：邮件链接回跳到站点，前端 `initAuth()` 自动用 `getSessionFromUrl()` 建立会话
->   （已兼容隐式流 `#access_token=` 与 Supabase 默认 PKCE 流 `?code=` 两种回调）。
-> - **手输验证码（OTP）**：在登录弹窗切换到「验证」模式，粘贴 `{{ .Token }}`，前端调用 `verifyOTP` 登录。
+> - **点链接（Magic Link）**：前端 `supabase-js` 使用 **隐式流（`flowType: 'implicit'`）**，
+>   邮件链接形如 `#access_token=...`，回跳后 `initAuth()` 用 `getSessionFromUrl()` 直接建立会话，
+>   **跨设备 / 跨浏览器点击也能登录**（PKCE 流依赖同浏览器的 verifier，手机/另一台电脑点链接会失效，故不用）。
+>   `createClient` 已设 `detectSessionInUrl: false`，由前端手动接管回跳，确保把 token 写入自有状态（`authToken`）。
+> - **手输验证码（OTP）**：在登录弹窗切换到「验证」模式，粘贴 `{{ .Token }}`，前端调用 `verifyOtp`（v2 小写 t）登录。
 > 若你倾向纯 OTP（不要链接），把模板里的链接行删掉即可；纯 Magic Link 则删掉 `{{ .Token }}` 行。
+
+> **自选看板刷新体验**：`/api/watchlist` 永远秒回。首次或「刷新」时后台并行抓取，每算完一只就增量写回缓存，
+> 前端轮询渲染**已就绪的行**（右下角显示「加载中 X/N…」），全部算完才停止轮询；登录但尚无自选的用户直接复用已预热的默认看板，即时展示。
 
 ---
 

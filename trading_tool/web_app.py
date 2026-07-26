@@ -622,11 +622,14 @@ async def get_daily(symbol: str, limit: int = Query(0, description="0=全部，>
 #  自选看板 API（按用户）
 # ================================================================
 @app.get("/api/watchlist")
-async def get_watchlist(user: Optional[dict] = Depends(_optional_user)):
-    """获取自选看板。已登录用其自选（按用户排序、附带备注），未登录回退默认看板。"""
+async def get_watchlist(refresh: bool = False, user: Optional[dict] = Depends(_optional_user)):
+    """获取自选看板。已登录用其自选（按用户排序、附带备注），未登录回退默认看板。
+
+    refresh=1 时强制后台重新计算（前端「刷新」按钮使用，支持逐行渐进返回）。
+    """
     user_id = user["id"] if user else None
     try:
-        data = get_watchlist_status(user_id)
+        data = get_watchlist_status(user_id, force=refresh)
         data["user_scoped"] = user_id is not None
         # 已登录：按用户排序顺序重排看板，并附带每只备注
         if user_id:
