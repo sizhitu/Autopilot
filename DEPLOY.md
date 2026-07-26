@@ -81,6 +81,10 @@
 > 4. **确认线上构建已含 implicit 流**：本仓库 `frontend/index.html` 的 `createClient(..., { auth: { flowType:'implicit', detectSessionInUrl:false } })` 已推送（commit `73f7803`）。Cloudflare Pages 从 `main` 自动部署后，请**硬刷新**（Ctrl/Cmd+Shift+R）清掉旧缓存再测。
 > 5. **链接有时效**：`type=magiclink` 的 token 也有有效期（默认 1 小时，见 `Authentication → Providers → Email`），过期同样会跳首页无会话，重新获取即可。
 
+> **刷新页面被登出 / 注册确认后没登录（代码层已修复，记录根因）**
+> 之前的「刷新即登出」根因不在逻辑分支，而是一个**自毁陷阱**：`apiJSON()` 在收到后端 `401` 时会调用 `doLogout()` 清空本地会话；而 `finishSession()` 用 `apiJSON('/api/auth/me')` 去校验会话，于是「恢复会话」这一步本身就会因令牌过期/后端抖动触发登出。
+> 修复方式（commit `f8692bb`）：把 supabase 会话视为登录态**真值来源**——`finishSession()` 以 `session.user` 为基线，仅用 `api()`（非 `apiJSON`）补全 `display_name/is_admin`，`401`/失败一律保留会话；`initAuth()` 恢复时先 `getUser()` 强制用 refresh token 续期、再取续期后的会话，彻底杜绝过期令牌误登出。注册确认链接建立会话的最后一步用的是同一 `finishSession`，因此同步受益。
+
 > **自选看板刷新体验**：`/api/watchlist` 永远秒回。首次或「刷新」时后台并行抓取，每算完一只就增量写回缓存，
 > 前端轮询渲染**已就绪的行**（右下角显示「加载中 X/N…」），全部算完才停止轮询；登录但尚无自选的用户直接复用已预热的默认看板，即时展示。
 
