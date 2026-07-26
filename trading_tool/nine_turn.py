@@ -269,16 +269,16 @@ def calc_nine_turn_display(df: pd.DataFrame) -> dict:
     primary = monthly if monthly_formed else daily
     primary_level = "月" if monthly_formed else "日"
 
-    # —— 日/月九转冲突检测与统一操作建议 ——
-    # 仅当两边都是「有效信号」（计数≥4）且方向相反时才视为冲突，
-    # 避免把「日线刚起步 vs 月线微弱」这类不对称误判为矛盾。
+    # —— 日/月九转背离检测与统一操作建议 ——
+    # 仅当两边都是「有效信号」（计数≥4）且方向相反时才视为跨周期背离，
+    # 避免把「日线刚起步 vs 月线微弱」这类不对称误判为背离。
     daily_sig = daily.direction if daily.count >= 4 else "none"
     monthly_sig = monthly.direction if monthly.count >= 4 else "none"
     conflict = (daily_sig != "none" and monthly_sig != "none" and daily_sig != monthly_sig)
 
     if conflict:
         suggestion = "观望"
-        suggestion_detail = "九转矛盾（日/月方向相反）"
+        suggestion_detail = "九转日/月背离（方向相反）"
     elif daily_sig == "down" or monthly_sig == "down":
         suggestion = "买"
         suggestion_detail = "下跌九转买点"
@@ -291,7 +291,7 @@ def calc_nine_turn_display(df: pd.DataFrame) -> dict:
 
     text = f"{daily_text}　|　{monthly_text}"
     if conflict:
-        text += "（矛盾·观望）"
+        text += "（背离·观望）"
 
     return {
         "daily_text": daily_text,

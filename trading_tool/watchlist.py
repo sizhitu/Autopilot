@@ -307,12 +307,12 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         sell_ladder_hit = status.change_5d >= 25.0
 
         # 操盘建议分类（九转时机 + 藤本茂阶梯）
-        #   日/月九转方向相反（冲突）→ 统一为「九转矛盾·观望」，不给出矛盾的单边建议
+        #   日/月九转方向相反（跨周期背离）→ 统一为「九转背离·观望」，不给出方向冲突的单边建议
         #   下跌九转临近/完成 或 阶梯买点(暴跌) → 即将上涨关注（橙）
         #   上涨九转临近/完成 或 阶梯卖点(暴涨) → 上涨见顶关注（红）
         #   其余（仍在调整/震荡）                → 下跌观望（灰）
         if nt.get('conflict'):
-            status.signal = "九转矛盾·观望"
+            status.signal = "九转背离·观望"
             status.signal_color = "gray"
         elif (nt['is_completing'] or nt['is_complete']) and nt['direction'] == 'down':
             status.signal = "即将上涨关注"
