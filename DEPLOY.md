@@ -52,13 +52,24 @@
 <p><a href="{{ .ConfirmationURL }}">点击登录</a></p>
 ```
 
-> 前端两种登录路径均已支持：
-> - **点链接（Magic Link）**：前端 `supabase-js` 使用 **隐式流（`flowType: 'implicit'`）**，
->   邮件链接形如 `#access_token=...`，回跳后 `initAuth()` 用 `getSessionFromUrl()` 直接建立会话，
->   **跨设备 / 跨浏览器点击也能登录**（PKCE 流依赖同浏览器的 verifier，手机/另一台电脑点链接会失效，故不用）。
->   `createClient` 已设 `detectSessionInUrl: false`，由前端手动接管回跳，确保把 token 写入自有状态（`authToken`）。
-> - **手输验证码（OTP）**：在登录弹窗切换到「验证」模式，粘贴 `{{ .Token }}`，前端调用 `verifyOtp`（v2 小写 t）登录。
-> 若你倾向纯 OTP（不要链接），把模板里的链接行删掉即可；纯 Magic Link 则删掉 `{{ .Token }}` 行。
+> 前端 **两种登录方式并存**，弹窗顶部可切换：
+> - **🔑 密码登录（默认，推荐日常使用）**：`signInWithPassword` / `signUp`，
+>   注册时设密码、可选昵称；之后日常登录只需邮箱 + 密码，**无需每次查收邮件**。
+>   （若曾用验证码注册、尚未设密码，`signInWithPassword` 会提示改用「邮箱验证码」登录。）
+> - **✉️ 邮箱验证码 / Magic Link（无密码）**：`signInWithOtp` 发信，回跳后：
+>   - **点链接（Magic Link）**：`supabase-js` 用 **隐式流（`flowType: 'implicit'`）**，链接形如 `#access_token=...`，
+>     `initAuth()` 用 `getSessionFromUrl()` 直接建会话，**跨设备 / 跨浏览器点击也能登录**
+>     （PKCE 流依赖同浏览器的 verifier，手机/另一台电脑点链接会失效，故不用）。
+>     `createClient` 设 `detectSessionInUrl: false`，由前端手动接管回跳，把 token 写入自有状态（`authToken`）。
+>   - **手输验证码（OTP）**：粘贴邮件里的 `{{ .Token }}`，前端调用 `verifyOtp`（v2 小写 t）登录。
+>
+> 若只想要其中一种：纯 OTP 把模板链接行删掉；纯 Magic Link 把 `{{ .Token }}` 行删掉；纯密码则把发信逻辑换成 `signUp`/`signInWithPassword`（已内置）。
+
+> **关于「Token has expired or is invalid」**：OTP 验证码有时效（Supabase Auth → Providers → Email → OTP expiry，默认 1 小时），且 `{{ .Token }}` 必须放在 **Magic Link 邮件模板** 中（不是 Confirm signup 模板）。类型也要匹配：`signInWithOtp({shouldCreateUser:true})` 对应 `verifyOtp({type:'signup'})`，否则 `type:'email'`。
+
+> **重定向 URL（关键）**：前端 `emailRedirectTo` 统一用 `window.location.origin`（即站点根域名，如 `https://www.timebricks.bid`），
+> 务必在 Supabase **Authentication → URL Configuration → Redirect URLs** 中加入 `https://www.timebricks.bid`（含 `www`、https、无多余路径/斜杠），
+> 否则 Magic Link 回跳会被 Supabase 以 redirect_uri 不匹配拒绝，表现为「点了链接却没登录」。
 
 > **自选看板刷新体验**：`/api/watchlist` 永远秒回。首次或「刷新」时后台并行抓取，每算完一只就增量写回缓存，
 > 前端轮询渲染**已就绪的行**（右下角显示「加载中 X/N…」），全部算完才停止轮询；登录但尚无自选的用户直接复用已预热的默认看板，即时展示。

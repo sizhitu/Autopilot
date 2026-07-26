@@ -198,19 +198,26 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 
 <!-- 登录/注册 弹窗 -->
 <div id="authModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;">
-  <div class="card" style="width:340px;max-width:92vw;">
-    <div class="card-title" id="authTitle">登录 / 注册</div>
+  <div class="card" style="width:360px;max-width:92vw;">
+    <div class="card-title" id="authTitle">登录</div>
     <div id="authMsg" style="font-size:11px;margin-bottom:8px;min-height:14px;color:var(--orange);"></div>
+
+    <!-- 登录方式切换：密码 / 邮箱验证码 -->
+    <div style="display:flex;gap:6px;margin-bottom:10px;">
+      <button id="btnMethodPwd" class="btn btn-sm" style="flex:1;" onclick="setAuthMethod('password')">🔑 密码登录</button>
+      <button id="btnMethodOtp" class="btn btn-sm" style="flex:1;" onclick="setAuthMethod('otp')">✉️ 邮箱验证码</button>
+    </div>
+
     <input id="authEmail" type="email" placeholder="邮箱" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
+    <input id="authPwd" type="password" placeholder="密码（≥6位）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
     <input id="authName" type="text" placeholder="昵称（注册可选）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
-    <input id="authPwd" type="password" placeholder="密码（≥6位）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
     <input id="authCode" type="text" placeholder="邮箱验证码 / 一次性密码（6位）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
-    <button class="btn" style="width:100%;margin-bottom:6px;" onclick="submitAuth()">提交</button>
+    <button id="authSubmitBtn" class="btn" style="width:100%;margin-bottom:6px;" onclick="submitAuth()">登录</button>
     <div style="text-align:right;font-size:11px;margin-top:2px;display:none;" id="resendLink">
       <a href="javascript:void(0)" style="color:var(--text-dim);" onclick="resendCode()">重新发送验证码</a>
     </div>
     <div style="display:flex;justify-content:space-between;font-size:11px;">
-      <a href="javascript:void(0)" style="color:var(--blue);" onclick="switchAuthMode()">切换到<span id="authSwitch">注册</span></a>
+      <a href="javascript:void(0)" style="color:var(--blue);" onclick="switchAuthAction()">去<span id="authSwitchAction">注册</span></a>
       <a href="javascript:void(0)" style="color:var(--text-dim);" onclick="closeAuth()">关闭</a>
     </div>
     <div id="devCodeHint" style="font-size:10px;color:var(--gold);margin-top:6px;display:none;"></div>
@@ -576,57 +583,100 @@ function teardownRealtime() {
   if (sb && _rtChannel) { try { sb.removeChannel(_rtChannel); } catch (e) {} _rtChannel = null; }
 }
 
-// ===================== 登录 / 注册（Supabase Auth：OTP / Magic Link）=====================
-let authMode = 'login';     // login | register | verify
+// ===================== 登录 / 注册（Supabase Auth：密码 + 邮箱验证码 / Magic Link）=====================
+// 两种登录方式并存：
+//   1) 密码登录（默认，日常最省事）：sb.auth.signInWithPassword / signUp
+//   2) 邮箱验证码 / Magic Link（无密码，跨设备）：sb.auth.signInWithOtp + verifyOtp
+let authMethod = 'password';   // password | otp
+let authAction = 'login';      // login | register
+let authSent = false;          // otp 是否已发送（进入「输入验证码」子模式）
 
-function openLogin() { authMode = 'login'; showAuth('登录'); }
-function openRegister() { authMode = 'register'; showAuth('注册'); }
-function showAuth(title) {
-  document.getElementById('authTitle').textContent = title;
+// 回跳地址用站点 origin（如 https://www.timebricks.bid），避免带路径/哈希导致的 redirect_uri 不匹配
+function _redirectTo() { return window.location.origin; }
+
+function openLogin() { authMethod = 'password'; authAction = 'login'; authSent = false; showAuth(); }
+function openRegister() { authMethod = 'password'; authAction = 'register'; authSent = false; showAuth(); }
+function setAuthMethod(m) { authMethod = m; authSent = false; showAuth(); }
+function switchAuthAction() { authAction = authAction === 'login' ? 'register' : 'login'; authSent = false; showAuth(); }
+
+function showAuth() {
+  const isPwd = authMethod === 'password';
+  const isReg = authAction === 'register';
+  document.getElementById('authTitle').textContent = isReg ? '注册' : '登录';
   document.getElementById('authMsg').textContent = '';
-  document.getElementById('authCode').style.display = 'none';
-  document.getElementById('resendLink').style.display = 'none';
-  document.getElementById('authName').style.display = authMode === 'register' ? 'block' : 'none';
+  // 登录方式高亮
+  document.getElementById('btnMethodPwd').classList.toggle('btn-gold', isPwd);
+  document.getElementById('btnMethodOtp').classList.toggle('btn-gold', !isPwd);
+  // 字段显隐
+  document.getElementById('authPwd').style.display = isPwd ? 'block' : 'none';
+  document.getElementById('authName').style.display = (isPwd && isReg) ? 'block' : 'none';
+  document.getElementById('authCode').style.display = (!isPwd && authSent) ? 'block' : 'none';
+  document.getElementById('resendLink').style.display = (!isPwd && authSent) ? 'inline' : 'none';
+  // 提交按钮文案
+  const btn = document.getElementById('authSubmitBtn');
+  if (isPwd) btn.textContent = isReg ? '注册' : '登录';
+  else btn.textContent = authSent ? '验证并登录' : '发送验证码';
+  // 注册/登录切换
+  document.getElementById('authSwitchAction').textContent = isReg ? '登录' : '注册';
   document.getElementById('authModal').classList.remove('hidden');
-  document.getElementById('authSwitch').textContent = authMode === 'login' ? '注册' : '登录';
 }
-function switchAuthMode() { authMode = authMode === 'login' ? 'register' : 'login'; showAuth(authMode === 'login' ? '登录' : '注册'); }
 function closeAuth() { document.getElementById('authModal').classList.add('hidden'); }
 
 async function submitAuth() {
   const email = document.getElementById('authEmail').value.trim();
   const name = document.getElementById('authName').value.trim();
+  const pwd = document.getElementById('authPwd').value;
   const code = document.getElementById('authCode').value.trim();
   const msg = m => document.getElementById('authMsg').textContent = m;
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg('请填写有效邮箱'); return; }
+  if (!sb) { msg('认证服务未就绪，请稍后重试'); return; }
   try {
-    if (authMode === 'verify') {
+    // ---------- 邮箱验证码 / Magic Link 方式 ----------
+    if (authMethod === 'otp') {
+      if (!authSent) {
+        const { error } = await sb.auth.signInWithOtp({
+          email,
+          options: { emailRedirectTo: _redirectTo(), shouldCreateUser: authAction === 'register' },
+        });
+        if (error) throw error;
+        pendingEmail = email;
+        pendingOtpType = authAction === 'register' ? 'signup' : 'email';
+        authSent = true;
+        showAuth();          // 重绘 UI（authSent 已置 true，验证码输入框会保留显示）
+        const masked = email.replace(/(.{2}).*(@.*)/, '$1***$2');
+        msg('验证码已发送至 ' + masked + '（若开启 Magic Link，也可直接点击邮件中的登录链接）');
+        return;
+      }
       if (!code) { msg('请输入验证码'); return; }
       const { data, error } = await sb.auth.verifyOtp({ email: pendingEmail, token: code, type: pendingOtpType });
       if (error) throw error;
       if (data.session) return finishSession(data.session);
       return;
     }
-    if (!sb) { msg('认证服务未就绪，请稍后重试'); return; }
-    // 登录 / 注册均走无密码 OTP（具体发验证码还是 Magic Link 由 Supabase 项目设置决定）
-    const { error } = await sb.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: location.href.split('#')[0],
-        shouldCreateUser: authMode === 'register',
-        data: authMode === 'register' ? { display_name: name } : undefined,
-      },
-    });
-    if (error) throw error;
-    pendingEmail = email;
-    pendingOtpType = authMode === 'register' ? 'signup' : 'email';
-    authMode = 'verify';
-    document.getElementById('authTitle').textContent = '邮箱验证';
-    document.getElementById('authCode').style.display = 'block';
-    document.getElementById('authSwitch').textContent = '登录';
-    document.getElementById('resendLink').style.display = 'inline';
-    const masked = email.replace(/(.{2}).*(@.*)/, '$1***$2');
-    msg('验证码已发送至 ' + masked + '（若开启 Magic Link，请直接点击邮件中的登录链接）');
+    // ---------- 密码方式 ----------
+    if (authAction === 'register') {
+      if (!pwd || pwd.length < 6) { msg('请设置至少 6 位密码'); return; }
+      const { data, error } = await sb.auth.signUp({
+        email,
+        password: pwd,
+        options: { data: name ? { display_name: name } : undefined, emailRedirectTo: _redirectTo() },
+      });
+      if (error) throw error;
+      if (data.session) return finishSession(data.session);   // 未开启邮箱确认时直接登录
+      showToast('注册成功，请查收确认邮件后登录（或直接用刚设的密码登录）', 'ok');
+      authAction = 'login'; authSent = false; showAuth();
+      return;
+    }
+    // 登录
+    if (!pwd) { msg('请输入密码'); return; }
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pwd });
+    if (error) {
+      if (/Invalid login credentials|User not found|Email not confirmed/.test(error.message)) {
+        msg('邮箱或密码错误；若此前用验证码注册、尚未设密码，请点「邮箱验证码」登录');
+      } else { throw error; }
+      return;
+    }
+    if (data.session) return finishSession(data.session);
   } catch (e) { msg('错误: ' + (e.message || e)); }
 }
 
@@ -635,7 +685,7 @@ async function resendCode() {
   try {
     const { error } = await sb.auth.signInWithOtp({
       email: pendingEmail,
-      options: { emailRedirectTo: location.href.split('#')[0], shouldCreateUser: authMode === 'register' },
+      options: { emailRedirectTo: _redirectTo(), shouldCreateUser: authAction === 'register' },
     });
     if (error) throw error;
     showToast('验证码已重新发送', 'ok');
@@ -704,9 +754,9 @@ function openSettings() {
 // ===================== 启动鉴权态 =====================
 async function initAuth() {
   await initSupabase();
-  // Magic Link / OTP 回跳：兼容两种流程
-  //   - 隐式流（Implicit）：URL 片段带 #access_token=...
-  //   - PKCE 流（Supabase 默认）：查询参数带 ?code=...
+  // Magic Link / 注册确认 / OTP 回跳：兼容两种流程
+  //   - 隐式流（Implicit）：URL 片段带 #access_token=...（跨设备可用）
+  //   - PKCE 流（Supabase 默认）：查询参数带 ?code=...（仅同浏览器可用）
   const hasAuthRedirect =
     (sb && location.hash && (location.hash.includes('access_token') || location.hash.includes('code') || location.hash.includes('refresh_token'))) ||
     /[?&]code=/.test(location.search);
@@ -720,7 +770,7 @@ async function initAuth() {
           const url = new URL(location.href);
           url.searchParams.delete('code');
           url.hash = '';
-          history.replaceState(null, '', url.pathname + url.search);
+          history.replaceState(null, '', url.origin + url.pathname);
         } catch (e) { history.replaceState(null, '', location.pathname); }
       } else if (error) {
         console.warn('Magic Link 回跳校验失败', error);
