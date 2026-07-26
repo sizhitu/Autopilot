@@ -760,11 +760,16 @@ async function initAuth() {
   const hasAuthRedirect =
     (sb && location.hash && (location.hash.includes('access_token') || location.hash.includes('code') || location.hash.includes('refresh_token'))) ||
     /[?&]code=/.test(location.search);
-  if (hasAuthRedirect) {
+
+  let established = false;
+
+  // 1) 回跳（点链接 / 注册确认）场景
+  if (hasAuthRedirect && sb) {
     try {
       const { data, error } = await sb.auth.getSessionFromUrl();
       if (!error && data.session) {
-        await finishSession(data.session);   // 复用登录成功流程（写 token / 同步资料 / 刷新 UI）
+        await finishSession(data.session);   // 写 token / 同步资料 / 刷新 UI
+        established = true;
         // 清掉 URL 中的 token / code，避免刷新后重复校验或泄露
         try {
           const url = new URL(location.href);
@@ -777,15 +782,31 @@ async function initAuth() {
         showToast('登录链接已失效或无法校验，请重新获取验证码', 'info');
       }
     } catch (e) { console.warn('Magic Link 回跳解析失败', e); }
-  } else {
+  }
+
+  // 2) 普通刷新：用 supabase-js 自身持久化的会话恢复（含 refresh token，刷新页面可自动续期，
+  //    不会因 access_token 过期或 /api/auth/me 抖动而被登出）
+  if (!established && sb) {
+    try {
+      const { data } = await sb.auth.getSession();
+      if (data && data.session) { await finishSession(data.session); established = true; }
+    } catch (e) { console.warn('getSession 恢复失败', e); }
+  }
+
+  // 3) 兜底：本地保存的 token（非破坏性——/api/auth/me 失败也不要清空，避免误登出）
+  if (!established) {
     const t = localStorage.getItem('autopilot_token');
     const u = localStorage.getItem('autopilot_user');
     if (t && u) {
       authToken = t; currentUser = JSON.parse(u);
-      try { const me = await apiJSON('/api/auth/me'); currentUser = me.user; localStorage.setItem('autopilot_user', JSON.stringify(me.user)); }
-      catch (e) { authToken = ''; currentUser = null; localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user'); }
+      try {
+        const me = await apiJSON('/api/auth/me');
+        currentUser = me.user;
+        localStorage.setItem('autopilot_user', JSON.stringify(me.user));
+      } catch (e) { console.warn('恢复用户资料失败（保留本地会话）', e); }
     }
   }
+
   refreshAuthUI();
   setupRealtime();
 }
