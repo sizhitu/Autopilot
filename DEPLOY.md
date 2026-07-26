@@ -71,6 +71,16 @@
 > 务必在 Supabase **Authentication → URL Configuration → Redirect URLs** 中加入 `https://www.timebricks.bid`（含 `www`、https、无多余路径/斜杠），
 > 否则 Magic Link 回跳会被 Supabase 以 redirect_uri 不匹配拒绝，表现为「点了链接却没登录」。
 
+> **Magic Link 排障（用户实测：点链接跳首页、无用户信息）**
+> 你贴的链接形如：
+> `https://<project>.supabase.co/auth/v1/verify?token=...&type=magiclink&redirect_to=https://www.timebricks.bid`
+> 这条链接**格式本身是对的**（`type=magiclink` + `redirect_to=站点根域名`）。点开后跳回首页却没登录，根因在 Supabase 控制台配置，逐项核对：
+> 1. **Redirect URLs 必须含 `https://www.timebricks.bid`**：`Authentication → URL Configuration → Redirect URLs` 加入该精确地址（带 `www`、https、无尾斜杠）。缺这一项时 Supabase 会拒绝回跳，直接落到首页、不带 token。
+> 2. **Site URL 设为 `https://www.timebricks.bid`**：同页面 `Site URL` 字段，保证默认回跳落点正确。
+> 3. **Auth 流类型设为 Implicit（保证跨设备可用）**：`Authentication → Providers`（或 URL Configuration）里的 `Auth flow type` 选 **Implicit**。前端 `flowType:'implicit'` 已就位——隐式流把 `#access_token=...` 直接带在 URL 片段里，手机/另一台电脑点链接也能直接换到会话；若保持默认的 **PKCE**，链接回跳是 `?code=...`，依赖**同一浏览器**的 `code_verifier`，换设备点击必失效。前端 `initAuth()` 两种流都已兼容（`#access_token` 与 `?code=` 都解析）。
+> 4. **确认线上构建已含 implicit 流**：本仓库 `frontend/index.html` 的 `createClient(..., { auth: { flowType:'implicit', detectSessionInUrl:false } })` 已推送（commit `73f7803`）。Cloudflare Pages 从 `main` 自动部署后，请**硬刷新**（Ctrl/Cmd+Shift+R）清掉旧缓存再测。
+> 5. **链接有时效**：`type=magiclink` 的 token 也有有效期（默认 1 小时，见 `Authentication → Providers → Email`），过期同样会跳首页无会话，重新获取即可。
+
 > **自选看板刷新体验**：`/api/watchlist` 永远秒回。首次或「刷新」时后台并行抓取，每算完一只就增量写回缓存，
 > 前端轮询渲染**已就绪的行**（右下角显示「加载中 X/N…」），全部算完才停止轮询；登录但尚无自选的用户直接复用已预热的默认看板，即时展示。
 
