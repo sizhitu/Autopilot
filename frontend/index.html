@@ -496,8 +496,11 @@ function getBackend() {
 const BACKEND = getBackend();
 
 // 登录态
-let authToken = localStorage.getItem('autopilot_token') || '';
-let currentUser = null;
+// 用 try/catch 包裹 localStorage 读取：在隐私模式、iframe 沙箱、storage 被禁用等环境下，
+// 直接访问 localStorage 可能抛 SecurityError，若顶层抛错会导致整段脚本中止、登录态永久丢失；
+// 这里降级为空串/空对象，确保后续 initAuth 仍可用本地兜底或重新登录。
+let authToken = (() => { try { return localStorage.getItem('autopilot_token') || ''; } catch (e) { return ''; } })();
+let currentUser = (() => { try { const u = localStorage.getItem('autopilot_user'); return u ? JSON.parse(u) : null; } catch (e) { return null; } })();
 
 // 统一请求封装：拼接后端地址 + 自动注入 Bearer 令牌
 async function api(path, opts = {}) {
@@ -661,7 +664,17 @@ async function submitAuth() {
         password: pwd,
         options: { data: name ? { display_name: name } : undefined, emailRedirectTo: _redirectTo() },
       });
-      if (error) throw error;
+      // 重复注册（User already registered）是「上次注册其实没真正完成」的高频来源：
+      // 多半是收到了确认邮件却没点，邮箱仍处于未验证状态。这里不再简单抛错，
+      // 而是提示去查收验证邮件，并帮用户重发一封。
+      if (error) {
+        if (/User already registered/i.test(error.message)) {
+          msg('该邮箱已注册但尚未验证；正在重新发送验证邮件，请查收并点击链接完成注册');
+          try { await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: _redirectTo() } }); }
+          catch (e2) { /* 重发失败也保留主提示 */ }
+        } else { throw error; }
+        return;
+      }
       if (data.session) return finishSession(data.session);   // 未开启邮箱确认时直接登录
       showToast('注册成功，请查收确认邮件后登录（或直接用刚设的密码登录）', 'ok');
       authAction = 'login'; authSent = false; showAuth();
@@ -671,7 +684,17 @@ async function submitAuth() {
     if (!pwd) { msg('请输入密码'); return; }
     const { data, error } = await sb.auth.signInWithPassword({ email, password: pwd });
     if (error) {
-      if (/Invalid login credentials|User not found|Email not confirmed/.test(error.message)) {
+      // 「邮箱未验证」是注册成功却一直登不进的典型原因（Supabase 默认开启邮箱确认）：
+      // 此时不要只报「密码错误」，而是自动重发验证邮件，把用户从死循环里捞出来。
+      if (/Email not confirmed/i.test(error.message)) {
+        msg('邮箱尚未验证，正在重新发送验证邮件…');
+        try {
+          await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: _redirectTo() } });
+          msg('验证邮件已重新发送，请查收并点击邮件中的链接完成注册/登录');
+        } catch (e2) { msg('重发验证邮件失败: ' + (e2.message || e2)); }
+        return;
+      }
+      if (/Invalid login credentials|User not found/.test(error.message)) {
         msg('邮箱或密码错误；若此前用验证码注册、尚未设密码，请点「邮箱验证码」登录');
       } else { throw error; }
       return;
@@ -769,6 +792,9 @@ function openSettings() {
 // ===================== 启动鉴权态 =====================
 async function initAuth() {
   await initSupabase();
+  // 早调一次：若本地已持久化登录态（authToken/currentUser 已在顶层恢复），
+  // 在 supabase 异步初始化或远程回跳之前就先把「已登录」界面画出来，避免刷新瞬间闪回未登录态。
+  refreshAuthUI();
   // Magic Link / 注册确认 / OTP 回跳：兼容两种流程
   //   - 隐式流（Implicit）：URL 片段带 #access_token=...（跨设备可用）
   //   - PKCE 流（Supabase 默认）：查询参数带 ?code=...（仅同浏览器可用）
