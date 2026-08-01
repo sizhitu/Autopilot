@@ -190,7 +190,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <button class="btn btn-sm" onclick="openRegister()">注册</button>
   </div>
   <div id="userArea" class="hidden" style="display:none; gap:6px; align-items:center;">
-    <span id="userName" style="font-size:12px;color:var(--text-dim);"></span>
+    <span id="userName" style="font-size:12px;color:var(--text-dim);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;" title=""></span>
     <button class="btn btn-outline btn-sm" onclick="openSettings()" title="设置后端地址">⚙</button>
     <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
   </div>
@@ -787,6 +787,20 @@ function doLogout() {
   localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user');
   refreshAuthUI(); showToast('已退出'); loadWatchlist();
 }
+// 顶栏用户名简略展示：去掉 @ 及域名；过长用 * 省略中间，完整值放 title 悬停可见
+function formatDisplayName(raw, maxLen) {
+  maxLen = maxLen || 12;
+  let s = (raw || '').trim();
+  if (!s) return '';
+  const at = s.indexOf('@');
+  if (at > 0) s = s.slice(0, at);          // 去掉 @ 及后面域名
+  if (s.length <= maxLen) return s;
+  // 过长：保留头尾，中间用 * 省略（如 abcdefghijklmn → abcd*mn）
+  const head = Math.max(3, Math.ceil(maxLen * 0.6));
+  const tail = Math.max(2, maxLen - head - 1);
+  return s.slice(0, head) + '*' + s.slice(-tail);
+}
+
 function refreshAuthUI() {
   const a = document.getElementById('authArea'), u = document.getElementById('userArea');
   const adminTab = document.getElementById('adminTab');
@@ -795,7 +809,10 @@ function refreshAuthUI() {
     a.classList.add('hidden');
     u.classList.remove('hidden');          // 关键：移除 .hidden（其 display:none !important 会盖过 inline style）
     u.style.display = 'flex';
-    document.getElementById('userName').textContent = currentUser.display_name || currentUser.email;
+    const full = currentUser.display_name || currentUser.email || '';
+    const el = document.getElementById('userName');
+    el.textContent = formatDisplayName(full, 12);
+    el.title = full;                       // 悬停显示完整邮箱/昵称
     document.getElementById('addWatchRow').style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';
     if (adminTab && isAdmin) adminTab.style.display = '';
