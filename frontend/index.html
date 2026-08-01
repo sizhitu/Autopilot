@@ -739,7 +739,9 @@ let authMethod = 'password';   // password | otp
 let authAction = 'login';      // login | register
 let authSent = false;          // otp 是否已发送（进入「输入验证码」子模式）
 
-// 回跳地址用站点 origin（如 https://www.timebricks.bid），避免带路径/哈希导致的 redirect_uri 不匹配
+// 回跳地址用站点 origin（如 https://www.timebricks.bid），避免带路径/哈希导致的 redirect_uri 不匹配。
+// 务必在 Supabase → Authentication → URL Configuration 的 Redirect URLs 中加入：
+//   https://www.timebricks.bid  与  https://timebricks.bid（若两者都会访问）
 function _redirectTo() { return window.location.origin; }
 
 function openLogin() { authMethod = 'password'; authAction = 'login'; authSent = false; showAuth(); }
@@ -968,39 +970,82 @@ async function removeWatch(sym) {
 }
 
 // ===================== 启动鉴权态 =====================
+// 消费 Magic Link / 注册确认邮件回跳（兼容 Implicit hash 与 PKCE code）
+// 说明：supabase-js v2 已移除 getSessionFromUrl，且我们关闭了 detectSessionInUrl，
+// 必须手动从 URL 取 token 并 setSession，否则点邮件链接只会落到首页、不会登录。
+async function consumeAuthRedirect() {
+  if (!sb) return null;
+  const hash = (location.hash || '').replace(/^#/, '');
+  const hp = new URLSearchParams(hash);
+  const qp = new URLSearchParams(location.search || '');
+
+  const errMsg = hp.get('error_description') || qp.get('error_description') || hp.get('error') || qp.get('error');
+  if (errMsg) {
+    showToast(decodeURIComponent(errMsg.replace(/\+/g, ' ')), 'error');
+    try { history.replaceState(null, '', location.origin + location.pathname); } catch (e) {}
+    return null;
+  }
+
+  const access_token = hp.get('access_token');
+  const refresh_token = hp.get('refresh_token');
+  if (access_token && refresh_token) {
+    const { data, error } = await sb.auth.setSession({ access_token, refresh_token });
+    if (error) throw error;
+    try { history.replaceState(null, '', location.origin + location.pathname); } catch (e) {}
+    return data && data.session;
+  }
+
+  const code = qp.get('code');
+  if (code && typeof sb.auth.exchangeCodeForSession === 'function') {
+    const { data, error } = await sb.auth.exchangeCodeForSession(code);
+    if (error) throw error;
+    try {
+      const url = new URL(location.href);
+      url.searchParams.delete('code');
+      url.hash = '';
+      history.replaceState(null, '', url.origin + url.pathname);
+    } catch (e) {}
+    return data && data.session;
+  }
+
+  // 兼容极旧 SDK（若仍存在该方法）
+  if (typeof sb.auth.getSessionFromUrl === 'function') {
+    const { data, error } = await sb.auth.getSessionFromUrl({ storeSession: true });
+    if (error) throw error;
+    if (data && data.session) {
+      try { history.replaceState(null, '', location.origin + location.pathname); } catch (e) {}
+      return data.session;
+    }
+  }
+  return null;
+}
+
 async function initAuth() {
   await initSupabase();
   // 早调一次：若本地已持久化登录态（authToken/currentUser 已在顶层恢复），
   // 在 supabase 异步初始化或远程回跳之前就先把「已登录」界面画出来，避免刷新瞬间闪回未登录态。
   refreshAuthUI();
-  // Magic Link / 注册确认 / OTP 回跳：兼容两种流程
-  //   - 隐式流（Implicit）：URL 片段带 #access_token=...（跨设备可用）
-  //   - PKCE 流（Supabase 默认）：查询参数带 ?code=...（仅同浏览器可用）
+  // Magic Link / 注册确认回跳检测
   const hasAuthRedirect =
-    (sb && location.hash && (location.hash.includes('access_token') || location.hash.includes('code') || location.hash.includes('refresh_token'))) ||
-    /[?&]code=/.test(location.search);
+    (location.hash && (location.hash.includes('access_token') || location.hash.includes('refresh_token') || location.hash.includes('error'))) ||
+    /[?&]code=/.test(location.search) ||
+    /[?&]error=/.test(location.search);
 
   let established = false;
 
-  // 1) 回跳（点链接 / 注册确认）场景
+  // 1) 回跳（点邮件链接 / 注册确认）场景
   if (hasAuthRedirect && sb) {
     try {
-      const { data, error } = await sb.auth.getSessionFromUrl();
-      if (!error && data.session) {
-        await finishSession(data.session);   // 写 token / 同步资料 / 刷新 UI
+      const session = await consumeAuthRedirect();
+      if (session) {
+        await finishSession(session);
         established = true;
-        // 清掉 URL 中的 token / code，避免刷新后重复校验或泄露
-        try {
-          const url = new URL(location.href);
-          url.searchParams.delete('code');
-          url.hash = '';
-          history.replaceState(null, '', url.origin + url.pathname);
-        } catch (e) { history.replaceState(null, '', location.pathname); }
-      } else if (error) {
-        console.warn('Magic Link 回跳校验失败', error);
-        showToast('登录链接已失效或无法校验，请重新获取验证码', 'info');
+        showToast('邮箱验证成功，已登录', 'ok');
       }
-    } catch (e) { console.warn('Magic Link 回跳解析失败', e); }
+    } catch (e) {
+      console.warn('Magic Link 回跳解析失败', e);
+      showToast('登录链接已失效或无法校验，请重新获取验证码或使用邮箱验证码登录', 'info');
+    }
   }
 
   // 2) 普通刷新：用 supabase-js 恢复持久化会话。
