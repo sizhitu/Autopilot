@@ -958,8 +958,13 @@ function refreshAuthUI() {
 async function removeWatch(sym) {
   try {
     await apiJSON('/api/watchlist/remove?symbol=' + encodeURIComponent(sym), { method: 'DELETE' });
-    showToast('已删除 ' + sym, 'ok'); loadWatchlist(true);
-  } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
+    showToast('已删除 ' + sym, 'ok');
+    loadWatchlist(true);  // 强制刷新，支持删光后展示空状态
+  } catch (e) {
+    const m = String(e.message || e);
+    if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
+    else showToast('删除失败: ' + m);
+  }
 }
 
 // ===================== 启动鉴权态 =====================
@@ -1467,11 +1472,20 @@ async function loadWatchlist(forceRefresh = false) {
       return;
     }
     watchNotes = json.notes || {};
-    document.getElementById('watchlistUpdated').textContent = `更新: ${json.updated_at}`;
-    renderWatchlistSummary(json.summary);
-    renderWatchlist(json.stocks);
+    const stocks = Array.isArray(json.stocks) ? json.stocks : [];
+    if (json.empty || (currentUser && stocks.length === 0 && !json.computing)) {
+      document.getElementById('watchlistUpdated').textContent = '暂无自选';
+      renderWatchlistSummary({});
+      body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:28px 16px;line-height:1.7;">
+        自选列表为空<br><span style="font-size:12px;">在上方输入代码或名称，点击「+ 添加」开始关注</span>
+      </td></tr>`;
+      return;
+    }
+    document.getElementById('watchlistUpdated').textContent = `更新: ${json.updated_at || ''}`;
+    renderWatchlistSummary(json.summary || {});
+    renderWatchlist(stocks);
   } catch(e) {
-    body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message || e}</td></tr>`;
   } finally {
     loading.classList.add('hidden');
   }
@@ -1523,11 +1537,13 @@ function renderWatchlist(stocks) {
       continue;
     }
     // 当日涨跌幅颜色
-    const dayColor = s.change_1d >= 0 ? 'var(--green)' : 'var(--red)';
-    const dayText = (s.change_1d >= 0 ? '+' : '') + s.change_1d + '%';
+    const dayVal = (s.change_1d == null || s.change_1d === '-' || s.change_1d === '') ? null : Number(s.change_1d);
+    const chgVal = (s.change_5d == null || s.change_5d === '-' || s.change_5d === '') ? null : Number(s.change_5d);
+    const dayColor = dayVal == null ? 'var(--text-dim)' : (dayVal >= 0 ? 'var(--green)' : 'var(--red)');
+    const dayText = dayVal == null ? '-' : ((dayVal >= 0 ? '+' : '') + dayVal + '%');
     // 近5日涨跌颜色
-    const chgColor = s.change_5d >= 0 ? 'var(--green)' : 'var(--red)';
-    const chgText = (s.change_5d >= 0 ? '+' : '') + s.change_5d + '%';
+    const chgColor = chgVal == null ? 'var(--text-dim)' : (chgVal >= 0 ? 'var(--green)' : 'var(--red)');
+    const chgText = chgVal == null ? '-' : ((chgVal >= 0 ? '+' : '') + chgVal + '%');
     // 信号颜色
     const sigColors = {'red':'var(--red)','green':'var(--green)','blue':'var(--blue)','orange':'var(--orange)','gray':'var(--text-dim)'};
     const sigColor = sigColors[s.signal_color] || 'var(--text-dim)';
