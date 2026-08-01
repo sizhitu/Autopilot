@@ -20,8 +20,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   min-height:48px;
 }
 .header-left { min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
-.header h1 { font-size:17px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.header h1 span { color:var(--gold); }
+.header h1 { font-size:16px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.header h1 span {
+  color:var(--gold); font-size:20px; font-weight:700; letter-spacing:0.3px;
+}
 .header .ver { color:var(--text-dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 /* 右侧认证区：登录前后同一容器，保证对齐与高度一致 */
 .header-auth {
@@ -68,10 +70,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     font-size:13px; white-space:normal; line-height:1.25;
     overflow:visible; text-overflow:unset;
   }
-  /* 副标题换行展示，不隐藏 */
+  /* 副标题换行展示，保持显眼字号 */
   .header h1 span {
-    display:block; font-size:11px; font-weight:500; margin-top:2px;
-    color:var(--gold);
+    display:block; font-size:16px; font-weight:700; margin-top:3px;
+    color:var(--gold); letter-spacing:0.2px;
   }
   .header .ver { display:none; }
   .header-auth { gap:4px; align-self:center; }
