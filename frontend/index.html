@@ -555,18 +555,56 @@ let pendingOtpType = 'email';  // 邮箱 OTP 统一使用 email 类型
 let realtimeEnabled = false;   // 多设备实时同步（watchlists 变更订阅），默认关闭
 let _rtChannel = null;         // 当前 Realtime 频道
 
-async function initSupabase() {
+// 公开配置兜底（anon key 本就会暴露在前端）。后端休眠/跨国超时导致 /api/config 失败时，
+// 仍可用此值完成注册/登录；业务接口（看板/行情）仍依赖后端。
+const SUPABASE_FALLBACK = {
+  url: 'https://qbpjhhdnhqcngecazluo.supabase.co',
+  anon_key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFicGpoaGRuaHFjbmdlY2F6bHVvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODA5NTEsImV4cCI6MjEwMDU1Njk1MX0.aCyFAlzLrgdtAfzFXa6Y2WhP9jp16eSVK73C0y_Cd90',
+};
+
+function _createSbClient(url, key) {
+  if (!url || !key || !window.supabase) return null;
+  // implicit 流：Magic Link 的 token 在 URL hash，跨设备/跨浏览器可直接建会话
+  return window.supabase.createClient(url, key, {
+    auth: { flowType: 'implicit', detectSessionInUrl: false },
+  });
+}
+
+async function _fetchPublicConfig(timeoutMs) {
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
   try {
-    const cfg = await (await fetch(BACKEND + '/api/config')).json();
-    realtimeEnabled = !!cfg.realtime_enabled;
-    if (cfg.supabase_url && cfg.supabase_anon_key && window.supabase) {
-      // 使用 implicit 流：Magic Link 中的 token 直接带在 URL hash 里，
-      // 跨设备 / 跨浏览器点击邮件链接也能直接换到会话（PKCE 流则依赖同浏览器的 verifier）
-      sb = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key, {
-        auth: { flowType: 'implicit', detectSessionInUrl: false },
-      });
+    const res = await fetch(BACKEND + '/api/config', ctrl ? { signal: ctrl.signal } : undefined);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return await res.json();
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function initSupabase() {
+  // 先用兜底配置立刻可用，避免 Render 冷启动导致「认证服务未就绪」
+  sb = _createSbClient(SUPABASE_FALLBACK.url, SUPABASE_FALLBACK.anon_key);
+
+  // 再尝试拉后端配置（可覆盖兜底；顺带唤醒冷启动实例）
+  const delays = [0, 3000, 8000]; // 立即一次 + 冷启动重试
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i] > 0) await new Promise(r => setTimeout(r, delays[i]));
+    try {
+      const cfg = await _fetchPublicConfig(20000);
+      realtimeEnabled = !!cfg.realtime_enabled;
+      if (cfg.supabase_url && cfg.supabase_anon_key) {
+        const client = _createSbClient(cfg.supabase_url, cfg.supabase_anon_key);
+        if (client) sb = client;
+      }
+      return; // 成功则结束
+    } catch (e) {
+      console.warn('拉取 /api/config 失败 (尝试 ' + (i + 1) + '/' + delays.length + ')', e);
     }
-  } catch (e) { console.warn('Supabase 初始化失败', e); }
+  }
+  // 全部失败：保留兜底客户端，认证仍可用
+  if (sb) console.info('使用内置 Supabase 配置完成初始化（后端暂不可达）');
+  else console.warn('Supabase 初始化失败：无可用配置');
 }
 
 // 多设备实时同步：订阅当前用户的 watchlists 变更，自动刷新看板（需 ENABLE_REALTIME=true）
@@ -632,7 +670,7 @@ async function submitAuth() {
   const code = document.getElementById('authCode').value.trim();
   const msg = m => document.getElementById('authMsg').textContent = m;
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg('请填写有效邮箱'); return; }
-  if (!sb) { msg('认证服务未就绪，请稍后重试'); return; }
+  if (!sb) { msg('认证服务初始化失败，请刷新页面重试；若持续失败请检查网络'); return; }
   try {
     // ---------- 邮箱验证码 / Magic Link 方式 ----------
     if (authMethod === 'otp') {
