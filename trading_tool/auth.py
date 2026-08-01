@@ -4,6 +4,7 @@
 认证完全交给 Supabase Auth（前端 supabase-js 完成注册 / 邮箱 OTP / Magic Link）。
 本模块仅负责：
   - 用 SUPABASE_JWT_SECRET（HS256）校验前端传来的 JWT，解出 sub / email / role
+  - 若本地 HS256 校验失败（密钥配置错误 / 新版非对称签名），回退到 Supabase Auth API 校验
   - 回查 profiles 表补 is_admin
   - 提供 FastAPI 依赖 get_current_user / require_admin
 
@@ -56,6 +57,49 @@ def _decode_supabase_jwt(token: str) -> dict:
         raise HTTPException(status_code=401, detail="令牌无效")
 
 
+def _user_from_auth_api(token: str) -> dict:
+    """
+    用 Supabase Auth API 校验 access_token（不依赖本地 JWT Secret）。
+    覆盖：JWT Secret 配置错误、新版非对称签名密钥等本地 HS256 无法验证的情况。
+    """
+    try:
+        client = supabase_client.get_user_client(token)
+        # supabase-py v2: auth.get_user(jwt)
+        resp = client.auth.get_user(token)
+        user = getattr(resp, "user", None) or (resp.get("user") if isinstance(resp, dict) else None)
+        if not user:
+            raise ValueError("empty user")
+        uid = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
+        email = getattr(user, "email", None) or (user.get("email") if isinstance(user, dict) else None) or ""
+        if not uid:
+            raise ValueError("missing uid")
+        return {
+            "id": str(uid),
+            "email": str(email).lower(),
+            "is_admin": is_admin(uid=str(uid), email=str(email).lower()),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="令牌无效或已过期") from e
+
+
+def _resolve_supabase_user(token: str) -> dict:
+    """先本地 JWT 校验，失败再走 Auth API 兜底。"""
+    try:
+        payload = _decode_supabase_jwt(token)
+        uid = payload.get("sub")
+        if not uid:
+            raise HTTPException(status_code=401, detail="令牌缺少用户标识")
+        email = (payload.get("email") or "").lower()
+        return {"id": uid, "email": email, "is_admin": is_admin(uid=uid, email=email)}
+    except HTTPException as e:
+        # 过期仍提示过期；其它校验失败尝试 Auth API（兼容密钥/算法差异）
+        if e.status_code == 401 and "过期" in str(e.detail):
+            raise
+        return _user_from_auth_api(token)
+
+
 def _dev_user(token: str) -> dict:
     """本地开发回退：把 Bearer 内容当作 uid（dev: 前缀可省略）。"""
     uid = token[4:] if token.startswith("dev:") else token
@@ -76,12 +120,7 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
         raise HTTPException(status_code=401, detail="令牌为空")
 
     if supabase_client.using_supabase():
-        payload = _decode_supabase_jwt(token)
-        uid = payload.get("sub")
-        if not uid:
-            raise HTTPException(status_code=401, detail="令牌缺少用户标识")
-        email = (payload.get("email") or "").lower()
-        return {"id": uid, "email": email, "is_admin": is_admin(uid=uid, email=email)}
+        return _resolve_supabase_user(token)
     # 本地开发回退
     return _dev_user(token)
 
@@ -103,12 +142,7 @@ def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[d
         return None
     try:
         if supabase_client.using_supabase():
-            payload = _decode_supabase_jwt(token)
-            uid = payload.get("sub")
-            if not uid:
-                return None
-            email = (payload.get("email") or "").lower()
-            return {"id": uid, "email": email, "is_admin": is_admin(uid=uid, email=email)}
+            return _resolve_supabase_user(token)
         return _dev_user(token)
     except Exception:
         return None
