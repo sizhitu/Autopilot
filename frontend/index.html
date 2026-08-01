@@ -199,17 +199,19 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .industry-tag { margin-top:4px; display:inline-block; font-size:11px; font-weight:600; color:var(--gold); background:rgba(212,175,55,0.12); border:1px solid rgba(212,175,55,0.35); padding:2px 9px; border-radius:999px; }
 
 /* 自选看板表格：fixed布局+min-width保证各列有足够宽度不堆叠，桌面填满/手机横滑，间距均匀 */
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 760px; }
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 980px; }
 #watchlistTable th, #watchlistTable td { white-space: nowrap; vertical-align: middle; }
-#watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }  /* 名称超长可换行，正常情况单行 */
-#watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 9%; }   /* 代码 */
-#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 18%; }  /* 名称 */
-#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 9%; }   /* 现价 */
-#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 8%; }   /* 日 */
-#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 9%; }   /* 近5日 */
-#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 13%; }  /* 操盘建议 */
-#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 13%; }  /* 神奇九转 */
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 21%; }  /* 新高新低/估值 */
+#watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }
+#watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 8%; }
+#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 12%; }
+#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 7%; }
+#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 6%; }
+#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 7%; }
+#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 14%; }
+#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }
+#watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 14%; }
+#watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:2px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
 /* 详情页：新高/新低/估值 卡片 */
 .hl-row { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); }
@@ -317,9 +319,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     </div>
     <div id="watchlistSummary" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px;"></div>
     <div style="margin-top:8px; font-size:11px; color:var(--text-dim); display:flex; gap:16px; flex-wrap:wrap;">
-      <span><span style="color:var(--orange);font-weight:700;">●</span> 即将上涨关注（下跌九转临近/完成，或近5日暴跌达藤本茂买点）</span>
-      <span><span style="color:var(--red);font-weight:700;">●</span> 上涨见顶关注（上涨九转临近/完成，或近5日暴涨达藤本茂卖点）</span>
-      <span><span style="color:var(--text-dim);font-weight:700;">●</span> 下跌观望（仍在调整，观望等待）</span>
+      <span><span style="color:var(--orange);font-weight:700;">●</span> 九转时机：下跌九转买点 / 上涨九转卖点</span>
+      <span><span style="color:var(--green);font-weight:700;">●</span> 趋势过滤：多头 / 空头 / 震荡</span>
+      <span><span style="color:var(--gold);font-weight:700;">●</span> 建议动作：时机×趋势综合（冲突则降权为观察）</span>
+      <span style="color:var(--text-dim);">汇总仍按「即将上涨 / 见顶 / 观望」统计</span>
       <span><span style="color:var(--green);font-weight:700;">●</span> 低估 / <span style="color:var(--red);font-weight:700;">●</span> 高估 / <span style="color:var(--text-dim);font-weight:700;">●</span> 合理</span>
       <span>估值按定位差异化：压舱石(MA250±8%) · 高赔率(MA250±35%) · 周期弹性(MA120±18%) · 卫星仓(区间分位80/20)</span>
       <span id="watchLoginHint" style="color:var(--blue);cursor:pointer;" onclick="openLogin()">· 登录后可自定义自选看板</span>
@@ -334,9 +337,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <th style="padding:6px 8px; text-align:right;">现价</th>
           <th style="padding:6px 8px; text-align:right;">日</th>
           <th style="padding:6px 8px; text-align:right;">近5日</th>
-          <th style="padding:6px 8px;">操盘建议</th>
-          <th style="padding:6px 8px;">神奇九转</th>
-          <th style="padding:6px 8px;">新高新低/估值</th>
+          <th style="padding:6px 8px;" title="TD Sequential 日/月九转时机">九转时机</th>
+          <th style="padding:6px 8px;" title="均线系统趋势过滤">趋势过滤</th>
+          <th style="padding:6px 8px;" title="时机×趋势综合建议（非投资建议）">建议动作</th>
+          <th style="padding:6px 8px;">新高/估值</th>
         </tr>
       </thead>
       <tbody id="watchlistBody"></tbody>
@@ -346,7 +350,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div>加载中...</div>
     </div>
   </div>
-  <div class="footer-note">点击任意一行可加载该股票详细分析 · 操盘建议基于三层策略 · 九转基于TD Sequential逻辑 <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
+  <div class="footer-note">点击任意一行加载详细分析 · 九转时机 / 趋势过滤 / 建议动作分列 · 仅供研究不构成投资建议 <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
 </div>
 
 <!-- 分析模式视图 -->
@@ -1549,7 +1553,7 @@ async function loadWatchlist(forceRefresh = false) {
         renderWatchlistSummary(json.summary || {});
         renderWatchlist(stocks);
       } else {
-        body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:20px;">数据计算中，请稍候…</td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">数据计算中，请稍候…</td></tr>`;
       }
       // 继续轮询，逐行刷新已就绪的股票
       setTimeout(() => loadWatchlist(false), 2000);
@@ -1560,7 +1564,7 @@ async function loadWatchlist(forceRefresh = false) {
     if (json.empty || (currentUser && stocks.length === 0 && !json.computing)) {
       document.getElementById('watchlistUpdated').textContent = '暂无自选';
       renderWatchlistSummary({});
-      body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:28px 16px;line-height:1.7;">
+      body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:28px 16px;line-height:1.7;">
         自选列表为空<br><span style="font-size:12px;">在上方输入代码或名称，点击「+ 添加」开始关注</span>
       </td></tr>`;
       return;
@@ -1569,7 +1573,7 @@ async function loadWatchlist(forceRefresh = false) {
     renderWatchlistSummary(json.summary || {});
     renderWatchlist(stocks);
   } catch(e) {
-    body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message || e}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message || e}</td></tr>`;
   } finally {
     loading.classList.add('hidden');
   }
@@ -1616,7 +1620,7 @@ function renderWatchlist(stocks) {
       html += `<tr style="border-bottom:1px solid var(--border);">
         <td style="padding:6px 8px;font-weight:600;color:var(--gold);">${s.code}</td>
         <td style="padding:6px 8px;">${s.name}</td>
-        <td colspan="6" style="padding:6px 8px;color:var(--red);font-size:11px;">${s.error}</td>
+        <td colspan="7" style="padding:6px 8px;color:var(--red);font-size:11px;">${s.error}</td>
       </tr>`;
       continue;
     }
@@ -1628,16 +1632,22 @@ function renderWatchlist(stocks) {
     // 近5日涨跌颜色
     const chgColor = chgVal == null ? 'var(--text-dim)' : (chgVal >= 0 ? 'var(--green)' : 'var(--red)');
     const chgText = chgVal == null ? '-' : ((chgVal >= 0 ? '+' : '') + chgVal + '%');
-    // 信号颜色
+    // 结构化三列颜色
     const sigColors = {'red':'var(--red)','green':'var(--green)','blue':'var(--blue)','orange':'var(--orange)','gray':'var(--text-dim)'};
-    const sigColor = sigColors[s.signal_color] || 'var(--text-dim)';
-    // 九转（日级 + 月级 同一列并列展示）
+    const timingText = s.timing || s.signal || '—';
+    const timingColor = sigColors[s.timing_color || s.signal_color] || 'var(--text-dim)';
+    const trendText = s.trend_filter || s.trend || '—';
+    const trendColor = sigColors[s.trend_filter_color] || 'var(--text-dim)';
+    const actionText = s.action || s.signal || '观望';
+    const actionColor = sigColors[s.action_color || s.signal_color] || 'var(--text-dim)';
+    const actionTip = (s.action_reason || '').replace(/"/g, '&quot;');
     const _ntc = st => st === 'complete' ? 'var(--gold)' : (st === 'completing' ? 'var(--orange)' : 'var(--text-dim)');
     const _dTxt = s.nine_turn_daily || '';
-    const _mTxt = s.nine_turn_monthly || '月–';
-    const ntHtml = `<span style="color:${_ntc(s.nine_turn_daily_state)};font-weight:600;">${_dTxt}</span>` +
-                   ` <span style="color:var(--text-dim);">|</span> ` +
-                   `<span style="color:${_ntc(s.nine_turn_monthly_state)};font-weight:600;">${_mTxt}</span>`;
+    const _mTxt = s.nine_turn_monthly || '';
+    const ntSub = (_dTxt || _mTxt)
+      ? `<span class="sub-nt"><span style="color:${_ntc(s.nine_turn_daily_state)}">${_dTxt}</span>` +
+        (_mTxt ? ` · <span style="color:${_ntc(s.nine_turn_monthly_state)}">${_mTxt}</span>` : '') + `</span>`
+      : '';
     // 新高新低 + 估值（同列展示：估值状态 + 依据 + 定位标签）
     let hlPart = '—';
     if (s.high_low !== '—') {
@@ -1660,8 +1670,9 @@ function renderWatchlist(stocks) {
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${s.price}</td>
       <td style="padding:6px 8px;text-align:right;color:${dayColor};font-weight:600;">${dayText}</td>
       <td style="padding:6px 8px;text-align:right;color:${chgColor};font-weight:600;">${chgText}</td>
-      <td style="padding:6px 8px;"><span style="color:${sigColor};font-weight:600;">${s.signal}</span></td>
-      <td style="padding:6px 8px;font-size:11px;">${ntHtml}</td>
+      <td style="padding:6px 8px;white-space:normal;line-height:1.25;"><span style="color:${timingColor};font-weight:600;">${timingText}</span>${ntSub}</td>
+      <td style="padding:6px 8px;"><span style="color:${trendColor};font-weight:600;">${trendText}</span></td>
+      <td style="padding:6px 8px;" title="${actionTip}"><span style="color:${actionColor};font-weight:700;">${actionText}</span></td>
       <td style="padding:6px 8px;font-size:11px;">${hlHtml}</td>
     </tr>`;
   }
