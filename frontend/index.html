@@ -63,11 +63,18 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 }
 #userName.show-tip #userNameTip { display:block; }
 @media (max-width: 520px) {
-  .header { padding:8px 10px; gap:6px; min-height:44px; }
-  .header h1 { font-size:13px; }
-  .header h1 span { display:none; }          /* 手机隐藏副标题后缀，减少拥挤 */
+  .header { padding:8px 10px; gap:6px; min-height:44px; align-items:flex-start; }
+  .header h1 {
+    font-size:13px; white-space:normal; line-height:1.25;
+    overflow:visible; text-overflow:unset;
+  }
+  /* 副标题换行展示，不隐藏 */
+  .header h1 span {
+    display:block; font-size:11px; font-weight:500; margin-top:2px;
+    color:var(--gold);
+  }
   .header .ver { display:none; }
-  .header-auth { gap:4px; }
+  .header-auth { gap:4px; align-self:center; }
   .header-auth #authArea,
   .header-auth #userArea { gap:4px; }
   .header-auth .btn-sm { padding:0 8px; height:26px; font-size:11px; }
