@@ -502,20 +502,32 @@ def _background_refresh(key, items, user_id):
 def get_watchlist_status(user_id: int = None, force: bool = False) -> dict:
     """
     获取关注股票看板状态（接口永远秒回）。
-      - user_id 给定且存在用户自选 → 计算该用户看板（按用户顺序）
-      - user_id 给定但无自选 → 复用全局默认看板（默认看板已被首个访问者预热），
-        即时展示，无需等待
-      - 否则回退到全局默认看板
+      - 已登录且有自选 → 计算该用户看板
+      - 已登录但自选为空 → 返回空列表（允许用户删光全部代码，不回退默认）
+      - 未登录 → 回退全局默认看板
     命中缓存（TTL 内）直接返回；过期或强制刷新则后台“增量计算”，
     前端可轮询拿到逐行就绪的部分结果。
     """
-    if user_id:
-        user_items = resolve_watchlist_items(user_id)
+    if user_id is not None:
+        # 直接读用户自选，空列表表示用户主动清空，禁止回退默认看板
+        user_items = get_user_watchlist_symbols(user_id)
         if user_items:
             key, items = user_id, user_items
         else:
-            # 登录但尚无自选：直接复用默认看板缓存（已预热），即时展示
-            key, items = 0, list(WATCHLIST.items())
+            empty = {
+                'success': True,
+                'computing': False,
+                'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'count': 0,
+                'total': 0,
+                'summary': {},
+                'stocks': [],
+                'empty': True,
+            }
+            # 同步写空缓存，避免下次误用旧数据
+            _CACHES[user_id] = {'data': empty, 'ts': time.time(), 'refreshing': False}
+            _CACHES[str(user_id)] = {'data': empty, 'ts': time.time(), 'refreshing': False}
+            return empty
     else:
         key, items = 0, list(WATCHLIST.items())
 
