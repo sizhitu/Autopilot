@@ -551,7 +551,7 @@ function showToast(msg, type = 'error') {
 // ===================== Supabase 客户端（认证）=====================
 let sb = null;                 // supabase-js client
 let pendingEmail = '';
-let pendingOtpType = 'email';  // signup | email（注册 / 登录）
+let pendingOtpType = 'email';  // 邮箱 OTP 统一使用 email 类型
 let realtimeEnabled = false;   // 多设备实时同步（watchlists 变更订阅），默认关闭
 let _rtChannel = null;         // 当前 Realtime 频道
 
@@ -643,7 +643,7 @@ async function submitAuth() {
         });
         if (error) throw error;
         pendingEmail = email;
-        pendingOtpType = authAction === 'register' ? 'signup' : 'email';
+        pendingOtpType = 'email';  // 邮箱 OTP 统一用 email（signup 类型会导致验证失败）
         authSent = true;
         showAuth();          // 重绘 UI（authSent 已置 true，验证码输入框会保留显示）
         const masked = email.replace(/(.{2}).*(@.*)/, '$1***$2');
