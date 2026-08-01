@@ -36,6 +36,7 @@ from backtest import Backtester, result_to_dict as bt_to_dict
 from watchlist import (
     get_watchlist_status, get_user_watchlist_symbols,
     add_user_watchlist, remove_user_watchlist,
+    invalidate_user_cache,
     _detect_high_low, _calc_valuation, STOCK_ROLE, DEFAULT_ROLE,
 )
 from nine_turn import calc_nine_turn_display
@@ -679,6 +680,10 @@ async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_curr
             name = ""
     ok = watchlist_store.add(user["id"], norm["symbol"], name, norm["market"], "",
                              _bearer(authorization))
+    try:
+        invalidate_user_cache(user["id"])
+    except Exception:
+        pass
     return {"success": ok, "symbol": norm["symbol"], "name": name, "market": norm["market"]}
 
 
@@ -688,6 +693,10 @@ async def watchlist_remove(symbol: str = Query(...), user: dict = Depends(auth.g
     """删除自选（需登录）。"""
     symbol = (symbol or "").strip().upper()
     ok = watchlist_store.remove(user["id"], symbol, _bearer(authorization))
+    try:
+        invalidate_user_cache(user["id"])
+    except Exception:
+        pass
     return {"success": ok, "symbol": symbol}
 
 
