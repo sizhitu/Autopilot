@@ -1394,7 +1394,6 @@ document.addEventListener('touchend', function(e){
 
 // === 自选看板 ===
 let watchNotes = {};
-let watchOrder = [];
 
 async function loadWatchlist(forceRefresh = false) {
   const loading = document.getElementById('watchlistLoading');
@@ -1421,7 +1420,6 @@ async function loadWatchlist(forceRefresh = false) {
       return;
     }
     watchNotes = json.notes || {};
-    watchOrder = (json.stocks || []).map(s => s.code);
     document.getElementById('watchlistUpdated').textContent = `更新: ${json.updated_at}`;
     renderWatchlistSummary(json.summary);
     renderWatchlist(json.stocks);
@@ -1430,19 +1428,6 @@ async function loadWatchlist(forceRefresh = false) {
   } finally {
     loading.classList.add('hidden');
   }
-}
-
-// 上移/下移某只自选
-async function moveWatch(code, dir) {
-  if (!currentUser) { showToast('请先登录'); return; }
-  const i = watchOrder.indexOf(code);
-  const j = i + (dir === 'up' ? -1 : 1);
-  if (i < 0 || j < 0 || j >= watchOrder.length) return;
-  [watchOrder[i], watchOrder[j]] = [watchOrder[j], watchOrder[i]];
-  try {
-    await apiJSON('/api/watchlist/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: watchOrder }) });
-    showToast('顺序已更新', 'ok'); loadWatchlist();
-  } catch (e) { showToast('排序失败: ' + e.message); }
 }
 
 // 编辑某只自选备注
@@ -1455,21 +1440,6 @@ async function editNote(code) {
     await apiJSON('/api/watchlist/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: code, note }) });
     showToast('备注已保存', 'ok'); loadWatchlist();
   } catch (e) { showToast('备注失败: ' + e.message); }
-}
-
-// 拖拽排序：把 dragCode 拖到 targetCode 之前/之后
-let dragCode = null;
-function dragWatchStart(code) { dragCode = code; }
-async function dropWatch(targetCode) {
-  if (!currentUser || !dragCode || dragCode === targetCode) return;
-  const from = watchOrder.indexOf(dragCode);
-  const to = watchOrder.indexOf(targetCode);
-  if (from < 0 || to < 0) return;
-  watchOrder.splice(to, 0, watchOrder.splice(from, 1)[0]);  // 移动到目标位置
-  try {
-    await apiJSON('/api/watchlist/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: watchOrder }) });
-    showToast('顺序已更新', 'ok'); loadWatchlist();
-  } catch (e) { showToast('排序失败: ' + e.message); }
 }
 
 function renderWatchlistSummary(summary) {
@@ -1492,6 +1462,8 @@ function renderWatchlistSummary(summary) {
 }
 
 function renderWatchlist(stocks) {
+  // 默认按代码字母顺序排序
+  stocks = (stocks || []).slice().sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { sensitivity: 'base' }));
   const body = document.getElementById('watchlistBody');
   let html = '';
   for (const s of stocks) {
@@ -1533,12 +1505,9 @@ function renderWatchlist(stocks) {
     const hlHtml = `${hlPart}<br><span style="color:${_vColor};font-weight:600;">${s.valuation||'合理'}</span>` +
       (s.valuation_detail ? ` <span style="color:var(--text-dim);font-size:10px;">${s.valuation_detail}</span>` : '') +
       ` <span style="color:${_rColor};font-size:9px;border:1px solid currentColor;border-radius:3px;padding:0 3px;white-space:nowrap;">${s.role||''}</span>`;
-    const dragAttrs = currentUser
-      ? `draggable="true" ondragstart="dragWatchStart('${s.code}')" ondragover="event.preventDefault()" ondrop="dropWatch('${s.code}')" style="border-bottom:1px solid var(--border); cursor:grab;"`
-      : `style="border-bottom:1px solid var(--border); cursor:pointer;"`;
-    html += `<tr ${dragAttrs} onclick="fetchQuote('${s.code}','${s.name}','${s.market}')">
+    html += `<tr style="border-bottom:1px solid var(--border); cursor:pointer;" onclick="fetchQuote('${s.code}','${s.name}','${s.market}')">
       <td style="padding:6px 8px;font-weight:600;color:var(--gold);white-space:nowrap;">${
-        currentUser ? `<button onclick="event.stopPropagation();moveWatch('${s.code}','up')" title="上移" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;">↑</button><button onclick="event.stopPropagation();moveWatch('${s.code}','down')" title="下移" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;">↓</button><button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin:0 2px;">✕</button>` : ''
+        currentUser ? `<button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-right:4px;">✕</button>` : ''
       }<span onclick="event.stopPropagation();editNote('${s.code}')" title="${(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};border-bottom:${watchNotes[s.code]?'1px dotted var(--gold)':'none'};">${s.code}</span></td>
       <td style="padding:6px 8px;">${s.name}</td>
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${s.price}</td>
