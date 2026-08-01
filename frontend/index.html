@@ -16,6 +16,26 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .header { background:linear-gradient(135deg,#1a1d27,#252836); padding:10px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
 .header h1 { font-size:17px; font-weight:600; } .header h1 span { color:var(--gold); }
 .header .ver { color:var(--text-dim); font-size:11px; }
+#userName {
+  font-size:12px; color:var(--text-dim); max-width:72px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  display:inline-block; vertical-align:middle; cursor:pointer;
+  position:relative; user-select:none; -webkit-tap-highlight-color:transparent;
+}
+#userNameTip {
+  display:none; position:absolute; right:0; top:calc(100% + 8px);
+  background:rgba(20,22,30,.96); color:var(--text); border:1px solid var(--border);
+  border-radius:6px; padding:6px 10px; font-size:12px; line-height:1.4;
+  white-space:nowrap; max-width:min(80vw, 280px); overflow:hidden; text-overflow:ellipsis;
+  box-shadow:0 6px 18px rgba(0,0,0,.45); z-index:2000; pointer-events:none;
+}
+#userNameTip::before {
+  content:''; position:absolute; top:-5px; right:12px;
+  width:8px; height:8px; background:rgba(20,22,30,.96);
+  border-left:1px solid var(--border); border-top:1px solid var(--border);
+  transform:rotate(45deg);
+}
+#userName.show-tip #userNameTip { display:block; }
 
 .container { display:flex; gap:10px; padding:10px; min-height:calc(100vh - 48px); }
 .left { flex:3; min-width:0; }
@@ -190,7 +210,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <button class="btn btn-sm" onclick="openRegister()">注册</button>
   </div>
   <div id="userArea" class="hidden" style="display:none; gap:6px; align-items:center;">
-    <span id="userName" style="font-size:12px;color:var(--text-dim);max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;" title=""></span>
+    <span id="userName"><span id="userNameText"></span><span id="userNameTip"></span></span>
     <button class="btn btn-outline btn-sm" onclick="openSettings()" title="设置后端地址">⚙</button>
     <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
   </div>
@@ -798,6 +818,28 @@ function formatDisplayName(raw, maxLen) {
   return s.slice(0, maxLen - 1) + '*';     // 如 verylongname → veryl*
 }
 
+// 桌面悬停 / 移动端点击：浮动展示完整用户名
+let _userTipBound = false;
+function bindUserNameTip() {
+  if (_userTipBound) return;
+  const el = document.getElementById('userName');
+  if (!el) return;
+  _userTipBound = true;
+  const show = () => { if (el.dataset.full) el.classList.add('show-tip'); };
+  const hide = () => el.classList.remove('show-tip');
+  el.addEventListener('mouseenter', show);
+  el.addEventListener('mouseleave', hide);
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!el.dataset.full) return;
+    el.classList.toggle('show-tip');
+  });
+  // 点页面其它地方关闭（移动端）
+  document.addEventListener('click', (e) => {
+    if (!el.contains(e.target)) hide();
+  });
+}
+
 function refreshAuthUI() {
   const a = document.getElementById('authArea'), u = document.getElementById('userArea');
   const adminTab = document.getElementById('adminTab');
@@ -808,8 +850,13 @@ function refreshAuthUI() {
     u.style.display = 'flex';
     const full = currentUser.display_name || currentUser.email || '';
     const el = document.getElementById('userName');
-    el.textContent = formatDisplayName(full, 6);
-    el.title = full;                       // 悬停显示完整邮箱/昵称
+    const textEl = document.getElementById('userNameText');
+    const tipEl = document.getElementById('userNameTip');
+    if (textEl) textEl.textContent = formatDisplayName(full, 6);
+    if (tipEl) tipEl.textContent = full;
+    el.dataset.full = full;
+    el.classList.remove('show-tip');
+    bindUserNameTip();
     document.getElementById('addWatchRow').style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';
     if (adminTab && isAdmin) adminTab.style.display = '';
