@@ -78,12 +78,18 @@ def remove_user_watchlist(user_id: int, symbol: str) -> bool:
     return ok
 
 
-def _invalidate_cache(user_id: int) -> None:
+def _invalidate_cache(user_id) -> None:
     """使某用户的看板缓存失效（增删自选后调用）。"""
     caches = globals().get("_CACHES")
-    if caches is not None:
+    if caches is not None and user_id is not None:
         caches.pop(user_id, None)
-    # 全局默认看板（未登录）不受影响；仅清理对应用户桶
+        # 字符串/UUID 与 int 两种 key 都清一遍，避免类型不一致导致清不掉
+        caches.pop(str(user_id), None)
+
+
+def invalidate_user_cache(user_id) -> None:
+    """对外接口：添加/删除自选后调用，确保下次看板请求拿到最新列表。"""
+    _invalidate_cache(user_id)
 
 
 def resolve_watchlist_items(user_id: int = None) -> list:
@@ -520,13 +526,32 @@ def get_watchlist_status(user_id: int = None, force: bool = False) -> dict:
         cache['data']["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return cache['data']
 
-    # 需要刷新：确保仅一个后台刷新在跑，并先种下“计算中（含部分结果）”的占位
+    # 需要刷新：确保仅一个后台刷新在跑；保留已有行 + 为新增代码放占位，避免列表被清空
     with _refresh_lock:
         cache = _CACHES.get(key)
         if not (cache and cache.get('refreshing')):
+            item_codes = [c for c, _ in items]
+            item_name = {c: n for c, n in items}
+            prev = []
+            if cache and isinstance(cache.get('data'), dict):
+                prev = list(cache['data'].get('stocks') or [])
+            # 只保留仍在自选中的旧行
+            code_set = set(item_codes)
+            seeded = [s for s in prev if s.get('code') in code_set]
+            have = {s.get('code') for s in seeded}
+            for c in item_codes:
+                if c not in have:
+                    seeded.append({
+                        'code': c, 'name': item_name.get(c) or c,
+                        'market': '美股' if not str(c).isdigit() else 'A股',
+                        'price': '-', 'change_1d': None, 'change_5d': None,
+                        'signal': '计算中', 'nine_turn': '-', 'high_low': '-',
+                        'error': None,
+                    })
             _CACHES[key] = {
                 'data': {'success': True, 'computing': True, 'updated_at': '',
-                         'count': 0, 'total': len(items), 'summary': {}, 'stocks': []},
+                         'count': len(seeded), 'total': len(items),
+                         'summary': {}, 'stocks': seeded},
                 'ts': time.time(), 'refreshing': True,
             }
             threading.Thread(
