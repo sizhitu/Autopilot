@@ -162,9 +162,17 @@ class StockStatus:
     price: float = 0
     change_1d: float = 0          # 当日涨跌幅%（最近一根K线相对前一根）
     change_5d: float = 0          # 近5日涨跌幅%
-    signal: str = "观望"          # 操盘建议
-    signal_color: str = "gray"    # 信号颜色
+    signal: str = "观望"          # 兼容旧字段：建议动作（汇总用）
+    signal_color: str = "gray"    # 建议动作颜色
     trend: str = ""
+    # 结构化三列：时机 / 趋势过滤 / 建议动作
+    timing: str = "—"             # 九转时机
+    timing_color: str = "gray"
+    trend_filter: str = "—"       # 趋势过滤（系统层）
+    trend_filter_color: str = "gray"
+    action: str = "观望"          # 建议动作（综合）
+    action_color: str = "gray"
+    action_reason: str = ""       # 一句话理由
     nine_turn: str = "无"         # 九转状态（日级|月级 合并文本）
     nine_turn_dir: str = "none"   # down/up/none（主级别方向）
     nine_turn_level: str = "日"   # 主级别：月/日
@@ -294,50 +302,113 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             prev_5 = float(df['close'].iloc[-1 - lookback_5])
             status.change_5d = round((last_close - prev_5) / prev_5 * 100, 2)
 
-        # 操盘建议（九转为主、策略信号为辅的分类建议）
-        #   下跌九转临近/完成（1-9 买点）→ 即将上涨关注（橙）
-        #   上涨九转临近/完成（1-9 卖点）→ 上涨见顶关注（红）
-        #   其余（仍在调整/震荡）          → 下跌观望（灰）
         strategy = FujimotoStrategy(total_capital=100000)
         result = strategy.analyze(df)
         status.trend = result.trend.value
-
         nt_signal = result.signal.value  # 策略原始信号：买入/卖出/持有/加仓/观望
-
-        # 九转状态（日级+月级，月级形成则展示月级；供下方分类使用）
         nt = calc_nine_turn_display(df)
 
-        # 藤本茂阶梯抄底：近5日跌幅达买入档位(-15% 第一档)视为买点关注
+        # 藤本茂阶梯：近5日相对涨跌触及档位（无成本价时的粗筛）
         buy_ladder_hit = status.change_5d <= -15.0
-        # 藤本茂阶梯止盈：近5日涨幅达卖出档位(+25% 第一档)视为见顶关注
         sell_ladder_hit = status.change_5d >= 25.0
 
-        # 操盘建议分类（九转时机 + 藤本茂阶梯）
-        #   日/月九转方向相反（跨周期背离）→ 统一为「九转背离·观望」，不给出方向冲突的单边建议
-        #   下跌九转临近/完成 或 阶梯买点(暴跌) → 即将上涨关注（橙）
-        #   上涨九转临近/完成 或 阶梯卖点(暴涨) → 上涨见顶关注（红）
-        #   其余（仍在调整/震荡）                → 下跌观望（灰）
+        # ---------- 1) 九转时机 ----------
         if nt.get('conflict'):
+            status.timing = "日/月九转背离"
+            status.timing_color = "gray"
+        elif nt.get('is_complete') and nt.get('direction') == 'down':
+            status.timing = "下跌九转完成·买点"
+            status.timing_color = "orange"
+        elif nt.get('is_completing') and nt.get('direction') == 'down':
+            status.timing = "下跌九转临近"
+            status.timing_color = "orange"
+        elif nt.get('is_complete') and nt.get('direction') == 'up':
+            status.timing = "上涨九转完成·卖点"
+            status.timing_color = "red"
+        elif nt.get('is_completing') and nt.get('direction') == 'up':
+            status.timing = "上涨九转临近"
+            status.timing_color = "red"
+        else:
+            status.timing = "无明确九转"
+            status.timing_color = "gray"
+
+        # ---------- 2) 趋势过滤（系统层）----------
+        trend = status.trend or "震荡"
+        if trend == "多头趋势":
+            status.trend_filter = "多头趋势"
+            status.trend_filter_color = "green"
+        elif trend == "空头趋势":
+            status.trend_filter = "空头趋势"
+            status.trend_filter_color = "red"
+        else:
+            status.trend_filter = "震荡整理"
+            status.trend_filter_color = "gray"
+
+        # ---------- 3) 建议动作（时机 × 趋势 × 阶梯，冲突则降权）----------
+        timing_buy = status.timing_color == "orange" and "九转" in status.timing
+        timing_sell = status.timing_color == "red" and "九转" in status.timing
+        reasons = []
+
+        if nt.get('conflict'):
+            status.action = "观望"
+            status.action_color = "gray"
+            reasons.append("日/月九转方向冲突")
+        elif timing_buy and trend == "空头趋势":
+            status.action = "轻仓观察"
+            status.action_color = "gray"
+            reasons.append("九转买点与空头趋势背离，不宜重仓")
+        elif timing_sell and trend == "多头趋势":
+            status.action = "减仓观察"
+            status.action_color = "orange"
+            reasons.append("九转卖点与多头趋势背离，优先风控")
+        elif timing_buy and trend == "多头趋势":
+            status.action = "关注买入"
+            status.action_color = "orange"
+            reasons.append("九转买点与多头同向")
+        elif timing_sell and trend == "空头趋势":
+            status.action = "关注卖出"
+            status.action_color = "red"
+            reasons.append("九转卖点与空头同向")
+        elif timing_buy:
+            status.action = "关注买入"
+            status.action_color = "orange"
+            reasons.append(status.timing)
+        elif timing_sell:
+            status.action = "关注卖出"
+            status.action_color = "red"
+            reasons.append(status.timing)
+        elif buy_ladder_hit:
+            status.action = "阶梯抄底关注"
+            status.action_color = "orange"
+            reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂买入档")
+        elif sell_ladder_hit:
+            status.action = "阶梯止盈关注"
+            status.action_color = "red"
+            reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂卖出档")
+        elif nt_signal in ('买入', '加仓'):
+            status.action = "策略偏多"
+            status.action_color = "orange"
+            reasons.append(f"融合策略信号：{nt_signal}")
+        elif nt_signal == '卖出':
+            status.action = "策略偏空"
+            status.action_color = "red"
+            reasons.append("融合策略信号：卖出")
+        else:
+            status.action = "观望"
+            status.action_color = "gray"
+            reasons.append("无共振时机")
+
+        status.action_reason = "；".join(reasons)
+        # 兼容旧看板汇总字段
+        if status.action in ("关注买入", "阶梯抄底关注", "策略偏多"):
+            status.signal = "即将上涨关注"
+            status.signal_color = "orange"
+        elif status.action in ("关注卖出", "阶梯止盈关注", "策略偏空", "减仓观察"):
+            status.signal = "上涨见顶关注"
+            status.signal_color = "red"
+        elif status.action == "轻仓观察":
             status.signal = "九转背离·观望"
             status.signal_color = "gray"
-        elif (nt['is_completing'] or nt['is_complete']) and nt['direction'] == 'down':
-            status.signal = "即将上涨关注"
-            status.signal_color = "orange"
-        elif (nt['is_completing'] or nt['is_complete']) and nt['direction'] == 'up':
-            status.signal = "上涨见顶关注"
-            status.signal_color = "red"
-        elif buy_ladder_hit:
-            status.signal = "即将上涨关注"
-            status.signal_color = "orange"
-        elif sell_ladder_hit:
-            status.signal = "上涨见顶关注"
-            status.signal_color = "red"
-        elif nt_signal in ('买入', '加仓'):
-            status.signal = "即将上涨关注"
-            status.signal_color = "red" if nt_signal == '买入' else "orange"
-        elif nt_signal == '卖出':
-            status.signal = "上涨见顶关注"
-            status.signal_color = "red"
         else:
             status.signal = "下跌观望"
             status.signal_color = "gray"
@@ -388,6 +459,13 @@ def _status_to_dict(st: StockStatus) -> dict:
         'signal': st.signal,
         'signal_color': st.signal_color,
         'trend': st.trend,
+        'timing': st.timing,
+        'timing_color': st.timing_color,
+        'trend_filter': st.trend_filter,
+        'trend_filter_color': st.trend_filter_color,
+        'action': st.action,
+        'action_color': st.action_color,
+        'action_reason': st.action_reason,
         'nine_turn': st.nine_turn,
         'nine_turn_dir': st.nine_turn_dir,
         'nine_turn_level': st.nine_turn_level,
