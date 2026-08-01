@@ -958,7 +958,7 @@ function refreshAuthUI() {
 async function removeWatch(sym) {
   try {
     await apiJSON('/api/watchlist/remove?symbol=' + encodeURIComponent(sym), { method: 'DELETE' });
-    showToast('已删除 ' + sym, 'ok'); loadWatchlist();
+    showToast('已删除 ' + sym, 'ok'); loadWatchlist(true);
   } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
 }
 
@@ -1259,7 +1259,7 @@ async function addWatch() {
     inp.value = '';
     document.getElementById('watchSuggest').style.display = 'none';
     showToast('已添加 ' + resolved.code + (resolved.name ? ('（' + resolved.name + '）') : ''), 'ok');
-    loadWatchlist();
+    loadWatchlist(true);  // 强制刷新，跳过看板缓存
   } catch (e) {
     const m = String(e.message || e);
     if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
@@ -1273,7 +1273,7 @@ async function addWatchResolved(code, name) {
     document.getElementById('watchInput').value = '';
     document.getElementById('watchSuggest').style.display = 'none';
     showToast('已添加 ' + code + (name ? ('（' + name + '）') : ''), 'ok');
-    loadWatchlist();
+    loadWatchlist(true);  // 强制刷新，跳过看板缓存
   } catch (e) {
     const m = String(e.message || e);
     if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
