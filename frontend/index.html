@@ -573,32 +573,69 @@ let authToken = (() => { try { return localStorage.getItem('autopilot_token') ||
 let currentUser = (() => { try { const u = localStorage.getItem('autopilot_user'); return u ? JSON.parse(u) : null; } catch (e) { return null; } })();
 
 // 统一请求封装：拼接后端地址 + 自动注入 Bearer 令牌
+// 从 Supabase 会话同步最新 access_token（过期则尝试 refresh）
+async function ensureFreshToken() {
+  if (!sb) return !!authToken;
+  try {
+    let { data: sd } = await sb.auth.getSession();
+    let session = sd && sd.session;
+    if (!session) {
+      try {
+        const { data: ud, error: ue } = await sb.auth.getUser();
+        if (!ue && ud && ud.user) {
+          const r = await sb.auth.getSession();
+          session = r.data && r.data.session;
+        }
+      } catch (e) { /* ignore */ }
+    }
+    if (session && session.access_token) {
+      authToken = session.access_token;
+      try { localStorage.setItem('autopilot_token', authToken); } catch (e) {}
+      return true;
+    }
+  } catch (e) { console.warn('ensureFreshToken 失败', e); }
+  return !!authToken;
+}
+
 async function api(path, opts = {}) {
   const headers = Object.assign({}, opts.headers || {});
   if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
   return fetch(BACKEND + path, Object.assign({}, opts, { headers }));
 }
-// 取 JSON（带容错）：网络/HTTP 错误时弹提示并抛出
-async function apiJSON(path, opts = {}) {
+// 取 JSON（带容错）：401 时先刷新 token 重试一次，避免误踢登录
+async function apiJSON(path, opts = {}, _retried = false) {
   try {
+    // 写操作前尽量用最新 token
+    if (!_retried && opts && opts.method && String(opts.method).toUpperCase() !== 'GET') {
+      await ensureFreshToken();
+    }
     const res = await api(path, opts);
     const ct = res.headers.get('content-type') || '';
     const json = ct.includes('application/json') ? await res.json() : { success: false, detail: await res.text() };
     if (res.status === 401) {
-      showToast('登录已过期，请重新登录');
-      if (typeof doLogout === 'function') doLogout();
-      throw new Error('登录已过期');
+      if (!_retried) {
+        const ok = await ensureFreshToken();
+        if (ok) return apiJSON(path, opts, true);
+      }
+      // 不再自动 doLogout：前端可能仍有有效 supabase 会话，误踢体验极差
+      // 仅提示用户重新登录；保留 currentUser，由用户自行点退出或重新登录
+      const detail = (json && json.detail) ? String(json.detail) : '登录已过期或令牌无效';
+      showToast(detail + '，请重新登录后再试');
+      throw new Error(detail);
     }
     if (res.status === 429) {
       showToast('请求过于频繁，请稍后再试');
       throw new Error('请求过于频繁（限流）');
     }
-    if (!res.ok) throw new Error(json.detail || ('HTTP ' + res.status));
+    if (!res.ok) {
+      const detail = (json && (json.detail || json.message)) || ('HTTP ' + res.status);
+      throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    }
     return json;
   } catch (e) {
     if (!String(e.message).includes('HTTP') && !String(e.message).includes('限流')
-        && !String(e.message).includes('频繁') && !String(e.message).includes('登录已过期')
-        && !String(e.message).includes('401'))
+        && !String(e.message).includes('频繁') && !String(e.message).includes('登录')
+        && !String(e.message).includes('401') && !String(e.message).includes('令牌'))
       showToast('网络异常，请稍后重试: ' + e.message);
     throw e;
   }
@@ -1223,7 +1260,11 @@ async function addWatch() {
     document.getElementById('watchSuggest').style.display = 'none';
     showToast('已添加 ' + resolved.code + (resolved.name ? ('（' + resolved.name + '）') : ''), 'ok');
     loadWatchlist();
-  } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
+  } catch (e) {
+    const m = String(e.message || e);
+    if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
+    else showToast('添加失败: ' + m);
+  }
 }
 // 从下拉直接点选后添加（无需再解析）
 async function addWatchResolved(code, name) {
@@ -1233,7 +1274,11 @@ async function addWatchResolved(code, name) {
     document.getElementById('watchSuggest').style.display = 'none';
     showToast('已添加 ' + code + (name ? ('（' + name + '）') : ''), 'ok');
     loadWatchlist();
-  } catch (e) { if (String(e.message).includes('401')) showToast('请先登录后再管理自选'); }
+  } catch (e) {
+    const m = String(e.message || e);
+    if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
+    else showToast('添加失败: ' + m);
+  }
 }
 // 自选输入框：边打字边出匹配下拉
 let _watchTimer = null;
