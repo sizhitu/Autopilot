@@ -970,20 +970,61 @@ async function removeWatch(sym) {
 }
 
 // ===================== 启动鉴权态 =====================
-// 消费 Magic Link / 注册确认邮件回跳（兼容 Implicit hash 与 PKCE code）
-// 说明：supabase-js v2 已移除 getSessionFromUrl，且我们关闭了 detectSessionInUrl，
-// 必须手动从 URL 取 token 并 setSession，否则点邮件链接只会落到首页、不会登录。
+// 消费 Magic Link / 注册确认邮件回跳
+// 支持：
+//   1) Implicit：#access_token=...&refresh_token=...
+//   2) PKCE：?code=...
+//   3) token_hash 中间页：?token_hash=...&type=email|signup（推荐，防邮件扫描预点失效）
+//   4) 旧版 getSessionFromUrl
 async function consumeAuthRedirect() {
   if (!sb) return null;
   const hash = (location.hash || '').replace(/^#/, '');
   const hp = new URLSearchParams(hash);
   const qp = new URLSearchParams(location.search || '');
 
+  const clearAuthParams = () => {
+    try {
+      const url = new URL(location.href);
+      ['code', 'token_hash', 'type', 'error', 'error_description', 'error_code'].forEach(k => url.searchParams.delete(k));
+      url.hash = '';
+      history.replaceState(null, '', url.origin + url.pathname + (url.search || ''));
+    } catch (e) {
+      try { history.replaceState(null, '', location.origin + location.pathname); } catch (e2) {}
+    }
+  };
+
   const errMsg = hp.get('error_description') || qp.get('error_description') || hp.get('error') || qp.get('error');
   if (errMsg) {
-    showToast(decodeURIComponent(errMsg.replace(/\+/g, ' ')), 'error');
-    try { history.replaceState(null, '', location.origin + location.pathname); } catch (e) {}
+    const decoded = decodeURIComponent(String(errMsg).replace(/\+/g, ' '));
+    // 链接一次性且易被邮箱安全扫描预点；引导用户改用验证码
+    if (/expired|invalid|otp/i.test(decoded)) {
+      showToast('邮件链接已失效（可能被邮箱安全扫描提前打开）。请改用邮件中的 6 位验证码登录', 'info');
+    } else {
+      showToast(decoded, 'error');
+    }
+    clearAuthParams();
     return null;
+  }
+
+  // 推荐路径：邮件模板指向本站 ?token_hash=...&type=...，由前端 verifyOtp（避免走 /verify 被扫描器消耗）
+  const token_hash = qp.get('token_hash') || hp.get('token_hash');
+  let otpType = qp.get('type') || hp.get('type') || 'email';
+  if (token_hash) {
+    // signup / magiclink 在部分项目已弃用，优先用邮件带来的 type，失败再试 email
+    const typesToTry = Array.from(new Set([otpType, 'email', 'signup', 'magiclink']));
+    let lastErr = null;
+    for (const t of typesToTry) {
+      try {
+        const { data, error } = await sb.auth.verifyOtp({ token_hash, type: t });
+        if (!error && data && data.session) {
+          clearAuthParams();
+          return data.session;
+        }
+        lastErr = error;
+      } catch (e) { lastErr = e; }
+    }
+    clearAuthParams();
+    throw lastErr || new Error('token_hash 校验失败');
   }
 
   const access_token = hp.get('access_token');
@@ -991,7 +1032,7 @@ async function consumeAuthRedirect() {
   if (access_token && refresh_token) {
     const { data, error } = await sb.auth.setSession({ access_token, refresh_token });
     if (error) throw error;
-    try { history.replaceState(null, '', location.origin + location.pathname); } catch (e) {}
+    clearAuthParams();
     return data && data.session;
   }
 
@@ -999,21 +1040,15 @@ async function consumeAuthRedirect() {
   if (code && typeof sb.auth.exchangeCodeForSession === 'function') {
     const { data, error } = await sb.auth.exchangeCodeForSession(code);
     if (error) throw error;
-    try {
-      const url = new URL(location.href);
-      url.searchParams.delete('code');
-      url.hash = '';
-      history.replaceState(null, '', url.origin + url.pathname);
-    } catch (e) {}
+    clearAuthParams();
     return data && data.session;
   }
 
-  // 兼容极旧 SDK（若仍存在该方法）
   if (typeof sb.auth.getSessionFromUrl === 'function') {
     const { data, error } = await sb.auth.getSessionFromUrl({ storeSession: true });
     if (error) throw error;
     if (data && data.session) {
-      try { history.replaceState(null, '', location.origin + location.pathname); } catch (e) {}
+      clearAuthParams();
       return data.session;
     }
   }
@@ -1027,9 +1062,8 @@ async function initAuth() {
   refreshAuthUI();
   // Magic Link / 注册确认回跳检测
   const hasAuthRedirect =
-    (location.hash && (location.hash.includes('access_token') || location.hash.includes('refresh_token') || location.hash.includes('error'))) ||
-    /[?&]code=/.test(location.search) ||
-    /[?&]error=/.test(location.search);
+    (location.hash && (location.hash.includes('access_token') || location.hash.includes('refresh_token') || location.hash.includes('error') || location.hash.includes('token_hash'))) ||
+    /[?&](code|token_hash|error)=/.test(location.search);
 
   let established = false;
 
@@ -1044,7 +1078,12 @@ async function initAuth() {
       }
     } catch (e) {
       console.warn('Magic Link 回跳解析失败', e);
-      showToast('登录链接已失效或无法校验，请重新获取验证码或使用邮箱验证码登录', 'info');
+      const m = String((e && e.message) || e || '');
+      if (/expired|invalid|otp/i.test(m)) {
+        showToast('邮件链接已失效。请打开登录框，用邮件里的 6 位验证码完成登录（验证码与链接二选一）', 'info');
+      } else {
+        showToast('登录链接无法校验，请使用邮箱验证码登录', 'info');
+      }
     }
   }
 
