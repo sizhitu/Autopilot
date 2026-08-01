@@ -632,18 +632,28 @@ async def get_watchlist(refresh: bool = False, user: Optional[dict] = Depends(_o
     try:
         data = get_watchlist_status(user_id, force=refresh)
         data["user_scoped"] = user_id is not None
+        # 兜底：保证 stocks 始终是 list，避免前端/排序空指针
+        if not isinstance(data.get("stocks"), list):
+            data["stocks"] = []
         # 已登录：按用户排序顺序重排看板，并附带每只备注
         if user_id:
             try:
                 items = watchlist_store.get_all(user_id)
                 order = [i["symbol"] for i in items]
                 notes = {i["symbol"]: (i.get("note") or "") for i in items}
-                if order:
+                if order and data["stocks"]:
                     rank = {s: i for i, s in enumerate(order)}
                     data["stocks"].sort(key=lambda x: rank.get(x["code"], 1 << 30))
                 data["notes"] = notes
+                # 用户自选为空时明确标记，前端展示空状态
+                if not order:
+                    data["empty"] = True
+                    data["stocks"] = []
+                    data["count"] = 0
+                    data["total"] = 0
+                    data["computing"] = False
             except Exception:
-                data["notes"] = {}
+                data.setdefault("notes", {})
         return JSONResponse(content=_to_jsonable(data),
                             headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
     except Exception as e:
