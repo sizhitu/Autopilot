@@ -317,6 +317,7 @@ async def public_config():
 async def api_me(user: dict = Depends(auth.get_current_user)):
     """返回当前登录用户信息（并防御性同步 profiles 行）。"""
     profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
+    digest = user_store.get_digest_prefs(user["id"])
     return {
         "success": True,
         "user": {
@@ -325,8 +326,28 @@ async def api_me(user: dict = Depends(auth.get_current_user)):
             "display_name": profile.get("display_name") or (user.get("email", "").split("@")[0]),
             "verified": True,
             "is_admin": bool(profile.get("is_admin") or user.get("is_admin")),
+            "digest_enabled": digest.get("enabled", False),
+            "digest_freq": digest.get("freq", "weekly"),
         },
     }
+
+
+class DigestPrefsRequest(BaseModel):
+    enabled: bool = False
+    freq: str = "weekly"  # weekly | biweekly
+
+
+@app.get("/api/user/digest")
+async def get_digest_prefs_api(user: dict = Depends(auth.get_current_user)):
+    prefs = user_store.get_digest_prefs(user["id"])
+    return {"success": True, **prefs}
+
+
+@app.post("/api/user/digest")
+async def set_digest_prefs_api(req: DigestPrefsRequest, user: dict = Depends(auth.get_current_user)):
+    freq = req.freq if req.freq in ("weekly", "biweekly") else "weekly"
+    prefs = user_store.set_digest_prefs(user["id"], enabled=req.enabled, freq=freq)
+    return {"success": True, **prefs}
 
 
 # ================================================================
