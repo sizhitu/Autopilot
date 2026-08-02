@@ -315,8 +315,18 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   <div class="card" style="margin-bottom:8px;">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
       <div class="card-title" style="margin:0;">自选股票状态看板</div>
-      <div>
-        <span id="watchlistUpdated" style="color:var(--text-dim); font-size:11px; margin-right:10px;"></span>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
+        <span id="watchlistUpdated" style="color:var(--text-dim); font-size:11px;"></span>
+        <span id="digestToggleWrap" style="display:none;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:3px 8px;" title="开启后按所选频率发送自选观察邮件，不会每天打扰">
+          <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="digestEnabled" onchange="saveDigestPrefs()" style="accent-color:var(--blue);">
+            <span>邮件推送</span>
+          </label>
+          <select id="digestFreq" onchange="saveDigestPrefs()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:11px;padding:2px 4px;">
+            <option value="weekly">每周</option>
+            <option value="biweekly">每两周</option>
+          </select>
+        </span>
         <span id="addWatchRow" style="display:none; gap:4px; align-items:center; position:relative;">
           <input id="watchInput" type="text" placeholder="加代码/名称 如 NVDA/伊利股份" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:170px;">
           <div class="search-results" id="watchSuggest" style="top:100%; left:0; width:230px; display:none;"></div>
@@ -1127,13 +1137,49 @@ function refreshAuthUI() {
     bindUserNameTip();
     document.getElementById('addWatchRow').style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';
+    const dw = document.getElementById('digestToggleWrap');
+    if (dw) dw.style.display = 'inline-flex';
+    syncDigestToggleUI();
     if (adminTab && isAdmin) adminTab.style.display = '';
   } else {
     a.classList.remove('hidden');
     u.classList.add('hidden');
     document.getElementById('addWatchRow').style.display = 'none';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = '';
+    const dw = document.getElementById('digestToggleWrap');
+    if (dw) dw.style.display = 'none';
     if (adminTab) adminTab.style.display = 'none';
+  }
+}
+
+function syncDigestToggleUI() {
+  const en = document.getElementById('digestEnabled');
+  const fq = document.getElementById('digestFreq');
+  if (!en || !fq || !currentUser) return;
+  en.checked = !!currentUser.digest_enabled;
+  fq.value = (currentUser.digest_freq === 'biweekly') ? 'biweekly' : 'weekly';
+}
+
+async function saveDigestPrefs() {
+  if (!currentUser) { showToast('请先登录'); return; }
+  const en = document.getElementById('digestEnabled');
+  const fq = document.getElementById('digestFreq');
+  if (!en || !fq) return;
+  try {
+    const r = await apiJSON('/api/user/digest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !!en.checked, freq: fq.value === 'biweekly' ? 'biweekly' : 'weekly' }),
+    });
+    currentUser.digest_enabled = !!r.enabled;
+    currentUser.digest_freq = r.freq || 'weekly';
+    localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
+    showToast(en.checked
+      ? ('已开启邮件推送（' + (fq.value === 'biweekly' ? '每两周' : '每周') + '）')
+      : '已关闭邮件推送', 'ok');
+  } catch (e) {
+    showToast('保存失败: ' + (e.message || e));
+    syncDigestToggleUI();
   }
 }
 
