@@ -303,24 +303,52 @@ def generate_for_user(uid: str, email: str, period: str = "weekly") -> bool:
         return False
 
 
+def _due_for_send(prefs_freq: str, last_sent: str, period: str) -> bool:
+    """按频率判断是否该发。period 为任务触发粒度（weekly 任务也可服务 biweekly 用户）。"""
+    from datetime import datetime, timedelta
+    if not last_sent:
+        return True
+    try:
+        last = datetime.fromisoformat(str(last_sent).replace("Z", ""))
+    except Exception:
+        return True
+    days = (datetime.now() - last).days
+    # biweekly：至少间隔 12 天；weekly：至少间隔 6 天（避免同周重复）
+    need = 12 if (prefs_freq == "biweekly") else 6
+    return days >= need
+
+
 def run_reports(period: str = "weekly") -> dict:
-    users, total = user_store.list_profiles(limit=10000, offset=0)
+    """
+    只向「开启看板邮件推送」的用户发送。
+    频率：weekly（约每周）/ biweekly（约每两周），由用户偏好控制，避免刷屏。
+    period 参数保留兼容（weekly|monthly）；monthly 仍可用但默认产品推荐 weekly 任务。
+    """
+    from datetime import datetime
+    subs = user_store.list_digest_subscribers()
     sent = skipped = 0
-    for u in users:
-        email = (u.get("email") or "").strip()
-        if not email:
-            skipped += 1
-            continue
+    total = len(subs)
+    for u in subs:
+        email = u.get("email")
+        uid = u.get("id")
+        freq = u.get("freq") or "weekly"
+        # monthly 任务：所有开启用户都可发；weekly 任务：按 last_sent 节流
+        if period != "monthly":
+            if not _due_for_send(freq, u.get("last_sent"), period):
+                skipped += 1
+                continue
+        # biweekly 用户在 weekly cron 下也会被 _due_for_send 挡住直到满约两周
         try:
-            if generate_for_user(u.get("id"), email, period):
+            if generate_for_user(uid, email, "weekly" if period != "monthly" else period):
+                user_store.set_digest_prefs(uid, last_sent=datetime.now().isoformat(timespec="seconds"))
                 sent += 1
             else:
                 skipped += 1
         except Exception as e:
             logger.warning("报告生成失败 %s: %s", email, e)
             skipped += 1
-    logger.info("报告任务完成 period=%s sent=%d skipped=%d total=%d", period, sent, skipped, total)
-    return {"sent": sent, "skipped": skipped, "total": total}
+    logger.info("报告任务完成 period=%s sent=%d skipped=%d subscribers=%d", period, sent, skipped, total)
+    return {"sent": sent, "skipped": skipped, "total": total, "subscribers": total}
 
 
 if __name__ == "__main__":
