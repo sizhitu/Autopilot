@@ -2317,14 +2317,14 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
   top: 42%;
   transform: translateY(-50%) translateX(12px);
   z-index: 930;
-  background: rgba(28, 32, 40, 0.72);
+  background: rgba(28, 32, 40, 0.48);
   color: var(--text);
-  border: 1px solid rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.14);
   border-radius: 16px;
   padding: 10px 14px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.28);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 6px 20px rgba(0,0,0,.22);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2335,7 +2335,7 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
   transition: opacity .22s ease, transform .22s ease, visibility .22s;
 }
 #contactBubble.open {
-  opacity: 0.92;
+  opacity: 0.88;
   visibility: visible;
   pointer-events: auto;
   transform: translateY(-50%) translateX(0);
@@ -2369,16 +2369,16 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
   top: 50%;
   transform: translateY(-50%) rotate(45deg);
   width: 12px; height: 12px;
-  background: rgba(28, 32, 40, 0.72);
-  border-right: 1px solid rgba(255,255,255,0.12);
-  border-top: 1px solid rgba(255,255,255,0.12);
+  background: rgba(28, 32, 40, 0.48);
+  border-right: 1px solid rgba(255,255,255,0.14);
+  border-top: 1px solid rgba(255,255,255,0.14);
 }
 @media (max-width: 640px) {
   #contactBubble { top: 48%; right: 18px; }
 }
 #contactMask {
   position: fixed; inset: 0; z-index: 980;
-  background: rgba(0,0,0,.22);
+  background: rgba(0,0,0,.12);
   opacity: 0; visibility: hidden;
   transition: opacity .25s ease, visibility .25s ease;
   pointer-events: none;
@@ -2392,12 +2392,12 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
   width: min(320px, calc(100vw - 24px));
   max-height: min(520px, calc(100vh - 48px));
   height: auto;
-  background: rgba(28, 32, 40, 0.78);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(28, 32, 40, 0.42);
+  border: 1px solid rgba(255,255,255,0.16);
   border-radius: 14px;
-  box-shadow: 0 12px 36px rgba(0,0,0,.35);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 12px 36px rgba(0,0,0,.28);
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
   transform: translate(110%, -50%);
   transition: transform .28s cubic-bezier(.2,.8,.2,1);
   display: flex; flex-direction: column;
@@ -2414,8 +2414,8 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
 }
 #contactDrawer input, #contactDrawer textarea {
   width: 100%; margin-bottom: 8px;
-  background: rgba(0,0,0,0.28);
-  border: 1px solid rgba(255,255,255,0.12); color: var(--text);
+  background: rgba(0,0,0,0.22);
+  border: 1px solid rgba(255,255,255,0.14); color: var(--text);
   padding: 7px 8px; border-radius: 6px; box-sizing: border-box; font-size: 13px;
 }
 #contactDrawer textarea { min-height: 96px; max-height: 160px; resize: vertical; }
