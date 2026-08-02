@@ -1309,21 +1309,43 @@ async function sendEdm() {
   } catch (e) { m.textContent = '发送失败: ' + e.message; }
 }
 
-// ===================== 客服咨询抽屉 =====================
+// ===================== 客服咨询：细条 → 气泡 → 表单抽屉 =====================
 function openContact() {
+  // 第一步：只弹出「客服咨询」气泡，不直接展开表单
+  closeContactFormOnly();
+  const b = document.getElementById('contactBubble');
+  if (b) {
+    b.classList.add('open');
+    b.setAttribute('aria-hidden', 'false');
+  }
+}
+function openContactForm() {
+  // 第二步：点气泡后再打开完整咨询表单
+  const b = document.getElementById('contactBubble');
+  if (b) {
+    b.classList.remove('open');
+    b.setAttribute('aria-hidden', 'true');
+  }
   const d = document.getElementById('contactDrawer');
   const m = document.getElementById('contactMask');
-  if (!d) return;
-  d.classList.add('open');
+  if (d) d.classList.add('open');
   if (m) m.classList.add('open');
   document.body.style.overflow = 'hidden';
 }
-function closeContact() {
+function closeContactFormOnly() {
   const d = document.getElementById('contactDrawer');
   const m = document.getElementById('contactMask');
   if (d) d.classList.remove('open');
   if (m) m.classList.remove('open');
   document.body.style.overflow = '';
+}
+function closeContact() {
+  const b = document.getElementById('contactBubble');
+  if (b) {
+    b.classList.remove('open');
+    b.setAttribute('aria-hidden', 'true');
+  }
+  closeContactFormOnly();
 }
 async function submitContact() {
   const m = document.getElementById('ctMsg2');
@@ -2254,7 +2276,7 @@ initAuth();
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
 </script>
 
-<!-- 客服咨询：右侧细条把手 + 抽屉面板 -->
+<!-- 客服咨询：右侧细条 → 气泡 → 表单抽屉 -->
 <style>
 #contactHandle {
   position: fixed;
@@ -2274,111 +2296,133 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: width .2s ease, opacity .2s ease, background .2s ease;
+  transition: width .2s ease, opacity .2s ease;
   touch-action: manipulation;
 }
-#contactHandle:hover, #contactHandle:focus {
-  opacity: 1;
-  width: 18px;
-}
+#contactHandle:hover, #contactHandle:focus { opacity: 1; width: 18px; }
 #contactHandle .handle-grip {
-  width: 3px;
-  height: 28px;
-  border-radius: 2px;
+  width: 3px; height: 28px; border-radius: 2px;
   background: rgba(255,255,255,.85);
   box-shadow: 6px 0 0 rgba(255,255,255,.35);
 }
-#contactHandle .handle-tip {
-  position: absolute;
-  right: 18px;
-  white-space: nowrap;
-  font-size: 11px;
+@media (max-width: 640px) {
+  #contactHandle { width: 10px; height: 56px; top: 48%; opacity: 0.7; }
+  #contactHandle:hover, #contactHandle:focus { width: 12px; }
+  #contactHandle .handle-grip { height: 22px; box-shadow: 5px 0 0 rgba(255,255,255,.35); }
+}
+/* 气泡：点细条后先出现 */
+#contactBubble {
+  position: fixed;
+  right: 22px;
+  top: 42%;
+  transform: translateY(-50%) translateX(12px);
+  z-index: 930;
   background: var(--card);
   color: var(--text);
   border: 1px solid var(--border);
-  padding: 4px 8px;
-  border-radius: 6px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .15s;
-}
-#contactHandle:hover .handle-tip { opacity: 1; }
-@media (max-width: 640px) {
-  #contactHandle {
-    width: 10px;
-    height: 56px;
-    top: 48%;
-    opacity: 0.7;
-  }
-  #contactHandle:hover, #contactHandle:focus { width: 12px; }
-  #contactHandle .handle-tip { display: none; }
-  #contactHandle .handle-grip { height: 22px; box-shadow: 5px 0 0 rgba(255,255,255,.35); }
-}
-#contactMask {
-  position: fixed;
-  inset: 0;
-  z-index: 980;
-  background: rgba(0,0,0,.45);
+  border-radius: 16px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.35);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(240px, calc(100vw - 40px));
   opacity: 0;
   visibility: hidden;
+  pointer-events: none;
+  transition: opacity .22s ease, transform .22s ease, visibility .22s;
+}
+#contactBubble.open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+#contactBubble .bubble-icon { font-size: 18px; line-height: 1; }
+#contactBubble .bubble-text { font-size: 13px; font-weight: 600; }
+#contactBubble .bubble-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-weight: 400; }
+#contactBubble .bubble-action {
+  border: none;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#contactBubble .bubble-x {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+#contactBubble::after {
+  content: '';
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 12px; height: 12px;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 640px) {
+  #contactBubble { top: 48%; right: 18px; }
+}
+#contactMask {
+  position: fixed; inset: 0; z-index: 980;
+  background: rgba(0,0,0,.45);
+  opacity: 0; visibility: hidden;
   transition: opacity .25s ease, visibility .25s ease;
 }
 #contactMask.open { opacity: 1; visibility: visible; }
 #contactDrawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  z-index: 990;
-  width: min(360px, 92vw);
-  height: 100%;
+  position: fixed; top: 0; right: 0; z-index: 990;
+  width: min(360px, 92vw); height: 100%;
   background: var(--card);
   border-left: 1px solid var(--border);
   box-shadow: -8px 0 28px rgba(0,0,0,.35);
   transform: translateX(105%);
   transition: transform .28s cubic-bezier(.2,.8,.2,1);
-  display: flex;
-  flex-direction: column;
-  padding: 16px 16px 20px;
-  box-sizing: border-box;
-  overflow-y: auto;
+  display: flex; flex-direction: column;
+  padding: 16px 16px 20px; box-sizing: border-box; overflow-y: auto;
 }
 #contactDrawer.open { transform: translateX(0); }
 #contactDrawer .drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
 }
 #contactDrawer .drawer-head .card-title { margin: 0; }
 #contactDrawer .drawer-close {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 4px 8px;
+  border: none; background: transparent; color: var(--text-dim);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 4px 8px;
 }
 #contactDrawer input, #contactDrawer textarea {
-  width: 100%;
-  margin-bottom: 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 8px;
-  border-radius: 6px;
-  box-sizing: border-box;
-  font-size: 13px;
+  width: 100%; margin-bottom: 8px; background: var(--bg);
+  border: 1px solid var(--border); color: var(--text);
+  padding: 8px; border-radius: 6px; box-sizing: border-box; font-size: 13px;
 }
 </style>
-<button id="contactHandle" type="button" title="客服咨询" aria-label="打开客服咨询"
+<button id="contactHandle" type="button" title="客服" aria-label="打开客服入口"
   onclick="openContact()"></button>
+<div id="contactBubble" aria-hidden="true">
+  <span class="bubble-icon">💬</span>
+  <div style="flex:1;min-width:0;">
+    <div class="bubble-text">客服咨询</div>
+    <div class="bubble-sub">点击继续填写表单</div>
+  </div>
+  <button type="button" class="bubble-action" onclick="openContactForm()">咨询</button>
+  <button type="button" class="bubble-x" onclick="closeContact()" aria-label="关闭">×</button>
+</div>
 <script>
 (function () {
   const h = document.getElementById('contactHandle');
   if (!h) return;
-  h.innerHTML = '<span class="handle-grip" aria-hidden="true"></span><span class="handle-tip">客服咨询</span>';
-  // 简单滑动：从右缘向左拖超过阈值则打开
+  h.innerHTML = '<span class="handle-grip" aria-hidden="true"></span>';
   let sx = 0, sy = 0, tracking = false;
   h.addEventListener('touchstart', function (e) {
     const t = e.changedTouches[0];
@@ -2388,17 +2432,27 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
     if (!tracking) return;
     tracking = false;
     const t = e.changedTouches[0];
-    const dx = sx - t.clientX; // 向左为正
+    const dx = sx - t.clientX;
     const dy = Math.abs(t.clientY - sy);
     if (dx > 28 && dy < 40) openContact();
   }, { passive: true });
+  // 点页面空白处收起气泡（未打开表单时）
+  document.addEventListener('click', function (e) {
+    const b = document.getElementById('contactBubble');
+    if (!b || !b.classList.contains('open')) return;
+    if (b.contains(e.target)) return;
+    if (h.contains(e.target)) return;
+    const d = document.getElementById('contactDrawer');
+    if (d && d.classList.contains('open')) return;
+    closeContact();
+  });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeContact();
   });
 })();
 </script>
 <div id="contactMask" onclick="closeContact()" aria-hidden="true"></div>
-<div id="contactDrawer" role="dialog" aria-label="客服咨询">
+<div id="contactDrawer" role="dialog" aria-label="客服咨询表单">
   <div class="drawer-head">
     <div class="card-title">联系客服 · 提交咨询</div>
     <button type="button" class="drawer-close" onclick="closeContact()" aria-label="关闭">×</button>
