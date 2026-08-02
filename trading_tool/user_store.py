@@ -66,3 +66,65 @@ def user_stats() -> dict:
             "recent_30d": recent_30,
         }
     return {"total_users": 0, "verified_users": 0, "recent_7d": 0, "recent_30d": 0}
+
+
+# ---------- 看板邮件推送偏好（存 settings/cache，无需改 profiles 表结构）----------
+def _digest_key(uid: str) -> str:
+    return f"digest.{uid}"
+
+
+def get_digest_prefs(uid: str) -> dict:
+    """返回 {enabled: bool, freq: 'weekly'|'biweekly', last_sent: str|None}。默认关闭、每周。"""
+    import settings_store
+    raw = settings_store.get_setting(_digest_key(uid), None)
+    enabled = False
+    freq = "weekly"
+    last_sent = None
+    if isinstance(raw, dict):
+        enabled = bool(raw.get("enabled"))
+        freq = raw.get("freq") if raw.get("freq") in ("weekly", "biweekly") else "weekly"
+        last_sent = raw.get("last_sent") or None
+    elif isinstance(raw, str) and raw:
+        try:
+            import json
+            d = json.loads(raw)
+            enabled = bool(d.get("enabled"))
+            freq = d.get("freq") if d.get("freq") in ("weekly", "biweekly") else "weekly"
+            last_sent = d.get("last_sent") or None
+        except Exception:
+            enabled = raw in ("1", "true", "True")
+    return {"enabled": enabled, "freq": freq, "last_sent": last_sent}
+
+
+def set_digest_prefs(uid: str, enabled: bool = None, freq: str = None, last_sent: str = None) -> dict:
+    import settings_store, json
+    cur = get_digest_prefs(uid)
+    if enabled is not None:
+        cur["enabled"] = bool(enabled)
+    if freq in ("weekly", "biweekly"):
+        cur["freq"] = freq
+    if last_sent is not None:
+        cur["last_sent"] = last_sent or None
+    settings_store.set_setting(_digest_key(uid), json.dumps(cur, ensure_ascii=False))
+    return cur
+
+
+def list_digest_subscribers() -> list:
+    """列出开启推送的用户 {id, email, freq, last_sent}（从 profiles + 偏好合并）。"""
+    rows, _ = list_profiles(limit=10000, offset=0)
+    out = []
+    for r in rows:
+        uid = r.get("id")
+        email = (r.get("email") or "").strip()
+        if not uid or not email:
+            continue
+        prefs = get_digest_prefs(uid)
+        if not prefs.get("enabled"):
+            continue
+        out.append({
+            "id": uid,
+            "email": email,
+            "freq": prefs.get("freq") or "weekly",
+            "last_sent": prefs.get("last_sent"),
+        })
+    return out
