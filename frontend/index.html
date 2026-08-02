@@ -2241,8 +2241,56 @@ initAuth();
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
 </script>
 
-<!-- 客服咨询悬浮入口 + 弹窗 -->
-<button id="contactFab" onclick="openContact()" style="position:fixed;right:18px;bottom:18px;z-index:900;border:none;border-radius:24px;background:var(--blue);color:#fff;padding:10px 16px;font-size:12px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.4);">💬 客服咨询</button>
+<!-- 客服咨询：默认收成右侧小圆钮，点击再打开弹窗，避免遮挡（尤其手机端） -->
+<style>
+#contactFab {
+  position: fixed;
+  right: 0;
+  bottom: 72px;
+  z-index: 900;
+  border: none;
+  border-radius: 20px 0 0 20px;
+  background: var(--blue);
+  color: #fff;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 40px;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,.35);
+  opacity: 0.88;
+  transition: width .2s ease, opacity .2s ease, border-radius .2s ease;
+}
+#contactFab:hover, #contactFab:focus {
+  opacity: 1;
+  width: 96px;
+  border-radius: 20px 0 0 20px;
+}
+#contactFab .fab-label {
+  display: none;
+  font-size: 12px;
+  margin-left: 2px;
+  vertical-align: middle;
+}
+#contactFab:hover .fab-label,
+#contactFab:focus .fab-label { display: inline; }
+@media (max-width: 640px) {
+  #contactFab {
+    bottom: 56px;
+    width: 36px;
+    height: 36px;
+    line-height: 36px;
+    font-size: 16px;
+    opacity: 0.82;
+  }
+  /* 手机端不展开文字，避免再挡内容 */
+  #contactFab:hover, #contactFab:focus { width: 36px; }
+  #contactFab .fab-label { display: none !important; }
+}
+</style>
+<button id="contactFab" type="button" onclick="openContact()" title="客服咨询" aria-label="客服咨询">💬<span class="fab-label"> 客服</span></button>
 
 <div id="contactModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;">
   <div class="card" style="width:360px;max-width:92vw;">
