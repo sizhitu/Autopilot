@@ -1,0 +1,49 @@
+name: Weekly watchlist digest
+
+# GitHub Actions 定时（UTC）。公开仓库一般不计费；私有仓库占用免费分钟额度（每周一次几乎可忽略）。
+# 北京时间约周一 09:00 ≈ UTC 01:00 周一
+on:
+  schedule:
+    - cron: "0 1 * * 1"
+  workflow_dispatch:  # 允许在 Actions 页手动点一次「Run workflow」测试
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Trigger digest API
+        env:
+          API_BASE: ${{ secrets.DIGEST_API_BASE }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${API_BASE:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "Missing secrets: DIGEST_API_BASE and/or CRON_SECRET"
+            exit 1
+          fi
+          # 去掉末尾斜杠
+          BASE="${API_BASE%/}"
+          echo "Calling ${BASE}/api/cron/reports?period=weekly"
+          # Render 免费实例可能冷启动，多试几次
+          ok=0
+          for i in 1 2 3 4 5; do
+            code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+              -X POST \
+              -H "X-Cron-Secret: ${CRON_SECRET}" \
+              -H "Content-Type: application/json" \
+              --max-time 120 \
+              "${BASE}/api/cron/reports?period=weekly" || true)
+            echo "Attempt $i → HTTP $code"
+            cat /tmp/resp.json || true
+            echo
+            if [ "$code" = "200" ]; then
+              ok=1
+              break
+            fi
+            sleep 20
+          done
+          if [ "$ok" != "1" ]; then
+            echo "Digest trigger failed"
+            exit 1
+          fi
