@@ -872,15 +872,24 @@ async function submitAuth() {
         options: { data: name ? { display_name: name } : undefined, emailRedirectTo: _redirectTo() },
       });
       if (error) {
-        if (/User already registered/i.test(error.message)) {
-          msg('该邮箱已注册。若未验证请查收邮件；若已用验证码注册过，请用「邮箱验证码」登录并设置密码');
+        const em = error.message || '';
+        if (/User already registered/i.test(em)) {
+          msg('该邮箱已注册。若未验证请查收邮件；若已用验证码注册过，请用「邮箱验证码」登录并可选设置密码');
           try { await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: _redirectTo() } }); }
           catch (e2) { /* ignore */ }
-        } else { throw error; }
-        return;
+          return;
+        }
+        // Supabase 开启「确认邮箱」但 Auth 发信失败时，密码注册会整单失败
+        if (/Error sending confirmation email|confirmation email|error sending/i.test(em)) {
+          msg('密码注册需要发送确认邮件，但邮件服务暂时失败。请改用「邮箱验证码」注册，或稍后重试。管理员请检查 Supabase → Authentication → Emails / SMTP。');
+          return;
+        }
+        throw error;
       }
       if (data.session) return finishSession(data.session);
-      showToast('注册成功，请查收确认邮件后使用密码登录', 'ok');
+      // 已创建用户但需确认邮箱
+      showToast('注册成功，请查收确认邮件后再用密码登录', 'ok');
+      msg('已发送确认邮件（若未收到请查垃圾箱）。确认前无法用密码登录；也可改用「邮箱验证码」登录。');
       authAction = 'login'; authSent = false; showAuth();
       return;
     }
