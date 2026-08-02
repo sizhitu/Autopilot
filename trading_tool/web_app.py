@@ -480,6 +480,28 @@ async def admin_reports_generate(req: ReportGenRequest, admin: dict = Depends(au
     return {"success": True, **stats}
 
 
+@app.post("/api/cron/reports")
+async def cron_reports_generate(
+    period: str = Query("weekly"),
+    x_cron_secret: str = Header(None, alias="X-Cron-Secret"),
+):
+    """供 GitHub Actions / 外部定时器调用（免费调度）。
+
+    鉴权：请求头 X-Cron-Secret 必须等于环境变量 CRON_SECRET。
+    只向「开启看板邮件推送」的用户发送，并按每周/每两周节流。
+    """
+    expected = (os.getenv("CRON_SECRET") or "").strip()
+    if not expected:
+        raise HTTPException(503, "服务端未配置 CRON_SECRET")
+    if not x_cron_secret or x_cron_secret.strip() != expected:
+        raise HTTPException(401, "无效的 Cron 密钥")
+    if period not in ("weekly", "monthly"):
+        raise HTTPException(400, "period 仅支持 weekly / monthly")
+    # 先唤醒依赖的外部服务；报告本身可能较慢
+    stats = reports.run_reports(period)
+    return {"success": True, **stats}
+
+
 @app.post("/api/contact")
 async def api_contact(req: ContactRequest):
     """公开咨询入口：收集 姓名/邮箱/国家/问题，落库并立即转发到 support 邮箱（自动建单）。"""
