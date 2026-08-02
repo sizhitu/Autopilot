@@ -285,7 +285,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <div id="authMethodHint" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;line-height:1.4;"></div>
 
     <input id="authEmail" type="email" placeholder="邮箱" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
-    <input id="authPwd" type="password" placeholder="密码（≥6位）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
+    <input id="authPwd" type="password" placeholder="密码（≥6位）" style="width:100%;margin-bottom:4px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
+    <div id="authPwdHint" style="font-size:10px;color:var(--text-dim);margin:-2px 0 6px;line-height:1.4;display:none;">密码至少 6 位；建议包含字母与数字。请妥善保管，勿与其他网站共用。</div>
     <input id="authPwd2" type="password" placeholder="确认密码" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
     <input id="authName" type="text" placeholder="昵称（注册可选）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
     <input id="authCode" type="text" placeholder="邮箱验证码（6位）" style="width:100%;margin-bottom:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;display:none;">
@@ -293,8 +294,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <div style="text-align:right;font-size:11px;margin-top:2px;display:none;" id="resendLink">
       <a href="javascript:void(0)" style="color:var(--text-dim);" onclick="resendCode()">重新发送验证码</a>
     </div>
-    <div style="display:flex;justify-content:space-between;font-size:11px;">
+    <div id="authExtraLinks" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;font-size:11px;margin-top:4px;">
       <a href="javascript:void(0)" style="color:var(--blue);" onclick="switchAuthAction()">去<span id="authSwitchAction">注册</span></a>
+      <a href="javascript:void(0)" id="authForgotLink" style="color:var(--text-dim);display:none;" onclick="startForgotPassword()">忘记密码？</a>
+      <a href="javascript:void(0)" id="authResendConfirmLink" style="color:var(--blue);display:none;" onclick="resendConfirmEmail()">重发确认邮件</a>
       <a href="javascript:void(0)" style="color:var(--text-dim);" onclick="closeAuth()">关闭</a>
     </div>
     <div id="devCodeHint" style="font-size:10px;color:var(--gold);margin-top:6px;display:none;"></div>
@@ -766,25 +769,27 @@ function showAuth() {
   document.getElementById('authMsg').textContent = '';
   document.getElementById('btnMethodPwd').classList.toggle('btn-gold', isPwd);
   document.getElementById('btnMethodOtp').classList.toggle('btn-gold', !isPwd);
-  // 密码框：密码模式显示；验证码模式仅可选（不强制）
-  document.getElementById('authPwd').style.display = isPwd || !isPwd ? 'block' : 'none';
-  // 验证码模式下密码始终可选显示
   document.getElementById('authPwd').style.display = 'block';
   document.getElementById('authPwd').placeholder = isPwd
     ? (isReg ? '设置登录密码（≥6位）' : '密码（≥6位）')
     : '可选：设置登录密码（≥6位，验证成功后生效）';
+  const pwdHint = document.getElementById('authPwdHint');
+  if (pwdHint) pwdHint.style.display = (isPwd && isReg) ? 'block' : 'none';
   const pwd2 = document.getElementById('authPwd2');
-  // 仅「密码注册」需要确认密码；验证码注册不强制设密
   if (pwd2) pwd2.style.display = (isPwd && isReg) ? 'block' : 'none';
   document.getElementById('authName').style.display = isReg ? 'block' : 'none';
   document.getElementById('authCode').style.display = (!isPwd && authSent) ? 'block' : 'none';
   document.getElementById('resendLink').style.display = (!isPwd && authSent) ? 'inline' : 'none';
+  const forgot = document.getElementById('authForgotLink');
+  if (forgot) forgot.style.display = (isPwd && !isReg) ? 'inline' : 'none';
+  const resendC = document.getElementById('authResendConfirmLink');
+  if (resendC) resendC.style.display = 'none';
   const hint = document.getElementById('authMethodHint');
   if (hint) {
     if (isPwd) {
       hint.textContent = isReg
         ? '邮箱 + 密码注册。也可用「邮箱验证码」无密码注册。'
-        : '使用已设置的密码登录。若从未设过密码（只用过验证码），请改用「邮箱验证码」登录，并可在登录时可选设置密码。';
+        : '使用已设置的密码登录。若从未设过密码，请改用「邮箱验证码」登录。';
     } else {
       hint.textContent = isReg
         ? '验证码即可完成注册；密码为可选项，填写后下次可用密码登录。'
@@ -792,12 +797,24 @@ function showAuth() {
     }
   }
   const btn = document.getElementById('authSubmitBtn');
+  btn.disabled = false;
   if (isPwd) btn.textContent = isReg ? '注册' : '登录';
   else btn.textContent = authSent ? '验证并登录' : '发送验证码';
   document.getElementById('authSwitchAction').textContent = isReg ? '登录' : '注册';
   document.getElementById('authModal').classList.remove('hidden');
 }
-function closeAuth() { document.getElementById('authModal').classList.add('hidden'); }
+function closeAuth() {
+  document.getElementById('authModal').classList.add('hidden');
+  const btn = document.getElementById('authSubmitBtn');
+  if (btn) { btn.disabled = false; }
+}
+function setAuthBusy(busy, label) {
+  const btn = document.getElementById('authSubmitBtn');
+  if (!btn) return;
+  btn.disabled = !!busy;
+  if (busy) btn.textContent = label || '处理中…';
+  else showAuth(); // 恢复文案（会清 msg，调用方需注意）
+}
 
 /** 验证码登录/注册成功后，若有 pendingPassword 则写入账号，便于下次密码登录 */
 async function applyPendingPassword() {
@@ -824,20 +841,27 @@ async function submitAuth() {
   const pwd2El = document.getElementById('authPwd2');
   const pwd2 = pwd2El ? pwd2El.value : '';
   const code = document.getElementById('authCode').value.trim();
-  const msg = m => document.getElementById('authMsg').textContent = m;
+  const msg = m => { const el = document.getElementById('authMsg'); if (el) el.textContent = m; };
+  const btn = document.getElementById('authSubmitBtn');
+  const unlock = () => {
+    if (!btn) return;
+    btn.disabled = false;
+    const isPwd = authMethod === 'password';
+    const isReg = authAction === 'register';
+    if (isPwd) btn.textContent = isReg ? '注册' : '登录';
+    else btn.textContent = authSent ? '验证并登录' : '发送验证码';
+  };
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg('请填写有效邮箱'); return; }
   if (!sb) { msg('认证服务初始化失败，请刷新页面重试；若持续失败请检查网络'); return; }
   try {
-    // ---------- 邮箱验证码 / Magic Link 方式 ----------
+    if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+    // ---------- 邮箱验证码 / Magic Link ----------
     if (authMethod === 'otp') {
       if (!authSent) {
-        // 密码一律可选：填了且≥6位则验证成功后写入；不填仍可纯验证码注册/登录
         if (pwd) {
-          if (pwd.length < 6) { msg('若设置密码请至少 6 位；也可留空仅用验证码'); return; }
+          if (pwd.length < 6) { msg('若设置密码请至少 6 位；也可留空仅用验证码'); unlock(); return; }
           pendingPassword = pwd;
-        } else {
-          pendingPassword = '';
-        }
+        } else pendingPassword = '';
         const { error } = await sb.auth.signInWithOtp({
           email,
           options: { emailRedirectTo: _redirectTo(), shouldCreateUser: authAction === 'register' },
@@ -846,12 +870,13 @@ async function submitAuth() {
         pendingEmail = email;
         pendingOtpType = 'email';
         authSent = true;
+        unlock();
         showAuth();
         const masked = email.replace(/(.{2}).*(@.*)/, '$1***$2');
-        msg('验证码已发送至 ' + masked + (pendingPassword ? '；验证成功后将保存登录密码' : ''));
+        msg('验证码已发送至 ' + masked + (pendingPassword ? '；验证成功后将保存登录密码' : '') + '。请查收邮箱（含垃圾箱）。');
         return;
       }
-      if (!code) { msg('请输入验证码'); return; }
+      if (!code) { msg('请输入验证码'); unlock(); return; }
       const { data, error } = await sb.auth.verifyOtp({ email: pendingEmail, token: code, type: pendingOtpType });
       if (error) throw error;
       if (data.session) {
@@ -859,13 +884,16 @@ async function submitAuth() {
         return finishSession(data.session);
       }
       msg('验证成功但未建立会话，请改用密码登录或重试');
+      unlock();
       return;
     }
-    // ---------- 密码方式 ----------
+    // ---------- 密码注册 ----------
     if (authAction === 'register') {
-      if (!pwd || pwd.length < 6) { msg('请设置至少 6 位密码'); return; }
-      if (pwd2El && pwd2 && pwd !== pwd2) { msg('两次输入的密码不一致'); return; }
-      if (pwd2El && pwd2El.style.display !== 'none' && !pwd2) { msg('请再输入一次确认密码'); return; }
+      if (!pwd || pwd.length < 6) { msg('请设置至少 6 位密码'); unlock(); return; }
+      if (pwd2El && pwd2El.style.display !== 'none') {
+        if (!pwd2) { msg('请再输入一次确认密码'); unlock(); return; }
+        if (pwd !== pwd2) { msg('两次输入的密码不一致'); unlock(); return; }
+      }
       const { data, error } = await sb.auth.signUp({
         email,
         password: pwd,
@@ -874,44 +902,69 @@ async function submitAuth() {
       if (error) {
         const em = error.message || '';
         if (/User already registered/i.test(em)) {
-          msg('该邮箱已注册。若未验证请查收邮件；若已用验证码注册过，请用「邮箱验证码」登录并可选设置密码');
-          try { await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: _redirectTo() } }); }
-          catch (e2) { /* ignore */ }
+          msg('该邮箱已注册。若未完成邮箱确认，可点下方「重发确认邮件」；也可用「邮箱验证码」登录。');
+          const rc = document.getElementById('authResendConfirmLink');
+          if (rc) rc.style.display = 'inline';
+          unlock();
           return;
         }
-        // Supabase 开启「确认邮箱」但 Auth 发信失败时，密码注册会整单失败
         if (/Error sending confirmation email|confirmation email|error sending/i.test(em)) {
-          msg('密码注册需要发送确认邮件，但邮件服务暂时失败。请改用「邮箱验证码」注册，或稍后重试。管理员请检查 Supabase → Authentication → Emails / SMTP。');
+          msg('确认邮件发送失败，密码注册暂时不可用。请改用「邮箱验证码」注册，或请管理员检查 Supabase 发信配置。');
+          unlock();
           return;
         }
         throw error;
       }
       if (data.session) return finishSession(data.session);
-      // 已创建用户但需确认邮箱
-      showToast('注册成功，请查收确认邮件后再用密码登录', 'ok');
-      msg('已发送确认邮件（若未收到请查垃圾箱）。确认前无法用密码登录；也可改用「邮箱验证码」登录。');
-      authAction = 'login'; authSent = false; showAuth();
+      showToast('注册成功，请查收确认邮件', 'ok');
+      msg('已发送确认邮件（请查收收件箱与垃圾箱）。点击邮件中的链接完成确认后，即可用密码登录。也可直接改用「邮箱验证码」登录。');
+      const rc = document.getElementById('authResendConfirmLink');
+      if (rc) rc.style.display = 'inline';
+      authAction = 'login'; authSent = false;
+      unlock();
+      // 保持提示，不全清 msg
+      const isPwd = true, isReg = false;
+      document.getElementById('authTitle').textContent = '登录';
+      document.getElementById('authSwitchAction').textContent = '注册';
+      const pwdHint = document.getElementById('authPwdHint');
+      if (pwdHint) pwdHint.style.display = 'none';
+      if (pwd2El) pwd2El.style.display = 'none';
+      document.getElementById('authName').style.display = 'none';
+      const forgot = document.getElementById('authForgotLink');
+      if (forgot) forgot.style.display = 'inline';
+      btn.textContent = '登录';
       return;
     }
-    // 密码登录
-    if (!pwd) { msg('请输入密码'); return; }
+    // ---------- 密码登录 ----------
+    if (!pwd) { msg('请输入密码'); unlock(); return; }
     const { data, error } = await sb.auth.signInWithPassword({ email, password: pwd });
     if (error) {
-      if (/Email not confirmed/i.test(error.message)) {
-        msg('邮箱尚未验证，正在重新发送验证邮件…');
+      const em = error.message || '';
+      if (/Email not confirmed/i.test(em)) {
+        msg('邮箱尚未确认，无法用密码登录。正在尝试重发确认邮件…');
         try {
           await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: _redirectTo() } });
-          msg('验证邮件已重新发送，请查收并点击链接后再用密码登录');
-        } catch (e2) { msg('重发验证邮件失败: ' + (e2.message || e2)); }
+          msg('确认邮件已重新发送，请查收并点击链接后再登录。也可改用「邮箱验证码」立即登录。');
+        } catch (e2) {
+          msg('重发确认邮件失败：' + (e2.message || e2) + '。请改用「邮箱验证码」登录。');
+        }
+        const rc = document.getElementById('authResendConfirmLink');
+        if (rc) rc.style.display = 'inline';
+        unlock();
         return;
       }
-      if (/Invalid login credentials|User not found|invalid.*credentials/i.test(error.message)) {
-        msg('邮箱或密码错误。若你是用验证码注册、从未设过密码，请切换到「邮箱验证码」登录，并填写「可选：设置登录密码」');
+      if (/Invalid login credentials|User not found|invalid.*credentials/i.test(em)) {
+        msg('邮箱或密码错误。可点「忘记密码」重置；若从未设过密码，请用「邮箱验证码」登录。');
       } else { throw error; }
+      unlock();
       return;
     }
     if (data.session) return finishSession(data.session);
-  } catch (e) { msg('错误: ' + (e.message || e)); }
+    unlock();
+  } catch (e) {
+    msg('错误: ' + (e.message || e));
+    unlock();
+  }
 }
 
 async function resendCode() {
@@ -924,6 +977,70 @@ async function resendCode() {
     if (error) throw error;
     showToast('验证码已重新发送', 'ok');
   } catch (e) { showToast('重发失败: ' + (e.message || e)); }
+}
+
+/** 重发注册确认邮件（密码注册未确认时） */
+async function resendConfirmEmail() {
+  const email = document.getElementById('authEmail').value.trim() || pendingEmail;
+  const msg = m => { const el = document.getElementById('authMsg'); if (el) el.textContent = m; };
+  if (!email || !/@/.test(email)) { msg('请先填写邮箱'); return; }
+  if (!sb) { msg('认证服务未就绪'); return; }
+  try {
+    msg('正在发送确认邮件…');
+    const { error } = await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: _redirectTo() } });
+    if (error) throw error;
+    msg('确认邮件已发送，请查收（含垃圾箱）并点击链接完成验证。');
+    showToast('确认邮件已发送', 'ok');
+  } catch (e) {
+    msg('发送失败: ' + (e.message || e) + '。可改用「邮箱验证码」登录。');
+  }
+}
+
+/** 忘记密码：向邮箱发送重置链接 */
+async function startForgotPassword() {
+  const email = document.getElementById('authEmail').value.trim();
+  const msg = m => { const el = document.getElementById('authMsg'); if (el) el.textContent = m; };
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    msg('请先填写注册时使用的邮箱，再点「忘记密码」');
+    return;
+  }
+  if (!sb) { msg('认证服务未就绪'); return; }
+  try {
+    msg('正在发送密码重置邮件…');
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: _redirectTo() + '/?reset=1',
+    });
+    if (error) throw error;
+    msg('若该邮箱已注册，将收到重置密码邮件（请查收件箱与垃圾箱）。点击邮件中的链接后即可设置新密码。');
+    showToast('重置邮件已发送', 'ok');
+  } catch (e) {
+    msg('发送失败: ' + (e.message || e));
+  }
+}
+
+/** 从重置邮件回到站点后：检测会话并提示设置新密码 */
+async function maybeHandlePasswordRecovery() {
+  try {
+    const params = new URLSearchParams(location.search);
+    const hash = location.hash ? location.hash.slice(1) : '';
+    const hp = new URLSearchParams(hash);
+    const isRecovery = params.get('reset') === '1' || hp.get('type') === 'recovery';
+    if (!isRecovery || !sb) return;
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) return;
+    const np = window.prompt('请设置新密码（至少 6 位）：');
+    if (!np) return;
+    if (np.length < 6) { showToast('密码至少 6 位', 'info'); return; }
+    const { error } = await sb.auth.updateUser({ password: np });
+    if (error) throw error;
+    showToast('密码已更新，请使用新密码登录', 'ok');
+    // 清掉 URL 参数，避免重复弹窗
+    try {
+      history.replaceState({}, '', location.pathname);
+    } catch (e) {}
+  } catch (e) {
+    showToast('重置密码失败: ' + (e.message || e), 'info');
+  }
 }
 
 async function finishSession(session, opts = {}) {
@@ -2272,7 +2389,7 @@ async function loadLadderTable() {
 loadLadderTable().catch(()=>{});
 loadSample();
 loadWatchlist();  // 自选看板为默认页，打开即加载
-initAuth();
+initAuth().then(function(){ try { maybeHandlePasswordRecovery(); } catch(e){} });
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
 </script>
 
