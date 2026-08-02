@@ -1309,9 +1309,22 @@ async function sendEdm() {
   } catch (e) { m.textContent = '发送失败: ' + e.message; }
 }
 
-// ===================== 客服咨询表单 =====================
-function openContact() { document.getElementById('contactModal').classList.remove('hidden'); }
-function closeContact() { document.getElementById('contactModal').classList.add('hidden'); }
+// ===================== 客服咨询抽屉 =====================
+function openContact() {
+  const d = document.getElementById('contactDrawer');
+  const m = document.getElementById('contactMask');
+  if (!d) return;
+  d.classList.add('open');
+  if (m) m.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeContact() {
+  const d = document.getElementById('contactDrawer');
+  const m = document.getElementById('contactMask');
+  if (d) d.classList.remove('open');
+  if (m) m.classList.remove('open');
+  document.body.style.overflow = '';
+}
 async function submitContact() {
   const m = document.getElementById('ctMsg2');
   const email = document.getElementById('ctEmail').value.trim();
@@ -2241,69 +2254,162 @@ initAuth();
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
 </script>
 
-<!-- 客服咨询：默认收成右侧小圆钮，点击再打开弹窗，避免遮挡（尤其手机端） -->
+<!-- 客服咨询：右侧细条把手 + 抽屉面板 -->
 <style>
-#contactFab {
+#contactHandle {
   position: fixed;
   right: 0;
-  bottom: 72px;
-  z-index: 900;
+  top: 42%;
+  z-index: 920;
+  width: 14px;
+  height: 72px;
+  padding: 0;
   border: none;
-  border-radius: 20px 0 0 20px;
+  border-radius: 8px 0 0 8px;
   background: var(--blue);
   color: #fff;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  font-size: 18px;
-  line-height: 40px;
-  text-align: center;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0,0,0,.35);
-  opacity: 0.88;
-  transition: width .2s ease, opacity .2s ease, border-radius .2s ease;
+  box-shadow: -2px 0 10px rgba(0,0,0,.25);
+  opacity: 0.75;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: width .2s ease, opacity .2s ease, background .2s ease;
+  touch-action: manipulation;
 }
-#contactFab:hover, #contactFab:focus {
+#contactHandle:hover, #contactHandle:focus {
   opacity: 1;
-  width: 96px;
-  border-radius: 20px 0 0 20px;
+  width: 18px;
 }
-#contactFab .fab-label {
-  display: none;
-  font-size: 12px;
-  margin-left: 2px;
-  vertical-align: middle;
+#contactHandle .handle-grip {
+  width: 3px;
+  height: 28px;
+  border-radius: 2px;
+  background: rgba(255,255,255,.85);
+  box-shadow: 6px 0 0 rgba(255,255,255,.35);
 }
-#contactFab:hover .fab-label,
-#contactFab:focus .fab-label { display: inline; }
+#contactHandle .handle-tip {
+  position: absolute;
+  right: 18px;
+  white-space: nowrap;
+  font-size: 11px;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s;
+}
+#contactHandle:hover .handle-tip { opacity: 1; }
 @media (max-width: 640px) {
-  #contactFab {
-    bottom: 56px;
-    width: 36px;
-    height: 36px;
-    line-height: 36px;
-    font-size: 16px;
-    opacity: 0.82;
+  #contactHandle {
+    width: 10px;
+    height: 56px;
+    top: 48%;
+    opacity: 0.7;
   }
-  /* 手机端不展开文字，避免再挡内容 */
-  #contactFab:hover, #contactFab:focus { width: 36px; }
-  #contactFab .fab-label { display: none !important; }
+  #contactHandle:hover, #contactHandle:focus { width: 12px; }
+  #contactHandle .handle-tip { display: none; }
+  #contactHandle .handle-grip { height: 22px; box-shadow: 5px 0 0 rgba(255,255,255,.35); }
+}
+#contactMask {
+  position: fixed;
+  inset: 0;
+  z-index: 980;
+  background: rgba(0,0,0,.45);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .25s ease, visibility .25s ease;
+}
+#contactMask.open { opacity: 1; visibility: visible; }
+#contactDrawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 990;
+  width: min(360px, 92vw);
+  height: 100%;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 28px rgba(0,0,0,.35);
+  transform: translateX(105%);
+  transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 16px 20px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+#contactDrawer.open { transform: translateX(0); }
+#contactDrawer .drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+#contactDrawer .drawer-head .card-title { margin: 0; }
+#contactDrawer .drawer-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+#contactDrawer input, #contactDrawer textarea {
+  width: 100%;
+  margin-bottom: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-size: 13px;
 }
 </style>
-<button id="contactFab" type="button" onclick="openContact()" title="客服咨询" aria-label="客服咨询">💬<span class="fab-label"> 客服</span></button>
-
-<div id="contactModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;">
-  <div class="card" style="width:360px;max-width:92vw;">
+<button id="contactHandle" type="button" title="客服咨询" aria-label="打开客服咨询"
+  onclick="openContact()"></button>
+<script>
+(function () {
+  const h = document.getElementById('contactHandle');
+  if (!h) return;
+  h.innerHTML = '<span class="handle-grip" aria-hidden="true"></span><span class="handle-tip">客服咨询</span>';
+  // 简单滑动：从右缘向左拖超过阈值则打开
+  let sx = 0, sy = 0, tracking = false;
+  h.addEventListener('touchstart', function (e) {
+    const t = e.changedTouches[0];
+    sx = t.clientX; sy = t.clientY; tracking = true;
+  }, { passive: true });
+  h.addEventListener('touchend', function (e) {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = sx - t.clientX; // 向左为正
+    const dy = Math.abs(t.clientY - sy);
+    if (dx > 28 && dy < 40) openContact();
+  }, { passive: true });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeContact();
+  });
+})();
+</script>
+<div id="contactMask" onclick="closeContact()" aria-hidden="true"></div>
+<div id="contactDrawer" role="dialog" aria-label="客服咨询">
+  <div class="drawer-head">
     <div class="card-title">联系客服 · 提交咨询</div>
-    <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">官方客服邮箱：<b>support@timebricks.bid</b>（提交后我们会立即收到工单并回复）</div>
-    <input id="ctName" placeholder="你的称呼（可选）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
-    <input id="ctEmail" type="email" placeholder="你的邮箱（用于接收回复）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
-    <input id="ctCountry" placeholder="国家/地区（可选）" style="width:100%;margin-bottom:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;">
-    <textarea id="ctMsg" placeholder="请描述你的问题…" style="width:100%;height:84px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:4px;margin-bottom:8px;resize:vertical;"></textarea>
-    <button class="btn" style="width:100%;" onclick="submitContact()">发送咨询</button>
-    <div style="text-align:right;font-size:11px;margin-top:4px;"><a href="javascript:void(0)" style="color:var(--text-dim);" onclick="closeContact()">关闭</a></div>
-    <div id="ctMsg2" style="font-size:11px;margin-top:6px;min-height:14px;color:var(--orange);"></div>
+    <button type="button" class="drawer-close" onclick="closeContact()" aria-label="关闭">×</button>
   </div>
+  <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;line-height:1.5;">官方客服邮箱：<b>support@timebricks.bid</b><br>提交后我们会收到工单并尽快回复</div>
+  <div id="ctMsg2" style="font-size:11px;min-height:14px;margin-bottom:6px;color:var(--orange);"></div>
+  <input id="ctName" type="text" placeholder="姓名（可选）">
+  <input id="ctEmail" type="email" placeholder="邮箱（必填）">
+  <input id="ctCountry" type="text" placeholder="国家/地区（可选）">
+  <textarea id="ctMsg" rows="5" placeholder="咨询内容（必填）"></textarea>
+  <button class="btn" style="width:100%;margin-top:4px;" onclick="submitContact()">发送咨询</button>
 </div>
 
 </body>
