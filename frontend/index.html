@@ -766,14 +766,16 @@ function showAuth() {
   document.getElementById('authMsg').textContent = '';
   document.getElementById('btnMethodPwd').classList.toggle('btn-gold', isPwd);
   document.getElementById('btnMethodOtp').classList.toggle('btn-gold', !isPwd);
-  // 密码框：密码模式始终显示；验证码注册必填；验证码登录可选填（验证后写入）
-  const showPwdLoginOptional = !isPwd && !isReg;
-  document.getElementById('authPwd').style.display = (isPwd || isReg || showPwdLoginOptional) ? 'block' : 'none';
-  document.getElementById('authPwd').placeholder = showPwdLoginOptional
-    ? '可选：设置登录密码（≥6位，验证成功后生效）'
-    : (isReg ? '设置登录密码（≥6位）' : '密码（≥6位）');
+  // 密码框：密码模式显示；验证码模式仅可选（不强制）
+  document.getElementById('authPwd').style.display = isPwd || !isPwd ? 'block' : 'none';
+  // 验证码模式下密码始终可选显示
+  document.getElementById('authPwd').style.display = 'block';
+  document.getElementById('authPwd').placeholder = isPwd
+    ? (isReg ? '设置登录密码（≥6位）' : '密码（≥6位）')
+    : '可选：设置登录密码（≥6位，验证成功后生效）';
   const pwd2 = document.getElementById('authPwd2');
-  if (pwd2) pwd2.style.display = isReg ? 'block' : 'none';
+  // 仅「密码注册」需要确认密码；验证码注册不强制设密
+  if (pwd2) pwd2.style.display = (isPwd && isReg) ? 'block' : 'none';
   document.getElementById('authName').style.display = isReg ? 'block' : 'none';
   document.getElementById('authCode').style.display = (!isPwd && authSent) ? 'block' : 'none';
   document.getElementById('resendLink').style.display = (!isPwd && authSent) ? 'inline' : 'none';
@@ -781,12 +783,12 @@ function showAuth() {
   if (hint) {
     if (isPwd) {
       hint.textContent = isReg
-        ? '使用邮箱 + 密码注册；若需邮箱确认，请查收验证邮件后再登录。'
-        : '使用注册时设置的密码登录。若只用过验证码注册、尚未设密码，请改用「邮箱验证码」登录，并可顺带设置密码。';
+        ? '邮箱 + 密码注册。也可用「邮箱验证码」无密码注册。'
+        : '使用已设置的密码登录。若从未设过密码（只用过验证码），请改用「邮箱验证码」登录，并可在登录时可选设置密码。';
     } else {
       hint.textContent = isReg
-        ? '验证码注册须同时设置登录密码，验证成功后即可用密码登录。'
-        : '输入邮箱获取验证码登录；可同时填写密码，验证成功后写入账号，下次即可密码登录。';
+        ? '验证码即可完成注册；密码为可选项，填写后下次可用密码登录。'
+        : '验证码登录即可。若希望下次用密码，可在下方可选填写密码，验证成功后写入账号。';
     }
   }
   const btn = document.getElementById('authSubmitBtn');
@@ -829,12 +831,9 @@ async function submitAuth() {
     // ---------- 邮箱验证码 / Magic Link 方式 ----------
     if (authMethod === 'otp') {
       if (!authSent) {
-        if (authAction === 'register') {
-          if (!pwd || pwd.length < 6) { msg('请设置至少 6 位登录密码（验证成功后可用密码登录）'); return; }
-          if (pwd2El && !pwd2) { msg('请再输入一次确认密码'); return; }
-          if (pwd2 && pwd !== pwd2) { msg('两次输入的密码不一致'); return; }
-          pendingPassword = pwd;
-        } else if (pwd && pwd.length >= 6) {
+        // 密码一律可选：填了且≥6位则验证成功后写入；不填仍可纯验证码注册/登录
+        if (pwd) {
+          if (pwd.length < 6) { msg('若设置密码请至少 6 位；也可留空仅用验证码'); return; }
           pendingPassword = pwd;
         } else {
           pendingPassword = '';
