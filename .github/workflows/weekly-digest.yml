@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "忽略每周节流强制重发（测新模板时勾选 true）"
+        description: "Ignore weekly throttle and resend now (true = test new template)"
         required: false
         default: "false"
         type: choice
@@ -23,7 +23,7 @@ jobs:
         env:
           API_BASE: ${{ secrets.DIGEST_API_BASE }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          FORCE: ${{ github.event.inputs.force || "false" }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
         run: |
           set -euo pipefail
           if [ -z "${API_BASE:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
