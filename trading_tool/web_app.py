@@ -462,6 +462,7 @@ async def admin_edm_send(req: EdmRequest, admin: dict = Depends(auth.require_adm
 class ReportGenRequest(BaseModel):
     period: str = "weekly"          # weekly | monthly
     email: str = ""                 # 可选：仅给该邮箱生成一封（用于测试 / 预览）
+    force: bool = False             # True=忽略每周/双周节流（测新模板）
 
 
 @app.post("/api/admin/reports/generate")
@@ -475,20 +476,21 @@ async def admin_reports_generate(req: ReportGenRequest, admin: dict = Depends(au
         raise HTTPException(400, "period 仅支持 weekly / monthly")
     if req.email:
         ok = reports.generate_for_user("", req.email, req.period)
-        return {"success": True, "sent": 1 if ok else 0}
-    stats = reports.run_reports(req.period)
+        return {"success": True, "sent": 1 if ok else 0, "forced": True}
+    stats = reports.run_reports(req.period, force=bool(req.force))
     return {"success": True, **stats}
 
 
 @app.post("/api/cron/reports")
 async def cron_reports_generate(
     period: str = Query("weekly"),
+    force: bool = Query(False, description="true=忽略节流，用于测试新邮件模板"),
     x_cron_secret: str = Header(None, alias="X-Cron-Secret"),
 ):
     """供 GitHub Actions / 外部定时器调用（免费调度）。
 
     鉴权：请求头 X-Cron-Secret 必须等于环境变量 CRON_SECRET。
-    只向「开启看板邮件推送」的用户发送，并按每周/每两周节流。
+    默认只向开启推送且到达频率的用户发送；force=true 可立即重发（测试用）。
     """
     expected = (os.getenv("CRON_SECRET") or "").strip()
     if not expected:
@@ -497,8 +499,7 @@ async def cron_reports_generate(
         raise HTTPException(401, "无效的 Cron 密钥")
     if period not in ("weekly", "monthly"):
         raise HTTPException(400, "period 仅支持 weekly / monthly")
-    # 先唤醒依赖的外部服务；报告本身可能较慢
-    stats = reports.run_reports(period)
+    stats = reports.run_reports(period, force=bool(force))
     return {"success": True, **stats}
 
 
