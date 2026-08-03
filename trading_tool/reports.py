@@ -190,8 +190,11 @@ def _color_for_trend(a: dict) -> str:
 
 
 def _build_board_table(analyses: List[dict]) -> str:
-    """邮件友好的彩色看板表（可横向滚动）。"""
-    rows = []
+    """邮件看板：竖向卡片列表（避免横向滚动与邮件 App 左右滑切换冲突）。"""
+    if not analyses:
+        return f"<p style='color:{C_DIM};font-size:13px;'>暂无自选数据</p>"
+
+    cards = []
     for a in analyses:
         code = a.get("code") or ""
         name = a.get("name") or ""
@@ -203,39 +206,44 @@ def _build_board_table(analyses: List[dict]) -> str:
         action = a.get("action") or a.get("signal") or "—"
         hl = a.get("high_low") or "—"
         val = a.get("valuation") or "—"
-        rows.append(
-            "<tr>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};color:{C_GOLD};font-weight:700;white-space:nowrap;'>{code}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};color:{C_TEXT};'>{name}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};text-align:right;color:{C_TEXT};white-space:nowrap;'>{px}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};text-align:right;color:{_color_for_chg(chg1)};font-weight:600;white-space:nowrap;'>{_pct(chg1)}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};text-align:right;color:{_color_for_chg(chg5)};font-weight:600;white-space:nowrap;'>{_pct(chg5)}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};color:{_color_for_timing(a)};font-weight:600;'>{timing}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};color:{_color_for_trend(a)};font-weight:600;white-space:nowrap;'>{trend}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};color:{_color_for_action(a)};font-weight:700;white-space:nowrap;'>{action}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid {C_BORDER};color:{C_DIM};font-size:12px;'>{hl} · {val}</td>"
-            "</tr>"
+        ind = a.get("industry") or ""
+
+        # 两列小表：邮件客户端兼容性好，无需横向滑动
+        cards.append(
+            f"<div style='border:1px solid {C_BORDER};border-radius:10px;background:{C_CARD};"
+            f"padding:12px 14px;margin:0 0 10px;'>"
+            f"<div style='margin-bottom:8px;'>"
+            f"<span style='color:{C_GOLD};font-weight:700;font-size:15px;'>{code}</span>"
+            f"<span style='color:{C_TEXT};font-size:13px;margin-left:8px;'>{name}</span>"
+            f"{(f'<span style=\"color:{C_DIM};font-size:11px;margin-left:8px;\">{ind}</span>') if ind else ''}"
+            f"</div>"
+            f"<table style='width:100%;border-collapse:collapse;font-size:12px;color:{C_TEXT};'>"
+            f"<tr>"
+            f"<td style='padding:4px 0;color:{C_DIM};width:28%;'>现价</td>"
+            f"<td style='padding:4px 0;font-weight:600;'>{px}</td>"
+            f"<td style='padding:4px 0;color:{C_DIM};width:28%;'>日 / 近5日</td>"
+            f"<td style='padding:4px 0;'>"
+            f"<span style='color:{_color_for_chg(chg1)};font-weight:600;'>{_pct(chg1)}</span>"
+            f"<span style='color:{C_DIM};'> / </span>"
+            f"<span style='color:{_color_for_chg(chg5)};font-weight:600;'>{_pct(chg5)}</span>"
+            f"</td></tr>"
+            f"<tr>"
+            f"<td style='padding:4px 0;color:{C_DIM};'>九转时机</td>"
+            f"<td style='padding:4px 0;color:{_color_for_timing(a)};font-weight:600;' colspan='3'>{timing}</td>"
+            f"</tr>"
+            f"<tr>"
+            f"<td style='padding:4px 0;color:{C_DIM};'>趋势过滤</td>"
+            f"<td style='padding:4px 0;color:{_color_for_trend(a)};font-weight:600;'>{trend}</td>"
+            f"<td style='padding:4px 0;color:{C_DIM};'>建议动作</td>"
+            f"<td style='padding:4px 0;color:{_color_for_action(a)};font-weight:700;'>{action}</td>"
+            f"</tr>"
+            f"<tr>"
+            f"<td style='padding:4px 0;color:{C_DIM};'>新高/估值</td>"
+            f"<td style='padding:4px 0;color:{C_DIM};' colspan='3'>{hl} · {val}</td>"
+            f"</tr>"
+            f"</table></div>"
         )
-    thead = (
-        f"<tr style='color:{C_DIM};text-align:left;'>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};'>代码</th>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};'>名称</th>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};text-align:right;'>现价</th>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};text-align:right;'>日</th>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};text-align:right;'>近5日</th>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};'>九转时机</th>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};'>趋势过滤</th>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};'>建议动作</th>"
-        f"<th style='padding:8px 10px;border-bottom:2px solid {C_BORDER};'>新高/估值</th>"
-        "</tr>"
-    )
-    return (
-        f"<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid {C_BORDER};"
-        f"border-radius:10px;background:{C_CARD};'>"
-        f"<table style='border-collapse:collapse;width:100%;min-width:720px;font-size:13px;"
-        f"font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:{C_TEXT};'>"
-        f"<thead>{thead}</thead><tbody>{''.join(rows)}</tbody></table></div>"
-    )
+    return "".join(cards)
 
 
 def _focus_facts(a: dict) -> dict:
@@ -451,7 +459,7 @@ def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) ->
   </p>
 
   <h2 style="color:{C_TEXT};font-size:16px;margin:0 0 10px;">一、自选看板</h2>
-  <p style="color:{C_DIM};font-size:12px;margin:0 0 8px;">可左右滑动查看完整表格；颜色含义与网页看板一致。</p>
+  <p style="color:{C_DIM};font-size:12px;margin:0 0 8px;">每只标的一张卡片纵向排列，避免左右滑动误触切换邮件；颜色含义与网页看板一致。</p>
   {table}
 
   <div style="margin-top:28px;">
