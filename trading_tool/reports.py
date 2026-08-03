@@ -110,11 +110,15 @@ def analyze_symbol(symbol: str) -> dict:
 
 
 def classify_analyses(analyses: List[dict]) -> Dict[str, Any]:
+    """邮件只关心方向明确的标的：观望一律不进入邮件正文。"""
     ups = [a for a in analyses if a.get("bucket") == "up"]
     downs = [a for a in analyses if a.get("bucket") == "down"]
     watches = [a for a in analyses if a.get("bucket") == "watch"]
     ups.sort(key=_priority, reverse=True)
     downs.sort(key=_priority, reverse=True)
+
+    # 看板区：仅上涨侧 + 下跌侧（按优先级）
+    board = ups + downs
 
     focus: List[dict] = []
     take_up = min(2, len(ups))
@@ -127,22 +131,14 @@ def classify_analyses(analyses: List[dict]) -> Dict[str, Any]:
         if len(focus) >= MAX_FOCUS:
             break
         focus.append(a)
-    # 方向标的不足时，从自选中按近5日波动补足深写名额（仍不做观望一句话）
-    if len(focus) < MIN_FOCUS:
-        focus_codes = {a.get("code") for a in focus}
-        extra = [a for a in analyses if a.get("code") not in focus_codes]
-        extra.sort(key=lambda x: abs(float(x.get("change_5d") or 0)), reverse=True)
-        for a in extra:
-            if len(focus) >= MIN_FOCUS:
-                break
-            focus.append(a)
+    # 不把观望凑进深写
 
     return {
-        "all": analyses,
+        "board": board,
         "focus": focus,
         "up_count": len(ups),
         "down_count": len(downs),
-        "watch_count": len(watches),
+        "watch_count": len(watches),  # 仅统计，不展示列表
     }
 
 
@@ -190,60 +186,55 @@ def _color_for_trend(a: dict) -> str:
 
 
 def _build_board_table(analyses: List[dict]) -> str:
-    """邮件看板：竖向卡片列表（避免横向滚动与邮件 App 左右滑切换冲突）。"""
+    """仅即将上涨/下跌：竖向卡片，无横向滚动。"""
     if not analyses:
-        return f"<p style='color:{C_DIM};font-size:13px;'>暂无自选数据</p>"
+        return (
+            f"<p style='color:{C_DIM};font-size:13px;line-height:1.6;'>"
+            f"本期自选中<strong>没有</strong>系统标为「即将上涨 / 即将下跌」的标的，"
+            f"观望类已省略，以减少干扰。可到网页看板查看完整列表。</p>"
+        )
 
-    cards = []
-    for a in analyses:
+    ups = [a for a in analyses if a.get("bucket") == "up"]
+    downs = [a for a in analyses if a.get("bucket") == "down"]
+    parts = []
+
+    def _card(a: dict, side_label: str, side_color: str) -> str:
         code = a.get("code") or ""
         name = a.get("name") or ""
         px = a.get("price") if a.get("price") is not None else "—"
-        chg1 = a.get("change_1d")
-        chg5 = a.get("change_5d")
+        chg1, chg5 = a.get("change_1d"), a.get("change_5d")
         timing = a.get("timing") or "—"
         trend = a.get("trend_filter") or a.get("trend") or "—"
         action = a.get("action") or a.get("signal") or "—"
-        hl = a.get("high_low") or "—"
-        val = a.get("valuation") or "—"
-        ind = a.get("industry") or ""
-
-        # 两列小表：邮件客户端兼容性好，无需横向滑动
-        cards.append(
-            f"<div style='border:1px solid {C_BORDER};border-radius:10px;background:{C_CARD};"
-            f"padding:12px 14px;margin:0 0 10px;'>"
-            f"<div style='margin-bottom:8px;'>"
+        return (
+            f"<div style='border-left:4px solid {side_color};border:1px solid {C_BORDER};"
+            f"border-left:4px solid {side_color};border-radius:8px;background:{C_CARD};"
+            f"padding:10px 12px;margin:0 0 8px;'>"
+            f"<div style='margin-bottom:6px;'>"
+            f"<span style='background:{side_color};color:#0f1218;font-size:11px;font-weight:700;"
+            f"padding:2px 8px;border-radius:4px;margin-right:8px;'>{side_label}</span>"
             f"<span style='color:{C_GOLD};font-weight:700;font-size:15px;'>{code}</span>"
-            f"<span style='color:{C_TEXT};font-size:13px;margin-left:8px;'>{name}</span>"
-            f"{(f'<span style=\"color:{C_DIM};font-size:11px;margin-left:8px;\">{ind}</span>') if ind else ''}"
+            f"<span style='color:{C_TEXT};font-size:13px;margin-left:6px;'>{name}</span>"
             f"</div>"
-            f"<table style='width:100%;border-collapse:collapse;font-size:12px;color:{C_TEXT};'>"
-            f"<tr>"
-            f"<td style='padding:4px 0;color:{C_DIM};width:28%;'>现价</td>"
-            f"<td style='padding:4px 0;font-weight:600;'>{px}</td>"
-            f"<td style='padding:4px 0;color:{C_DIM};width:28%;'>日 / 近5日</td>"
-            f"<td style='padding:4px 0;'>"
-            f"<span style='color:{_color_for_chg(chg1)};font-weight:600;'>{_pct(chg1)}</span>"
-            f"<span style='color:{C_DIM};'> / </span>"
-            f"<span style='color:{_color_for_chg(chg5)};font-weight:600;'>{_pct(chg5)}</span>"
-            f"</td></tr>"
-            f"<tr>"
-            f"<td style='padding:4px 0;color:{C_DIM};'>九转时机</td>"
-            f"<td style='padding:4px 0;color:{_color_for_timing(a)};font-weight:600;' colspan='3'>{timing}</td>"
-            f"</tr>"
-            f"<tr>"
-            f"<td style='padding:4px 0;color:{C_DIM};'>趋势过滤</td>"
-            f"<td style='padding:4px 0;color:{_color_for_trend(a)};font-weight:600;'>{trend}</td>"
-            f"<td style='padding:4px 0;color:{C_DIM};'>建议动作</td>"
-            f"<td style='padding:4px 0;color:{_color_for_action(a)};font-weight:700;'>{action}</td>"
-            f"</tr>"
-            f"<tr>"
-            f"<td style='padding:4px 0;color:{C_DIM};'>新高/估值</td>"
-            f"<td style='padding:4px 0;color:{C_DIM};' colspan='3'>{hl} · {val}</td>"
-            f"</tr>"
-            f"</table></div>"
+            f"<div style='font-size:12px;line-height:1.65;color:{C_TEXT};'>"
+            f"现价 <strong>{px}</strong>"
+            f" · 日 <span style='color:{_color_for_chg(chg1)};font-weight:700;'>{_pct(chg1)}</span>"
+            f" · 近5日 <span style='color:{_color_for_chg(chg5)};font-weight:700;'>{_pct(chg5)}</span>"
+            f"<br>九转 <span style='color:{_color_for_timing(a)};font-weight:700;'>{timing}</span>"
+            f" · 趋势 <span style='color:{_color_for_trend(a)};font-weight:700;'>{trend}</span>"
+            f"<br>动作 <span style='color:{_color_for_action(a)};font-weight:700;'>{action}</span>"
+            f"</div></div>"
         )
-    return "".join(cards)
+
+    if ups:
+        parts.append(f"<p style='color:{C_GREEN};font-weight:700;font-size:13px;margin:12px 0 6px;'>▲ 即将上涨关注（{len(ups)}）</p>")
+        for a in ups:
+            parts.append(_card(a, "上涨侧", C_GREEN))
+    if downs:
+        parts.append(f"<p style='color:{C_RED};font-weight:700;font-size:13px;margin:12px 0 6px;'>▼ 即将下跌关注（{len(downs)}）</p>")
+        for a in downs:
+            parts.append(_card(a, "下跌侧", C_RED))
+    return "".join(parts)
 
 
 def _focus_facts(a: dict) -> dict:
@@ -282,47 +273,26 @@ def _build_prompts(period: str, email: str, classified: dict) -> tuple:
     focus = [_focus_facts(a) for a in classified["focus"]]
     payload = {
         "period": period_cn,
-        "focus_count": len(focus),
+        "focus": focus,
         "up_count": classified["up_count"],
         "down_count": classified["down_count"],
-        "watch_count": classified["watch_count"],
-        "focus": focus,
     }
     data_json = json.dumps(payload, ensure_ascii=False, indent=2)
 
     system = (
-        "你是一名严谨的股权研究编辑，熟悉查理·芒格的多学科检查清单与能力圈思想。\n"
-        "为中文读者写「重点标的深度分析」HTML。\n\n"
-        "硬性规则：\n"
-        "1) 必须紧扣 JSON 中每只标的的 industry、business_summary、role、valuation、"
-        "timing、trend、price、涨跌幅等字段展开；禁止输出空泛套话"
-        "（如「仅凭代码无法判断」「请自行查阅一手资料」作为主体内容）。\n"
-        "2) 禁止编造未给出的财务数字（营收、利润、PE、市值等）。信息不足时写清「本邮件未接入该数据」，"
-        "并基于已有业务描述做逻辑推演，而不是放弃分析。\n"
-        "3) 禁止任何买卖/仓位建议措辞。\n"
-        "4) 不要输出看板全表或观望列表。输出纯 HTML 片段（h3/h4/p/ul/li/strong）。\n"
-        "5) 每只标的写满实质内容，建议 8～14 句或等价列表项。\n\n"
-        "每只标的必须包含以下小节（标题可用 h4）：\n"
-        "【业务与能力圈】用 business_summary 与 industry 说明公司/基金实际做什么、收入大致来自哪里、"
-        "普通人要理解它需要哪些行业知识；点明能力圈边界（例如强周期制造 vs 订阅医疗 vs 指数ETF）。\n"
-        "【商业模式与可能的护城河】基于业务描述推断：规模、网络、转换成本、品牌、成本、监管牌照等"
-        "哪一类更可能相关；同时写 1～2 条最可能的反例（护城河可能不成立的原因）。ETF/指数则改写为"
-        "「持仓结构特征与工具属性」，不要硬套公司护城河。\n"
-        "【价格位置与安全边际讨论】结合 valuation、valuation_detail、high_low、近5日涨跌，"
-        "讨论「相对均线/区间位置」意味着什么；强调这是规则化近似，不是内在价值，但要给出可操作的观察点"
-        "（例如：跌破某类位置后哪些假设要重检）。\n"
-        "【信号与基本面的交叉验证】把九转时机、趋势过滤、动作标签与业务质地对照："
-        "同向时说明「价格行为与什么叙事一致」；冲突时说明「更可能是噪声还是风险警示」。\n"
-        "【关键不确定与证伪条件】列出 2～3 条：若出现什么公开事实/价格行为，应降低对该叙事的权重。\n"
+        "你是简洁的投研编辑。输出中文 HTML 片段，帮助用户少思考、抓住重点。\n"
+        "规则：\n"
+        "1) 只根据 JSON 写，禁止编造财务数字；禁止买卖建议。\n"
+        "2) 每只标的最多 4 条短要点（ul/li），总长控制；不要长段落、不要五六节小标题。\n"
+        "3) 每条要点必须具体：业务一句话 + 价格位置含义 + 信号含义 + 一条证伪条件。\n"
+        "4) 用 <strong> 标出代码、关键数字与结论词；不要空泛套话。\n"
+        "5) 不要写观望列表，不要重复看板卡片已有字段堆砌。\n"
     )
-
     user = (
-        f"请为 {email} 生成【{period_cn}】重点深度分析 HTML。\n"
-        f"概览一句即可：偏多 {classified['up_count']} / 偏空 {classified['down_count']} / 观望 {classified['watch_count']}，"
-        f"深写 {len(focus)} 只。\n"
-        f"对 focus 每一只用 <h3>代码 名称</h3>，再按上述五小节展开。\n"
-        f"文末不要重复长免责（外层模板已有）。\n\n"
-        f"数据 JSON：\n{data_json}"
+        f"为 {email} 写【{period_cn}】重点速读（仅 focus）。\n"
+        f"格式：每只 <h3 style='color:#d4af37'>代码 名称</h3> 后跟 <ul> 最多 4 条 <li>。\n"
+        f"上涨 {classified['up_count']} / 下跌 {classified['down_count']}。\n"
+        f"JSON：\n{data_json}"
     )
     return system, user
 
@@ -342,132 +312,73 @@ def _role_hint(role: str) -> str:
 
 
 def _fallback_deep(a: dict) -> str:
-    """无 AI 时：用行业/主营/估值/信号写可读的实质分析（避免空泛套话）。"""
+    """短要点：业务一句 + 位置 + 信号 + 证伪。彩色强调。"""
     code = a.get("code") or ""
     name = a.get("name") or ""
-    industry = (a.get("industry") or "").strip() or "未标注行业"
+    industry = (a.get("industry") or "").strip() or "相关行业"
     biz = (a.get("business_summary") or "").strip()
-    role = a.get("role") or "—"
     val = a.get("valuation") or "—"
     val_d = a.get("valuation_detail") or ""
     timing = a.get("timing") or "—"
     trend = a.get("trend_filter") or a.get("trend") or "—"
     action = a.get("action") or "—"
-    reason = a.get("action_reason") or ""
-    hl = a.get("high_low") or "—"
-    side = "上涨侧观察" if a.get("bucket") == "up" else (
-        "下跌侧观察" if a.get("bucket") == "down" else "中性观察"
-    )
+    side = "上涨侧" if a.get("bucket") == "up" else "下跌侧"
+    side_c = C_GREEN if a.get("bucket") == "up" else C_RED
 
-    if not biz:
-        biz = "本邮件未取到主营简介；以下仅结合行业标签与价格行为做框架讨论。"
-
-    # 业务段
-    biz_para = (
-        f"<strong>{code}</strong>（{name}）所属「{industry}」。业务画像：{biz}"
-        f"理解它需要先分清：收入是来自产品销售、订阅、制造周期、还是指数/一篮子持仓的工具属性。"
-        f"若你无法用自己的话复述「客户是谁、为何付费、主要成本与竞争对象」，则该标的可能落在能力圈之外，"
-        f"此时价格信号的参考价值应系统性降权。"
-    )
-
-    # 护城河段 — 按行业关键词给出更具体的讨论
-    ind = industry
-    if "ETF" in ind or "指数" in ind or "基金" in name or "ETF" in name:
-        moat = (
-            f"该标的更接近<strong>工具/一篮子暴露</strong>，讨论重点不是单体公司护城河，而是："
-            f"跟踪误差、持仓集中度、行业景气与费用拖累。优势在于透明与分散；弱点在于你无法对单一公司做深度资本配置判断，"
-            f"收益结构由成分与规则决定。"
-        )
-    elif "半导体" in ind or "芯片" in ind:
-        moat = (
-            f"半导体链条常见优势来自<strong>工艺节点、客户认证、规模与生态</strong>（设计软件/IP/制造）。"
-            f"同时行业资本开支与库存周期极强：景气时利润弹性大，去库存时估值与盈利双杀。"
-            f"需警惕把短期算力/存储涨价叙事直接当成不可逆护城河。"
-        )
-    elif "医疗" in ind or "健康" in ind:
-        moat = (
-            f"消费医疗/数字医疗常见优势是<strong>品牌、处方合规路径与复购</strong>；"
-            f"反面是监管、支付方政策与获客成本变化。订阅模式看起来稳定，实则对续费率与合规事件极度敏感。"
-        )
-    elif "航天" in ind or "卫星" in ind:
-        moat = (
-            f"商业航天/卫星通信的关键在于<strong>发射成本曲线、频谱与客户合同</strong>；"
-            f"技术里程碑与融资节奏往往比单季利润更能解释波动。失败模式包括发射事故、进度延期与再融资条件恶化。"
-        )
-    elif "广告" in ind or "互联网" in ind:
-        moat = (
-            f"广告与互联网平台更看重<strong>流量入口、数据反馈闭环与销售效率</strong>；"
-            f"护城河可能体现在规模与算法，但广告预算周期与平台政策会快速改写盈利假设。"
-        )
-    else:
-        moat = (
-            f"结合「{industry}」属性，优先识别：是否有切换成本、规模经济、独特资产或监管壁垒；"
-            f"并主动寻找反例（技术路线被替代、客户集中、价格战）。在缺少完整财报时，不要把叙事当成已验证的护城河。"
-        )
-
-    # 价格与安全边际
-    price_para = (
-        f"规则化相对位置为「<strong>{val}</strong>」"
-        f"{('（' + val_d + '）') if val_d else ''}，新高/新低标记：{hl}；"
-        f"近1日 {_pct(a.get('change_1d'))}，近5日 {_pct(a.get('change_5d'))}。"
-        f"这反映的是相对均线或历史区间的位置，不是内在价值。可用的研究问题是："
-        f"若位置显示偏高估，当前趋势能否用「盈利预期上修」解释，还是仅有价格动量？"
-        f"若显示偏低估，是周期底部的时间换空间，还是基本面趋势仍在恶化？"
-    )
-
-    # 信号交叉
-    cross = (
-        f"系统标签：九转「{timing}」，趋势「{trend}」，动作「{action}」"
-        f"{('；原因：' + reason) if reason else ''}（{side}）。"
-        f"若趋势与九转同向，价格行为与短线叙事较一致，仍要用业务周期去解释「为什么现在该有趋势」。"
-        f"若二者冲突，优先假设信号噪声上升，降低对单一标签的权重，直到价格与基本面线索重新对齐。"
-    )
-
-    # 证伪
-    falsify = (
-        f"<li>业务层面：若行业需求、监管或技术路线出现公开的不利变化，应重检「{industry}」叙事。</li>"
-        f"<li>价格层面：若相对位置从「{val}」快速漂移到另一端且伴随放量反向，说明原有均值回归/趋势假设可能失效。</li>"
-        f"<li>组合层面：作为「{role}」——{_role_hint(role)}若该角色与真实波动特性不符，应调整预期而非加戏。</li>"
-    )
+    biz_one = biz if biz else f"主营信息有限，按「{industry}」框架理解。"
+    if len(biz_one) > 90:
+        biz_one = biz_one[:90] + "…"
 
     return (
-        f"<h3 style='color:{C_GOLD};margin:20px 0 8px;'>{code} {name}</h3>"
-        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>业务与能力圈</h4>"
-        f"<p style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0 0 8px;'>{biz_para}</p>"
-        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>商业模式与可能的护城河</h4>"
-        f"<p style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0 0 8px;'>{moat}</p>"
-        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>价格位置与安全边际讨论</h4>"
-        f"<p style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0 0 8px;'>{price_para}</p>"
-        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>信号与基本面的交叉验证</h4>"
-        f"<p style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0 0 8px;'>{cross}</p>"
-        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>关键不确定与证伪条件</h4>"
-        f"<ul style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0;padding-left:18px;'>{falsify}</ul>"
+        f"<h3 style='color:{C_GOLD};font-size:15px;margin:16px 0 6px;'>{code} {name} "
+        f"<span style='color:{side_c};font-size:12px;font-weight:700;'>· {side}</span></h3>"
+        f"<ul style='color:{C_TEXT};font-size:13px;line-height:1.65;margin:0;padding-left:18px;'>"
+        f"<li><strong style='color:{C_BLUE};'>业务</strong>：{biz_one}</li>"
+        f"<li><strong style='color:{C_ORANGE};'>位置</strong>：相对位置 "
+        f"<span style='color:{C_GOLD};font-weight:700;'>{val}</span>"
+        f"{('（' + val_d + '）') if val_d else ''}；近5日 "
+        f"<span style='color:{_color_for_chg(a.get('change_5d'))};font-weight:700;'>{_pct(a.get('change_5d'))}</span>"
+        f"</li>"
+        f"<li><strong style='color:{side_c};'>信号</strong>：九转 "
+        f"<span style='color:{_color_for_timing(a)};font-weight:700;'>{timing}</span>，趋势 "
+        f"<span style='color:{_color_for_trend(a)};font-weight:700;'>{trend}</span>，动作 "
+        f"<span style='color:{_color_for_action(a)};font-weight:700;'>{action}</span></li>"
+        f"<li><strong style='color:{C_DIM};'>证伪</strong>：若趋势与九转持续背离，或行业叙事被公开数据否定，降低对该方向标签的权重。</li>"
+        f"</ul>"
     )
 
 
 def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) -> str:
-    table = _build_board_table(classified.get("all") or [])
+    table = _build_board_table(classified.get("board") or [])
+    w = classified.get("watch_count") or 0
+    watch_note = (
+        f"另有 {w} 只观望未列入本邮件（请到网页看板查看）。"
+        if w else "本期无额外观望省略项。"
+    )
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Autopilot {period_cn}</title></head>
 <body style="margin:0;padding:0;background:{C_BG};color:{C_TEXT};">
-<div style="max-width:900px;margin:0 auto;padding:20px 14px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
-  <h1 style="color:{C_GOLD};font-size:20px;margin:0 0 6px;">Autopilot 股票观察{period_cn}</h1>
-  <p style="color:{C_DIM};font-size:12px;margin:0 0 16px;">
-    {email} · {datetime.now():%Y-%m-%d %H:%M}
-    · 偏多 {classified.get('up_count', 0)} / 偏空 {classified.get('down_count', 0)} / 观望 {classified.get('watch_count', 0)}
+<div style="max-width:640px;margin:0 auto;padding:18px 12px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
+  <h1 style="color:{C_GOLD};font-size:18px;margin:0 0 6px;">Autopilot 方向速读 · {period_cn}</h1>
+  <p style="color:{C_DIM};font-size:12px;margin:0 0 14px;line-height:1.5;">
+    {datetime.now():%Y-%m-%d %H:%M}
+    · <span style="color:{C_GREEN};font-weight:700;">上涨侧 {classified.get('up_count', 0)}</span>
+    · <span style="color:{C_RED};font-weight:700;">下跌侧 {classified.get('down_count', 0)}</span>
+    <br>{watch_note}
   </p>
 
-  <h2 style="color:{C_TEXT};font-size:16px;margin:0 0 10px;">一、自选看板</h2>
-  <p style="color:{C_DIM};font-size:12px;margin:0 0 8px;">每只标的一张卡片纵向排列，避免左右滑动误触切换邮件；颜色含义与网页看板一致。</p>
+  <h2 style="color:{C_TEXT};font-size:15px;margin:0 0 8px;">一、只需盯的方向</h2>
+  <p style="color:{C_DIM};font-size:11px;margin:0 0 8px;">只列即将上涨 / 即将下跌；纵向阅读，无需左右滑。</p>
   {table}
 
-  <div style="margin-top:28px;">
-    <h2 style="color:{C_TEXT};font-size:16px;margin:0 0 10px;">二、重点标的深度分析</h2>
+  <div style="margin-top:22px;">
+    <h2 style="color:{C_TEXT};font-size:15px;margin:0 0 8px;">二、重点速读</h2>
+    <p style="color:{C_DIM};font-size:11px;margin:0 0 6px;">每只最多几条要点，彩色标注关键信息。</p>
     {deep_html}
   </div>
 
-  <p style="color:{C_DIM};font-size:11px;margin:28px 0 0;line-height:1.6;border-top:1px solid {C_BORDER};padding-top:12px;">
+  <p style="color:{C_DIM};font-size:11px;margin:22px 0 0;line-height:1.55;border-top:1px solid {C_BORDER};padding-top:10px;">
     {DISCLAIMER}
   </p>
 </div>
@@ -477,7 +388,7 @@ def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) ->
 def _fallback_html(period: str, email: str, classified: dict) -> str:
     period_cn = "周报" if period == "weekly" else "月报"
     if not classified.get("focus"):
-        deep = f"<p style='color:{C_DIM};'>本期无特别方向共振标的；上表为完整自选快照。</p>"
+        deep = f"<p style='color:{C_DIM};'>本期无明确上涨/下跌标签标的，故无重点展开。</p>"
     else:
         deep = "\n".join(_fallback_deep(a) for a in classified["focus"])
     return _wrap_email(period_cn, email, classified, deep)
