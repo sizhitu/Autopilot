@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 import ai_client
 import mailer
@@ -40,6 +40,21 @@ C_RED = "#e74c3c"
 C_ORANGE = "#e67e22"
 C_GOLD = "#d4af37"
 C_BLUE = "#5b9fd4"
+
+
+def _report_period_label(period: str = "weekly") -> Tuple[str, str]:
+    """返回 (正式期号文案, 短标签)。周报用 ISO 年+周序。"""
+    now = datetime.now()
+    iso = now.isocalendar()  # year, week, weekday
+    y, w = int(iso[0]), int(iso[1])
+    if period == "monthly":
+        formal = f"{now.year}年{now.month}月月报"
+        short = f"{now.year}-{now.month:02d}"
+    else:
+        formal = f"{y}年第{w}周周报"
+        short = f"{y}-W{w:02d}"
+    return formal, short
+
 
 
 def get_target_symbols(uid: str) -> list:
@@ -423,18 +438,31 @@ def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) ->
         f"另有 {w} 只观望未列入本邮件（请到网页看板查看）。"
         if w else "本期无额外观望省略项。"
     )
+    period_key = "monthly" if "月" in (period_cn or "") else "weekly"
+    formal, short = _report_period_label(period_key)
+    gen_ts = datetime.now().strftime("%Y年%m月%d日 %H:%M")
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Autopilot {period_cn}</title></head>
+<title>Autopilot {formal}</title></head>
 <body style="margin:0;padding:0;background:{C_BG};color:{C_TEXT};">
-<div style="max-width:640px;margin:0 auto;padding:18px 12px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
-  <h1 style="color:{C_GOLD};font-size:18px;margin:0 0 6px;">Autopilot 方向速读 · {period_cn}</h1>
-  <p style="color:{C_DIM};font-size:12px;margin:0 0 14px;line-height:1.5;">
-    {datetime.now():%Y-%m-%d %H:%M}
-    · <span style="color:{C_GREEN};font-weight:700;">上涨侧 {classified.get('up_count', 0)}</span>
-    · <span style="color:{C_RED};font-weight:700;">下跌侧 {classified.get('down_count', 0)}</span>
-    <br>{watch_note}
+<div style="max-width:640px;margin:0 auto;padding:18px 12px;font-family:Georgia,'Times New Roman',Songti SC,SimSun,serif;">
+  <p style="margin:0 0 4px;text-align:center;letter-spacing:0.28em;font-size:11px;color:{C_DIM};text-transform:uppercase;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
+    AUTOPILOT RESEARCH BRIEF
   </p>
+  <p style="margin:0 0 14px;text-align:center;font-size:20px;font-weight:600;color:{C_GOLD};letter-spacing:0.06em;line-height:1.4;">
+    {formal}
+  </p>
+  <p style="margin:0 0 16px;text-align:center;font-size:12px;color:{C_DIM};font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;line-height:1.6;">
+    <span style="color:{C_TEXT};">{short}</span>
+    · 生成于 {gen_ts}
+    <br>
+    <span style="color:{C_GREEN};font-weight:700;">上涨侧 {classified.get('up_count', 0)}</span>
+    · <span style="color:{C_RED};font-weight:700;">下跌侧 {classified.get('down_count', 0)}</span>
+    · {watch_note}
+  </p>
+  <h1 style="color:{C_TEXT};font-size:16px;margin:0 0 12px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-weight:600;border-top:1px solid {C_BORDER};padding-top:14px;">
+    方向速读
+  </h1>
 
   <h2 style="color:{C_TEXT};font-size:15px;margin:0 0 8px;">一、只需盯的方向</h2>
   <p style="color:{C_DIM};font-size:11px;margin:0 0 8px;">只列即将上涨 / 即将下跌；纵向阅读，无需左右滑。</p>
@@ -524,7 +552,8 @@ def generate_for_user(uid: str, email: str, period: str = "weekly") -> bool:
     if not html:
         return False
     period_cn = "周报" if period == "weekly" else "月报"
-    subject = f"Autopilot 股票观察{period_cn} · {datetime.now():%Y-%m-%d}"
+    formal, short = _report_period_label(period)
+    subject = f"Autopilot {formal} · 方向速读"
     try:
         return mailer.send_email(email, subject, html, html=html)
     except Exception as e:
