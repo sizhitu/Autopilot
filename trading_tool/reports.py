@@ -268,9 +268,83 @@ DISCLAIMER = (
 )
 
 
+def _structural_thesis(industry: str, biz: str, name: str) -> tuple:
+    """
+    参考优质研报骨架：旧地图→新需求→供给约束→质地锚点。
+    返回 (叙事锚点, 供需/瓶颈, 质地要点) —— 不编造具体财报数字。
+    """
+    t = f"{industry} {biz} {name}"
+    # AI / 算力 / 半导体
+    if any(k in t for k in ("半导体", "AI芯片", "GPU", "存储", "光通信", "Chiplet", "晶圆", "光刻")):
+        return (
+            "算力扩张最终受<strong>物理瓶颈</strong>约束：芯片、封装、互联与散热比「软件叙事」更硬。",
+            "需求侧看数据中心与端侧算力；供给侧看先进制程、设备交期与封装密度。"
+            "价格弹性往往来自<strong>产能与良率的滞后</strong>，而非单季主题热度。",
+            "质地关键看：是否卡在不可替代环节（设计/设备/材料）、客户认证壁垒、以及周期下行时的现金与库存纪律。",
+        )
+    # 铜铝有色 / 矿业
+    if any(k in t for k in ("铜", "铝", "镍", "锡", "有色", "矿业", "黄金", "金属")):
+        return (
+            "工业金属正从「地产周期影子」转向<strong>电力与电气化的物理底座</strong>；瓶颈在矿山与冶炼，不在主题口号。",
+            "需求看电网、数据中心、新能源车与轻量化；供给看矿山品位下降、审批与资本开支断层。"
+            "真正的错配是<strong>多年 CapEx 不足带来的产量滞后</strong>。",
+            "质地关键看：现金成本位置、资源品位与年限、是否「纯暴露」于该金属（避免被其他大宗拖累）。",
+        )
+    # 航天 / 卫星
+    if any(k in t for k in ("航天", "卫星", "发射", "星链", "月球")):
+        return (
+            "商业航天比拼的是<strong>发射成本曲线与合同兑现</strong>，不是单次发射新闻。",
+            "需求来自通信、遥感与政府/商业载荷；供给约束在运力、频谱与资质。失败与延期会瞬间改写融资条件。",
+            "质地关键看：技术里程碑是否可验证、客户合同质量、以及再融资依赖程度。",
+        )
+    # 医疗
+    if any(k in t for k in ("医疗", "健康", "制药", "生物")):
+        return (
+            "医疗消费的核心是<strong>续费、合规与获客成本</strong>，增长叙事必须能落到单位经济模型。",
+            "需求看渗透率与适应症扩展；约束看监管、支付方与竞争仿制。政策与安全事件是非线性风险。",
+            "质地关键看：复购/订阅粘性、合规护城河、以及营销费用是否透支增长。",
+        )
+    # 互联网 / 广告
+    if any(k in t for k in ("广告", "互联网", "搜索", "社交", "电商")):
+        return (
+            "平台价值取决于<strong>流量入口与变现闭环</strong>；广告预算周期会放大盈利波动。",
+            "需求随企业营销开支；约束来自监管、隐私与平台政策。算法优势可被政策一刀切改写。",
+            "质地关键看：用户时长与付费深度、广告加载率弹性、以及多元化收入是否降低单一周期暴露。",
+        )
+    # ETF / 指数
+    if any(k in t for k in ("ETF", "指数", "基金")):
+        return (
+            "工具型暴露：收益由<strong>成分与规则</strong>决定，讨论重点是跟踪误差与行业贝塔，不是单体护城河。",
+            "需求是配置需求；「供给」是份额与流动性。主题 ETF 的弹性来自成分景气，也同步承担集中度风险。",
+            "质地关键看：费用率、持仓透明度、以及是否与你的宏观判断一致（而非代码本身的故事）。",
+        )
+    # 电力 / 电气设备
+    if any(k in t for k in ("电力", "电气", "电网", "能源", "风电")):
+        return (
+            "电力设备与电网是算力与电气化的<strong>上游约束</strong>；交货周期与产能比短期订单更决定定价权。",
+            "需求来自数据中心、新能源并网与电网改造；供给看产能扩张速度与关键部件瓶颈。",
+            "质地关键看：订单能见度、产能利用率、以及是否绑定长周期客户资本开支。",
+        )
+    # default
+    biz_s = (biz or industry or "该行业").strip()
+    return (
+        f"先问<strong>旧地图是否失效</strong>：市场仍用什么旧框架定价「{industry or name}」，真实需求是否已切到新约束。",
+        f"围绕「{biz_s[:80]}」识别：增量需求从哪来、供给最慢的一环是什么；价格波动要区分周期噪声与瓶颈溢价。",
+        "质地看三件事：是否可理解、竞争中是否可能有切换成本或成本优势、下行时资产负债表能否撑过错杀。",
+    )
+
+
 def _build_prompts(period: str, email: str, classified: dict) -> tuple:
     period_cn = "周报" if period == "weekly" else "月报"
     focus = [_focus_facts(a) for a in classified["focus"]]
+    # 预置结构提纲，帮助模型对齐研报思路且保持短
+    for f in focus:
+        th, sup, qual = _structural_thesis(
+            f.get("industry") or "", f.get("business_summary") or "", f.get("name") or ""
+        )
+        f["thesis_hint"] = th
+        f["supply_demand_hint"] = sup
+        f["quality_hint"] = qual
     payload = {
         "period": period_cn,
         "focus": focus,
@@ -280,39 +354,30 @@ def _build_prompts(period: str, email: str, classified: dict) -> tuple:
     data_json = json.dumps(payload, ensure_ascii=False, indent=2)
 
     system = (
-        "你是简洁的投研编辑。输出中文 HTML 片段，帮助用户少思考、抓住重点。\n"
-        "规则：\n"
-        "1) 只根据 JSON 写，禁止编造财务数字；禁止买卖建议。\n"
-        "2) 每只标的最多 4 条短要点（ul/li），总长控制；不要长段落、不要五六节小标题。\n"
-        "3) 每条要点必须具体：业务一句话 + 价格位置含义 + 信号含义 + 一条证伪条件。\n"
-        "4) 用 <strong> 标出代码、关键数字与结论词；不要空泛套话。\n"
-        "5) 不要写观望列表，不要重复看板卡片已有字段堆砌。\n"
+        "你是投研编辑。写法对齐高质量主题研究的骨架，但篇幅必须短（每只 5 条以内）。\n"
+        "研究骨架（学习，不要写成长文）：\n"
+        "① 范式/叙事：旧框架哪里失效，新约束是什么（如「算力尽头是电力与金属」这类结构判断）；\n"
+        "② 供需与瓶颈：需求机制 + 供给最慢的一环（品位、CapEx 断层、交期、监管）；\n"
+        "③ 公司/工具质地：成本位置、暴露纯度、价值链卡位（对标「谁掌握瓶颈谁有溢价」）；\n"
+        "④ 与当前价格行为交叉：JSON 中的估值位置、九转、趋势，只解释含义，不给操作建议；\n"
+        "⑤ 证伪条件：1 条即可。\n\n"
+        "硬规则：\n"
+        "- 可使用 JSON 里的 thesis_hint / supply_demand_hint / quality_hint 并改写得更贴该标的，禁止空话；\n"
+        "- 禁止编造未给出的财报数字、矿区产量、具体 PE；信息不足就基于业务描述做逻辑推演并标明推断；\n"
+        "- 禁止买入/卖出/加仓等建议；\n"
+        "- 输出 HTML：每只一个 h3 + ul，最多 5 个 li；用 strong 标关键词；不要长段落。\n"
     )
     user = (
-        f"为 {email} 写【{period_cn}】重点速读（仅 focus）。\n"
-        f"格式：每只 <h3 style='color:#d4af37'>代码 名称</h3> 后跟 <ul> 最多 4 条 <li>。\n"
-        f"上涨 {classified['up_count']} / 下跌 {classified['down_count']}。\n"
+        f"为用户写【{period_cn}】重点研究速读（仅 focus，{len(focus)} 只）。\n"
+        f"上涨侧 {classified['up_count']} / 下跌侧 {classified['down_count']}。\n"
+        f"每只固定 5 条 li 标签建议：叙事 / 供需瓶颈 / 质地 / 信号交叉 / 证伪。\n"
         f"JSON：\n{data_json}"
     )
     return system, user
 
 
-def _role_hint(role: str) -> str:
-    r = role or ""
-    mapping = {
-        "压舱石": "组合中偏稳健、波动期望较低的底仓型工具/标的，更看重可理解性与回撤特征，而非短期弹性。",
-        "高赔率": "组合中偏进攻、上涨弹性更大的仓位，成败更取决于行业景气与竞争格局，容错空间通常更小。",
-        "周期弹性": "与经济或行业周期联动较强，判断重点在供需与价格周期位置，而非线性成长故事。",
-        "卫星仓": "卫星/主题型暴露，权重宜有限；叙事变化快，更依赖纪律与证伪条件。",
-    }
-    for k, v in mapping.items():
-        if k in r:
-            return v
-    return "未标注明确组合定位时，先按「能否讲清如何赚钱」再谈仓位角色。"
-
-
 def _fallback_deep(a: dict) -> str:
-    """短要点：业务一句 + 位置 + 信号 + 证伪。彩色强调。"""
+    """短版研报骨架：叙事→供需→质地→信号→证伪。"""
     code = a.get("code") or ""
     name = a.get("name") or ""
     industry = (a.get("industry") or "").strip() or "相关行业"
@@ -324,26 +389,29 @@ def _fallback_deep(a: dict) -> str:
     action = a.get("action") or "—"
     side = "上涨侧" if a.get("bucket") == "up" else "下跌侧"
     side_c = C_GREEN if a.get("bucket") == "up" else C_RED
-
-    biz_one = biz if biz else f"主营信息有限，按「{industry}」框架理解。"
-    if len(biz_one) > 90:
-        biz_one = biz_one[:90] + "…"
+    th, sup, qual = _structural_thesis(industry, biz, name)
+    biz_one = biz if biz else ""
+    if biz_one and len(biz_one) > 70:
+        biz_one = biz_one[:70] + "…"
 
     return (
         f"<h3 style='color:{C_GOLD};font-size:15px;margin:16px 0 6px;'>{code} {name} "
         f"<span style='color:{side_c};font-size:12px;font-weight:700;'>· {side}</span></h3>"
-        f"<ul style='color:{C_TEXT};font-size:13px;line-height:1.65;margin:0;padding-left:18px;'>"
-        f"<li><strong style='color:{C_BLUE};'>业务</strong>：{biz_one}</li>"
-        f"<li><strong style='color:{C_ORANGE};'>位置</strong>：相对位置 "
+        f"<ul style='color:{C_TEXT};font-size:13px;line-height:1.7;margin:0;padding-left:18px;'>"
+        f"<li><strong style='color:{C_BLUE};'>叙事</strong>：{th}"
+        f"{(' 业务画像：' + biz_one) if biz_one else ''}</li>"
+        f"<li><strong style='color:{C_ORANGE};'>供需瓶颈</strong>：{sup}</li>"
+        f"<li><strong style='color:{C_GOLD};'>质地</strong>：{qual}</li>"
+        f"<li><strong style='color:{side_c};'>信号交叉</strong>：相对位置 "
         f"<span style='color:{C_GOLD};font-weight:700;'>{val}</span>"
-        f"{('（' + val_d + '）') if val_d else ''}；近5日 "
-        f"<span style='color:{_color_for_chg(a.get('change_5d'))};font-weight:700;'>{_pct(a.get('change_5d'))}</span>"
-        f"</li>"
-        f"<li><strong style='color:{side_c};'>信号</strong>：九转 "
-        f"<span style='color:{_color_for_timing(a)};font-weight:700;'>{timing}</span>，趋势 "
-        f"<span style='color:{_color_for_trend(a)};font-weight:700;'>{trend}</span>，动作 "
-        f"<span style='color:{_color_for_action(a)};font-weight:700;'>{action}</span></li>"
-        f"<li><strong style='color:{C_DIM};'>证伪</strong>：若趋势与九转持续背离，或行业叙事被公开数据否定，降低对该方向标签的权重。</li>"
+        f"{('（' + val_d + '）') if val_d else ''}，近5日 "
+        f"<span style='color:{_color_for_chg(a.get('change_5d'))};font-weight:700;'>{_pct(a.get('change_5d'))}</span>；"
+        f"九转 <span style='color:{_color_for_timing(a)};font-weight:700;'>{timing}</span>，"
+        f"趋势 <span style='color:{_color_for_trend(a)};font-weight:700;'>{trend}</span>，"
+        f"动作 <span style='color:{_color_for_action(a)};font-weight:700;'>{action}</span>。"
+        f"同向则价格行为与结构叙事较一致；背离则优先降低单标签权重。</li>"
+        f"<li><strong style='color:{C_DIM};'>证伪</strong>：若行业资本开支/政策或需求主线被公开数据证伪，"
+        f"或价格跌破关键均线区且放量反向，原「瓶颈溢价」叙事需降权。</li>"
         f"</ul>"
     )
 
@@ -373,8 +441,8 @@ def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) ->
   {table}
 
   <div style="margin-top:22px;">
-    <h2 style="color:{C_TEXT};font-size:15px;margin:0 0 8px;">二、重点速读</h2>
-    <p style="color:{C_DIM};font-size:11px;margin:0 0 6px;">每只最多几条要点，彩色标注关键信息。</p>
+    <h2 style="color:{C_TEXT};font-size:15px;margin:0 0 8px;">二、重点研究速读</h2>
+    <p style="color:{C_DIM};font-size:11px;margin:0 0 6px;">叙事 → 供需瓶颈 → 质地 → 信号交叉 → 证伪（短版深研，非操作建议）。</p>
     {deep_html}
   </div>
 
