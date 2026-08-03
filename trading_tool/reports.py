@@ -79,6 +79,16 @@ def _priority(st: dict) -> tuple:
     return (complete, chg)
 
 
+_fetcher = None
+
+def _get_fetcher():
+    global _fetcher
+    if _fetcher is None:
+        from data_fetcher import DataFetcher
+        _fetcher = DataFetcher()
+    return _fetcher
+
+
 def analyze_symbol(symbol: str) -> dict:
     name = watchlist.WATCHLIST.get(symbol, symbol)
     try:
@@ -87,6 +97,13 @@ def analyze_symbol(symbol: str) -> dict:
         if d.get("error"):
             return {"symbol": symbol, "name": name, "error": d["error"]}
         d["bucket"] = _bucket(d)
+        try:
+            f = _get_fetcher()
+            d["industry"] = f.fetch_industry(symbol) or ""
+            d["business_summary"] = f.fetch_profile(symbol) or ""
+        except Exception:
+            d["industry"] = ""
+            d["business_summary"] = ""
         return d
     except Exception as e:
         return {"symbol": symbol, "name": name, "error": str(e)[:80]}
@@ -239,6 +256,8 @@ def _focus_facts(a: dict) -> dict:
         "valuation_detail": a.get("valuation_detail"),
         "role": a.get("role"),
         "bucket": a.get("bucket"),
+        "industry": a.get("industry") or "",
+        "business_summary": a.get("business_summary") or "",
     }
 
 
@@ -264,66 +283,157 @@ def _build_prompts(period: str, email: str, classified: dict) -> tuple:
     data_json = json.dumps(payload, ensure_ascii=False, indent=2)
 
     system = (
-        "你是一名客观的投研编辑，同时熟悉查理·芒格（Charlie Munger）的多学科检查清单思路。"
-        "为中文读者写股票观察邮件正文。\n"
+        "你是一名严谨的股权研究编辑，熟悉查理·芒格的多学科检查清单与能力圈思想。\n"
+        "为中文读者写「重点标的深度分析」HTML。\n\n"
         "硬性规则：\n"
-        "1) 只使用用户提供的 JSON 事实；严禁编造未给出的财务数字、新闻、管理层姓名或具体业务数据；"
-        "信息不足时明确写「公开数据不足，仅作框架提示」。\n"
-        "2) 禁止任何买卖建议与仓位建议；禁止：建议买入/卖出/加仓/减仓/建仓/清仓/推荐持有。\n"
-        "3) 不要输出「其余标的一句话」或观望列表；看板全表已在邮件其他部分展示。\n"
-        "4) 输出纯 HTML 片段（h2/h3/h4/p/ul/li/strong/table），不要 html/body 外壳，不要 Markdown 代码块。\n"
-        "5) 文末必须附免责声明。\n"
-        f"免责声明固定文案：{DISCLAIMER}\n\n"
-        "深度分析结构（对 focus 中每一只）：\n"
-        "A. 量化快照：用 JSON 中的价格、涨跌、九转、趋势、动作、估值/高低，2～4 句说清「现在系统在看见什么」。\n"
-        "B. 芒格式质地推演（研究框架，非结论）：用检查清单语气讨论——"
-        "①业务是否可能简单可理解；②是否可能有持续竞争优势的迹象（仅基于代码/名称/角色定位合理推断，并标明是推断）；"
-        "③管理层与资本配置（若无数据则写未知）；④价格是否相对于「价值」有安全边际的讨论空间（结合 valuation 字段，勿发明 PE）；"
-        "⑤主要风险与能力圈边界。每只 4～8 句，短句、有力、客观。\n"
+        "1) 必须紧扣 JSON 中每只标的的 industry、business_summary、role、valuation、"
+        "timing、trend、price、涨跌幅等字段展开；禁止输出空泛套话"
+        "（如「仅凭代码无法判断」「请自行查阅一手资料」作为主体内容）。\n"
+        "2) 禁止编造未给出的财务数字（营收、利润、PE、市值等）。信息不足时写清「本邮件未接入该数据」，"
+        "并基于已有业务描述做逻辑推演，而不是放弃分析。\n"
+        "3) 禁止任何买卖/仓位建议措辞。\n"
+        "4) 不要输出看板全表或观望列表。输出纯 HTML 片段（h3/h4/p/ul/li/strong）。\n"
+        "5) 每只标的写满实质内容，建议 8～14 句或等价列表项。\n\n"
+        "每只标的必须包含以下小节（标题可用 h4）：\n"
+        "【业务与能力圈】用 business_summary 与 industry 说明公司/基金实际做什么、收入大致来自哪里、"
+        "普通人要理解它需要哪些行业知识；点明能力圈边界（例如强周期制造 vs 订阅医疗 vs 指数ETF）。\n"
+        "【商业模式与可能的护城河】基于业务描述推断：规模、网络、转换成本、品牌、成本、监管牌照等"
+        "哪一类更可能相关；同时写 1～2 条最可能的反例（护城河可能不成立的原因）。ETF/指数则改写为"
+        "「持仓结构特征与工具属性」，不要硬套公司护城河。\n"
+        "【价格位置与安全边际讨论】结合 valuation、valuation_detail、high_low、近5日涨跌，"
+        "讨论「相对均线/区间位置」意味着什么；强调这是规则化近似，不是内在价值，但要给出可操作的观察点"
+        "（例如：跌破某类位置后哪些假设要重检）。\n"
+        "【信号与基本面的交叉验证】把九转时机、趋势过滤、动作标签与业务质地对照："
+        "同向时说明「价格行为与什么叙事一致」；冲突时说明「更可能是噪声还是风险警示」。\n"
+        "【关键不确定与证伪条件】列出 2～3 条：若出现什么公开事实/价格行为，应降低对该叙事的权重。\n"
     )
 
     user = (
-        f"请为收件人 {email} 生成【{period_cn}】深度分析章节 HTML（不要重复输出整张看板表）。\n"
-        f"结构：\n"
-        f"<h2>重点标的深度分析</h2>\n"
-        f"<p>本期方向偏多 {classified['up_count']} / 偏空 {classified['down_count']} / 观望 {classified['watch_count']}；"
-        f"以下深写 {len(focus)} 只。</p>\n"
-        f"对 focus 每一只：\n"
-        f"<h3>代码 名称</h3>\n"
-        f"<h4>量化快照</h4><p>...</p>\n"
-        f"<h4>质地与思维框架（芒格式检查清单）</h4><p>或 ul...</p>\n"
-        f"最后：<h3>免责声明</h3><p>{DISCLAIMER}</p>\n\n"
+        f"请为 {email} 生成【{period_cn}】重点深度分析 HTML。\n"
+        f"概览一句即可：偏多 {classified['up_count']} / 偏空 {classified['down_count']} / 观望 {classified['watch_count']}，"
+        f"深写 {len(focus)} 只。\n"
+        f"对 focus 每一只用 <h3>代码 名称</h3>，再按上述五小节展开。\n"
+        f"文末不要重复长免责（外层模板已有）。\n\n"
         f"数据 JSON：\n{data_json}"
     )
     return system, user
 
 
+def _role_hint(role: str) -> str:
+    r = role or ""
+    mapping = {
+        "压舱石": "组合中偏稳健、波动期望较低的底仓型工具/标的，更看重可理解性与回撤特征，而非短期弹性。",
+        "高赔率": "组合中偏进攻、上涨弹性更大的仓位，成败更取决于行业景气与竞争格局，容错空间通常更小。",
+        "周期弹性": "与经济或行业周期联动较强，判断重点在供需与价格周期位置，而非线性成长故事。",
+        "卫星仓": "卫星/主题型暴露，权重宜有限；叙事变化快，更依赖纪律与证伪条件。",
+    }
+    for k, v in mapping.items():
+        if k in r:
+            return v
+    return "未标注明确组合定位时，先按「能否讲清如何赚钱」再谈仓位角色。"
+
+
 def _fallback_deep(a: dict) -> str:
+    """无 AI 时：用行业/主营/估值/信号写可读的实质分析（避免空泛套话）。"""
+    code = a.get("code") or ""
+    name = a.get("name") or ""
+    industry = (a.get("industry") or "").strip() or "未标注行业"
+    biz = (a.get("business_summary") or "").strip()
+    role = a.get("role") or "—"
+    val = a.get("valuation") or "—"
+    val_d = a.get("valuation_detail") or ""
+    timing = a.get("timing") or "—"
+    trend = a.get("trend_filter") or a.get("trend") or "—"
+    action = a.get("action") or "—"
+    reason = a.get("action_reason") or ""
+    hl = a.get("high_low") or "—"
     side = "上涨侧观察" if a.get("bucket") == "up" else (
         "下跌侧观察" if a.get("bucket") == "down" else "中性观察"
     )
-    role = a.get("role") or "—"
+
+    if not biz:
+        biz = "本邮件未取到主营简介；以下仅结合行业标签与价格行为做框架讨论。"
+
+    # 业务段
+    biz_para = (
+        f"<strong>{code}</strong>（{name}）所属「{industry}」。业务画像：{biz}"
+        f"理解它需要先分清：收入是来自产品销售、订阅、制造周期、还是指数/一篮子持仓的工具属性。"
+        f"若你无法用自己的话复述「客户是谁、为何付费、主要成本与竞争对象」，则该标的可能落在能力圈之外，"
+        f"此时价格信号的参考价值应系统性降权。"
+    )
+
+    # 护城河段 — 按行业关键词给出更具体的讨论
+    ind = industry
+    if "ETF" in ind or "指数" in ind or "基金" in name or "ETF" in name:
+        moat = (
+            f"该标的更接近<strong>工具/一篮子暴露</strong>，讨论重点不是单体公司护城河，而是："
+            f"跟踪误差、持仓集中度、行业景气与费用拖累。优势在于透明与分散；弱点在于你无法对单一公司做深度资本配置判断，"
+            f"收益结构由成分与规则决定。"
+        )
+    elif "半导体" in ind or "芯片" in ind:
+        moat = (
+            f"半导体链条常见优势来自<strong>工艺节点、客户认证、规模与生态</strong>（设计软件/IP/制造）。"
+            f"同时行业资本开支与库存周期极强：景气时利润弹性大，去库存时估值与盈利双杀。"
+            f"需警惕把短期算力/存储涨价叙事直接当成不可逆护城河。"
+        )
+    elif "医疗" in ind or "健康" in ind:
+        moat = (
+            f"消费医疗/数字医疗常见优势是<strong>品牌、处方合规路径与复购</strong>；"
+            f"反面是监管、支付方政策与获客成本变化。订阅模式看起来稳定，实则对续费率与合规事件极度敏感。"
+        )
+    elif "航天" in ind or "卫星" in ind:
+        moat = (
+            f"商业航天/卫星通信的关键在于<strong>发射成本曲线、频谱与客户合同</strong>；"
+            f"技术里程碑与融资节奏往往比单季利润更能解释波动。失败模式包括发射事故、进度延期与再融资条件恶化。"
+        )
+    elif "广告" in ind or "互联网" in ind:
+        moat = (
+            f"广告与互联网平台更看重<strong>流量入口、数据反馈闭环与销售效率</strong>；"
+            f"护城河可能体现在规模与算法，但广告预算周期与平台政策会快速改写盈利假设。"
+        )
+    else:
+        moat = (
+            f"结合「{industry}」属性，优先识别：是否有切换成本、规模经济、独特资产或监管壁垒；"
+            f"并主动寻找反例（技术路线被替代、客户集中、价格战）。在缺少完整财报时，不要把叙事当成已验证的护城河。"
+        )
+
+    # 价格与安全边际
+    price_para = (
+        f"规则化相对位置为「<strong>{val}</strong>」"
+        f"{('（' + val_d + '）') if val_d else ''}，新高/新低标记：{hl}；"
+        f"近1日 {_pct(a.get('change_1d'))}，近5日 {_pct(a.get('change_5d'))}。"
+        f"这反映的是相对均线或历史区间的位置，不是内在价值。可用的研究问题是："
+        f"若位置显示偏高估，当前趋势能否用「盈利预期上修」解释，还是仅有价格动量？"
+        f"若显示偏低估，是周期底部的时间换空间，还是基本面趋势仍在恶化？"
+    )
+
+    # 信号交叉
+    cross = (
+        f"系统标签：九转「{timing}」，趋势「{trend}」，动作「{action}」"
+        f"{('；原因：' + reason) if reason else ''}（{side}）。"
+        f"若趋势与九转同向，价格行为与短线叙事较一致，仍要用业务周期去解释「为什么现在该有趋势」。"
+        f"若二者冲突，优先假设信号噪声上升，降低对单一标签的权重，直到价格与基本面线索重新对齐。"
+    )
+
+    # 证伪
+    falsify = (
+        f"<li>业务层面：若行业需求、监管或技术路线出现公开的不利变化，应重检「{industry}」叙事。</li>"
+        f"<li>价格层面：若相对位置从「{val}」快速漂移到另一端且伴随放量反向，说明原有均值回归/趋势假设可能失效。</li>"
+        f"<li>组合层面：作为「{role}」——{_role_hint(role)}若该角色与真实波动特性不符，应调整预期而非加戏。</li>"
+    )
+
     return (
-        f"<h3 style='color:{C_GOLD};margin:18px 0 8px;'>{a.get('code')} {a.get('name') or ''}</h3>"
-        f"<h4 style='color:{C_TEXT};margin:8px 0 4px;font-size:14px;'>量化快照 · {side}</h4>"
-        f"<p style='color:{C_TEXT};line-height:1.65;margin:0 0 8px;font-size:13px;'>"
-        f"现价 <strong>{a.get('price')}</strong>，日 {_pct(a.get('change_1d'))}，近5日 {_pct(a.get('change_5d'))}。"
-        f"九转时机：<span style='color:{_color_for_timing(a)};'>{a.get('timing') or '—'}</span>；"
-        f"趋势：<span style='color:{_color_for_trend(a)};'>{a.get('trend_filter') or a.get('trend') or '—'}</span>；"
-        f"动作标签：<span style='color:{_color_for_action(a)};'>{a.get('action') or '—'}</span>"
-        f"{('（' + a['action_reason'] + '）') if a.get('action_reason') else ''}。"
-        f"新高/新低：{a.get('high_low') or '—'}；相对位置：{a.get('valuation') or '—'} {a.get('valuation_detail') or ''}。"
-        f"组合定位标签：{role}。"
-        f"</p>"
-        f"<h4 style='color:{C_TEXT};margin:8px 0 4px;font-size:14px;'>质地与思维框架（芒格式检查清单）</h4>"
-        f"<ul style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0;padding-left:18px;'>"
-        f"<li><strong>可理解性</strong>：仅凭代码与名称无法替代完整业务说明；请结合你熟悉的行业与一手资料，确认是否落在能力圈内。</li>"
-        f"<li><strong>优势与护城河</strong>：公开量化字段未提供护城河证据；避免把短期九转或趋势信号误当成商业模式优势。</li>"
-        f"<li><strong>价格与安全边际</strong>：系统相对位置为「{a.get('valuation') or '—'}」"
-        f"{('（' + str(a.get('valuation_detail')) + '）') if a.get('valuation_detail') else ''}；"
-        f"这是规则化近似，不是内在价值评估。</li>"
-        f"<li><strong>风险与反证</strong>：关注趋势与九转是否冲突、波动是否异常；任何单周信号都可能被后续数据证伪。</li>"
-        f"</ul>"
+        f"<h3 style='color:{C_GOLD};margin:20px 0 8px;'>{code} {name}</h3>"
+        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>业务与能力圈</h4>"
+        f"<p style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0 0 8px;'>{biz_para}</p>"
+        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>商业模式与可能的护城河</h4>"
+        f"<p style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0 0 8px;'>{moat}</p>"
+        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>价格位置与安全边际讨论</h4>"
+        f"<p style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0 0 8px;'>{price_para}</p>"
+        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>信号与基本面的交叉验证</h4>"
+        f"<p style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0 0 8px;'>{cross}</p>"
+        f"<h4 style='color:{C_TEXT};font-size:14px;margin:10px 0 4px;'>关键不确定与证伪条件</h4>"
+        f"<ul style='color:{C_TEXT};line-height:1.7;font-size:13px;margin:0;padding-left:18px;'>{falsify}</ul>"
     )
 
 
