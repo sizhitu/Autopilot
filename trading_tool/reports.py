@@ -403,9 +403,26 @@ def build_report_html(uid: str, email: str, period: str = "weekly") -> "str | No
     return _wrap_email(period_cn, email, classified, deep_html)
 
 
+def _resolve_uid_by_email(email: str) -> str:
+    """根据邮箱从 profiles 反查 uid（测试单发时用）。"""
+    email = (email or "").strip().lower()
+    if not email:
+        return ""
+    try:
+        rows, _ = user_store.list_profiles(limit=10000, offset=0)
+        for r in rows:
+            if (r.get("email") or "").strip().lower() == email:
+                return r.get("id") or ""
+    except Exception as e:
+        logger.warning("按邮箱查 uid 失败: %s", e)
+    return ""
+
+
 def generate_for_user(uid: str, email: str, period: str = "weekly") -> bool:
     if not email:
         return False
+    if not uid:
+        uid = _resolve_uid_by_email(email)
     html = build_report_html(uid, email, period)
     if not html:
         return False
@@ -431,7 +448,8 @@ def _due_for_send(prefs_freq: str, last_sent: str, period: str) -> bool:
     return days >= need
 
 
-def run_reports(period: str = "weekly") -> dict:
+def run_reports(period: str = "weekly", force: bool = False) -> dict:
+    """force=True 时忽略 last_sent 节流（仅用于测试新模板）。"""
     from datetime import datetime
     subs = user_store.list_digest_subscribers()
     sent = skipped = 0
@@ -440,7 +458,7 @@ def run_reports(period: str = "weekly") -> dict:
         email = u.get("email")
         uid = u.get("id")
         freq = u.get("freq") or "weekly"
-        if period != "monthly":
+        if period != "monthly" and not force:
             if not _due_for_send(freq, u.get("last_sent"), period):
                 skipped += 1
                 continue
@@ -453,8 +471,11 @@ def run_reports(period: str = "weekly") -> dict:
         except Exception as e:
             logger.warning("报告生成失败 %s: %s", email, e)
             skipped += 1
-    logger.info("报告任务完成 period=%s sent=%d skipped=%d subscribers=%d", period, sent, skipped, total)
-    return {"sent": sent, "skipped": skipped, "total": total, "subscribers": total}
+    logger.info(
+        "报告任务完成 period=%s force=%s sent=%d skipped=%d subscribers=%d",
+        period, force, sent, skipped, total,
+    )
+    return {"sent": sent, "skipped": skipped, "total": total, "subscribers": total, "force": force}
 
 
 if __name__ == "__main__":
