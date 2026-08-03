@@ -454,7 +454,7 @@ def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) ->
   </p>
   <p style="margin:0 0 16px;text-align:center;font-size:12px;color:{C_DIM};font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;line-height:1.6;">
     <span style="color:{C_TEXT};">{short}</span>
-    · 生成于 {gen_ts}
+    · {gen_ts}
     <br>
     <span style="color:{C_GREEN};font-weight:700;">上涨侧 {classified.get('up_count', 0)}</span>
     · <span style="color:{C_RED};font-weight:700;">下跌侧 {classified.get('down_count', 0)}</span>
