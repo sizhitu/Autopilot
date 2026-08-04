@@ -460,7 +460,7 @@ class DataFetcher:
                   'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
                   'klt': '101', 'fqt': '1', 'secid': secid,
                   'end': '20500101', 'lmt': str(min(days + 60, 800))}
-        r = self.session.get(url, params=params, timeout=10,
+        r = self.session.get(url, params=params, timeout=8,
                              headers={'User-Agent': _rotate_ua(),
                                       'Referer': 'https://quote.eastmoney.com/'})
         if r.status_code != 200:
