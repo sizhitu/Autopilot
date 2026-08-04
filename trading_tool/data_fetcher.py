@@ -3,7 +3,7 @@
 =================================
 支持：
   - 美股：Yahoo Finance v8 API（免费、无需API Key）
-  - A股：新浪财经 K线接口（免费、无需API Key）
+  - A股：东方财富前复权 K线为主（fqt=1），新浪未复权为兜底（避免拆分/除权假涨跌）
   - 指数：Yahoo Finance（^GSPC=标普500, ^DJI=道琼斯, ^IXIC=纳斯达克）
          新浪（sh000001=上证指数, sz399001=深证成指, sz399006=创业板指）
 """
@@ -449,7 +449,9 @@ class DataFetcher:
 
     def _fetch_em_kline(self, sina_symbol: str, days: int = 300) -> pd.DataFrame:
         """
-        东方财富 K 线（前复权），A 股权威免费源，作为新浪之后的兜底。
+        东方财富日 K 线（前复权 fqt=1）。
+        最新价=真实价，历史价按复权因子缩放，拆分/除权不产生虚假跳空涨跌幅。
+        A 股主源；失败时由 fetch_cn_stock 回退新浪未复权。
         """
         code = sina_symbol[2:] if sina_symbol[:2] in ('sh', 'sz', 'bj') else sina_symbol
         secid = ('1.' if sina_symbol[:2] == 'sh' else '0.') + code
@@ -524,33 +526,39 @@ class DataFetcher:
 
     def fetch_cn_stock(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
-        通过新浪财经接口获取A股数据（主源）。
-        新浪失败则自动切换交易所前缀重试，仍失败则用东方财富 K 线（前复权）兜底，
-        形成「新浪 → 东方财富」双层权威源，显著降低单一源限流导致取不到行情的概率。
+        A 股日 K：**主源东方财富前复权（fqt=1）**，失败再回退新浪未复权。
+
+        原因：新浪 K 线为未复权价。标的发生拆分/除权时（如 ETF 1:2），
+        「昨收」仍为拆前全价，用今收/昨收会算出约 −50% 等虚假涨跌幅。
+        前复权保持最新价=真实市价，并把历史价按复权因子对齐，涨跌连续真实；
+        对指数一般无副作用（前复权≈原值）；K 线也不再出现拆分段缺口。
+        与美股路径（Yahoo 前复权收盘）口径一致。
         """
         sina_symbol = self._normalize_cn_symbol(symbol)
-        df = self._fetch_sina_kline(sina_symbol, days)
-        if len(df) == 0:
-            alt = self._swap_exchange(sina_symbol)
-            if alt != sina_symbol:
-                df2 = self._fetch_sina_kline(alt, days)
-                if len(df2) > 0:
-                    df = df2
-        if len(df) == 0:
-            # 东方财富 K 线兜底（前复权，权威性高）
+        out = pd.DataFrame()
+
+        # 1) 东方财富前复权（主）
+        try:
+            out = self._fetch_em_kline(sina_symbol, days)
+        except Exception:
+            out = pd.DataFrame()
+        if len(out) == 0:
             try:
-                df = self._fetch_em_kline(sina_symbol, days)
+                out = self._fetch_em_kline(self._swap_exchange(sina_symbol), days)
             except Exception:
-                pass
-        if len(df) == 0:
-            # 再试一次东方财富（换市场前缀）
-            try:
-                df = self._fetch_em_kline(self._swap_exchange(sina_symbol), days)
-            except Exception:
-                pass
-        if len(df) == 0:
-            raise ValueError("新浪/东方财富均未返回数据，请检查股票代码")
-        return df.tail(days).reset_index(drop=True)
+                out = pd.DataFrame()
+
+        # 2) 新浪未复权（兜底；拆分场景涨跌可能失真，仅在东财不可用时使用）
+        if len(out) == 0:
+            out = self._fetch_sina_kline(sina_symbol, days)
+            if len(out) == 0:
+                alt = self._swap_exchange(sina_symbol)
+                if alt != sina_symbol:
+                    out = self._fetch_sina_kline(alt, days)
+
+        if len(out) == 0:
+            raise ValueError("东方财富/新浪均未返回数据，请检查股票代码")
+        return out.tail(days).reset_index(drop=True)
 
     def fetch(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
