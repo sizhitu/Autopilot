@@ -497,8 +497,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     
     <!-- 成交量收敛三角形 日/周/月 -->
     <div class="card" id="volConvCard" style="margin-top:8px;">
-      <div class="card-title">成交量收敛 · 日 / 周 / 月</div>
-      <div id="volConvOverall" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;line-height:1.5;">加载标的后显示量能收敛监控</div>
+      <div class="card-title">成交量收敛 · 周 / 月</div>
+      <div id="volConvOverall" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;line-height:1.5;">加载标的后显示周/月量能收敛（日线已省略）</div>
       <div id="volConvPanels" style="display:grid;grid-template-columns:1fr;gap:10px;"></div>
     </div>
 
@@ -1405,16 +1405,31 @@ function updateVolumeConvergence(vc) {
     panels.innerHTML = '';
     return;
   }
-  overall.textContent = vc.overall || '';
-  const keys = ['daily', 'weekly', 'monthly'];
+  const guide = vc.guide || '关键逻辑：周线收敛结束后，看第一根（或前几根）带量K线的方向与是否回补；月线看大级别活跃还是沉寂。';
+  const tape = vc.weekly_tape || {};
+  const tapeLine = tape.label
+    ? `<div style="margin:6px 0 0;padding:8px 10px;border-radius:8px;border:1px solid rgba(212,175,55,.35);background:rgba(212,175,55,.08);">
+        <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:4px;">周线量价 · ${tape.label}</div>
+        <div style="font-size:11px;color:var(--text);line-height:1.55;">${tape.detail || ''}</div>
+      </div>`
+    : '';
+  overall.innerHTML =
+    `<div style="font-size:11px;color:var(--text-dim);line-height:1.55;">${vc.overall || ''}</div>` +
+    tapeLine +
+    `<div style="font-size:10px;color:var(--text-dim);margin-top:8px;line-height:1.5;border-top:1px dashed var(--border);padding-top:6px;">${guide}</div>`;
+
+  const keys = ['weekly', 'monthly'];
   panels.innerHTML = keys.map(k => {
     const d = vc[k] || {};
     const st = d.status || '—';
     const cls = d.converging ? 'ok' : (st.indexOf('扩张') >= 0 ? 'mid' : 'bad');
     const svg = renderVolTriangleSvg(d);
+    const headExtra = (k === 'weekly' && tape.label)
+      ? `<span style="font-size:10px;color:var(--gold);margin-left:6px;">${tape.label}</span>`
+      : '';
     return `<div class="vol-conv-panel">
       <div class="vc-head">
-        <span style="font-weight:600;color:var(--text);">${d.label || k}</span>
+        <span style="font-weight:600;color:var(--text);">${d.label || k}${headExtra}</span>
         <span class="vc-status ${cls}">${st}</span>
       </div>
       ${svg}
