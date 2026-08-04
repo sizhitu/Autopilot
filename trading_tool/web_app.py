@@ -692,7 +692,16 @@ async def get_watchlist(refresh: bool = False, user: Optional[dict] = Depends(_o
     """
     user_id = user["id"] if user else None
     try:
-        data = get_watchlist_status(user_id, force=refresh)
+        is_admin = bool(user and (user.get("is_admin") or False))
+        # 若 profile 里才有 is_admin，尽量补一次
+        if user and not is_admin:
+            try:
+                import user_store
+                p = user_store.get_or_create_profile(user["id"], user.get("email") or "")
+                is_admin = bool(p.get("is_admin"))
+            except Exception:
+                pass
+        data = get_watchlist_status(user_id, force=refresh, is_admin=is_admin)
         data["user_scoped"] = user_id is not None
         # 兜底：保证 stocks 始终是 list，避免前端/排序空指针
         if not isinstance(data.get("stocks"), list):
