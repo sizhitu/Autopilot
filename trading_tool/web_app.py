@@ -54,6 +54,7 @@ import cache
 import analysis_store
 import ratelimit
 import reports
+import volume_convergence
 
 app = FastAPI(title="藤本茂融合策略 Web 工具 API", version="3.0")
 fetcher = DataFetcher()
@@ -613,6 +614,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         "nine_turn": nine_turn,
         "high_low": extra["high_low"],
         "valuation": extra["valuation"],
+        "volume_convergence": volume_convergence.compute_volume_convergence(df),
         "meta": {
             "rows": len(df),
             "last_close": round(float(df['close'].iloc[-1]), 2),
@@ -864,6 +866,7 @@ async def analyze_csv(
             "nine_turn": nine_turn,
             "high_low": extra["high_low"],
             "valuation": extra["valuation"],
+            "volume_convergence": volume_convergence.compute_volume_convergence(df),
             "meta": {
                 "rows": len(df),
                 "last_close": round(float(df['close'].iloc[-1]), 2),
