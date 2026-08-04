@@ -291,7 +291,8 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         last_close = float(df['close'].iloc[-1])
         status.price = round(last_close, 2)
 
-        # 当日涨跌幅（昨收口径：今收/昨收 - 1，即最近一根K线收盘价相对前一根）
+        # 当日涨跌幅（昨收口径：今收/昨收 - 1，即最近一根K线收盘价相对前一根）。
+        # A 股 K 线主源为东财前复权：拆分/除权后昨收已按复权对齐，避免未复权「假腰斩」涨跌幅。
         if len(df) >= 2:
             prev_close = float(df['close'].iloc[-2])
             status.change_1d = round((last_close - prev_close) / prev_close * 100, 2)
