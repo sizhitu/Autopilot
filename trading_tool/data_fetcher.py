@@ -3,7 +3,7 @@
 =================================
 支持：
   - 美股：Yahoo Finance v8 API（免费、无需API Key）
-  - A股：东方财富前复权 K线为主（fqt=1），新浪未复权为兜底（避免拆分/除权假涨跌）
+  - A股：东财前复权 → 腾讯前复权 → 新浪未复权+拆分修正（避免 ETF 拆分假涨跌）
   - 指数：Yahoo Finance（^GSPC=标普500, ^DJI=道琼斯, ^IXIC=纳斯达克）
          新浪（sh000001=上证指数, sz399001=深证成指, sz399006=创业板指）
 """
@@ -524,40 +524,142 @@ class DataFetcher:
         df = df.dropna(subset=['close'])
         return df
 
+
+    def _fetch_tencent_qfq_kline(self, sina_symbol: str, days: int = 300) -> pd.DataFrame:
+        """
+        腾讯财经前复权日 K（qfq）。东财在海外/部分机房常被断开时的可靠补充源。
+        接口字段顺序: date, open, close, high, low, volume
+        """
+        code = sina_symbol.strip().lower()
+        if not code.startswith(('sh', 'sz', 'bj')):
+            code = self._normalize_cn_symbol(code)
+        need = min(max(days + 40, 50), 800)
+        param = f"{code},day,,,{need},qfq"
+        url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+        r = self.session.get(
+            url,
+            params={"param": param},
+            timeout=10,
+            headers={"User-Agent": _rotate_ua(), "Referer": "https://finance.qq.com/"},
+        )
+        if r.status_code != 200:
+            raise ValueError(f"腾讯K线 HTTP {r.status_code}")
+        text = r.text.strip()
+        if text and text[0] not in "{[" and "=" in text[:16]:
+            text = text.split("=", 1)[1]
+        try:
+            payload = json.loads(text)
+        except Exception as e:
+            raise ValueError(f"腾讯K线 JSON 解析失败: {e}")
+        data = (payload.get("data") or {}).get(code) or {}
+        rows = data.get("qfqday") or data.get("day") or []
+        if not rows:
+            raise ValueError("腾讯K线无数据")
+        recs = []
+        for row in rows:
+            if not row or len(row) < 6:
+                continue
+            try:
+                recs.append({
+                    "date": datetime.strptime(str(row[0])[:10], "%Y-%m-%d"),
+                    "open": float(row[1]),
+                    "close": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "volume": float(row[5]),
+                })
+            except Exception:
+                continue
+        if not recs:
+            raise ValueError("腾讯K线解析为空")
+        out = pd.DataFrame(recs).sort_values("date").reset_index(drop=True)
+        if len(out) > days:
+            out = out.tail(days).reset_index(drop=True)
+        return out
+
+    @staticmethod
+    def _adjust_cn_splits(df: pd.DataFrame, tol: float = 0.08) -> pd.DataFrame:
+        """
+        未复权序列简易前复权：从最新往前扫，相邻收盘比接近 1/2、1/3、2、3 时
+        缩放更早 OHLC；最新价保持真实市价。用于新浪兜底时消除 ETF 拆分假涨跌。
+        """
+        if df is None or len(df) < 2:
+            return df
+        out = df.copy()
+        for col in ("open", "high", "low", "close"):
+            if col not in out.columns:
+                return df
+        closes = out["close"].astype(float).values.copy()
+        opens = out["open"].astype(float).values.copy()
+        highs = out["high"].astype(float).values.copy()
+        lows = out["low"].astype(float).values.copy()
+        factors = [0.5, 1.0 / 3.0, 0.25, 2.0, 3.0, 4.0]
+        for i in range(len(closes) - 1, 0, -1):
+            prev, cur = float(closes[i - 1]), float(closes[i])
+            if prev <= 0 or cur <= 0:
+                continue
+            ratio = cur / prev
+            hit = None
+            for f in factors:
+                if abs(ratio - f) / f <= tol:
+                    hit = f
+                    break
+            if hit is None:
+                continue
+            closes[:i] *= hit
+            opens[:i] *= hit
+            highs[:i] *= hit
+            lows[:i] *= hit
+        out["close"] = closes
+        out["open"] = opens
+        out["high"] = highs
+        out["low"] = lows
+        return out
+
+
     def fetch_cn_stock(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
-        A 股日 K：**主源东方财富前复权（fqt=1）**，失败再回退新浪未复权。
+        A 股日 K 优先级：
+          1) 东方财富前复权（fqt=1）
+          2) 腾讯前复权（qfq）——东财在海外机房常失败时的主备源
+          3) 新浪未复权 + 本地拆分修正（检测 1:2 等跳空后缩放历史价）
 
-        原因：新浪 K 线为未复权价。标的发生拆分/除权时（如 ETF 1:2），
-        「昨收」仍为拆前全价，用今收/昨收会算出约 −50% 等虚假涨跌幅。
-        前复权保持最新价=真实市价，并把历史价按复权因子对齐，涨跌连续真实；
-        对指数一般无副作用（前复权≈原值）；K 线也不再出现拆分段缺口。
-        与美股路径（Yahoo 前复权收盘）口径一致。
+        解决：159880 等 ETF 拆分后，未复权昨收导致日涨跌约 -50% 的假值。
         """
         sina_symbol = self._normalize_cn_symbol(symbol)
         out = pd.DataFrame()
 
-        # 1) 东方财富前复权（主）
-        try:
-            out = self._fetch_em_kline(sina_symbol, days)
-        except Exception:
-            out = pd.DataFrame()
-        if len(out) == 0:
+        # 1) 东财前复权
+        for sym in (sina_symbol, self._swap_exchange(sina_symbol)):
+            if len(out) > 0:
+                break
             try:
-                out = self._fetch_em_kline(self._swap_exchange(sina_symbol), days)
+                out = self._fetch_em_kline(sym, days)
             except Exception:
                 out = pd.DataFrame()
 
-        # 2) 新浪未复权（兜底；拆分场景涨跌可能失真，仅在东财不可用时使用）
+        # 2) 腾讯前复权
+        if len(out) == 0:
+            for sym in (sina_symbol, self._swap_exchange(sina_symbol)):
+                if len(out) > 0:
+                    break
+                try:
+                    out = self._fetch_tencent_qfq_kline(sym, days)
+                except Exception:
+                    out = pd.DataFrame()
+
+        # 3) 新浪 + 拆分修正
         if len(out) == 0:
             out = self._fetch_sina_kline(sina_symbol, days)
             if len(out) == 0:
                 alt = self._swap_exchange(sina_symbol)
                 if alt != sina_symbol:
                     out = self._fetch_sina_kline(alt, days)
+            if len(out) > 0:
+                out = self._adjust_cn_splits(out)
 
         if len(out) == 0:
-            raise ValueError("东方财富/新浪均未返回数据，请检查股票代码")
+            raise ValueError("东方财富/腾讯/新浪均未返回数据，请检查股票代码")
         return out.tail(days).reset_index(drop=True)
 
     def fetch(self, symbol: str, days: int = 300) -> pd.DataFrame:
