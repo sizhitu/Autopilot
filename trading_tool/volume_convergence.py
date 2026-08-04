@@ -181,7 +181,10 @@ def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
         "volume": "sum",
     }
     cols = {k: v for k, v in agg.items() if k in x.columns}
-    out = x.resample(rule).agg(cols).dropna(subset=["close"] if "close" in cols else ["volume"])
+    try:
+        out = x.resample(rule).agg(cols).dropna(subset=["close"] if "close" in cols else ["volume"])
+    except Exception:
+        return pd.DataFrame()
     return out.reset_index()
 
 
@@ -205,9 +208,15 @@ def compute_volume_convergence(df: pd.DataFrame) -> Dict[str, Any]:
         lookback=36,
     )
 
-    mdf = _resample_ohlcv(df, "ME")
-    if len(mdf) < 6:
-        mdf = _resample_ohlcv(df, "M")
+    # pandas 2.2+ 用 ME；旧版用 M
+    mdf = pd.DataFrame()
+    for rule in ("ME", "M", "MS"):
+        try:
+            mdf = _resample_ohlcv(df, rule)
+            if len(mdf) >= 3:
+                break
+        except Exception:
+            mdf = pd.DataFrame()
     m = analyze_volume_series(
         [float(v) for v in mdf["volume"].tolist()] if len(mdf) else [],
         "M",
