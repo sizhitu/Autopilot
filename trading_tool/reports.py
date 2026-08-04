@@ -207,7 +207,8 @@ def _build_board_table(analyses: List[dict]) -> str:
         return (
             f"<p style='color:{C_DIM};font-size:13px;line-height:1.6;'>"
             f"本期自选中<strong>没有</strong>系统标为「即将上涨 / 即将下跌」的标的，"
-            f"观望类已省略，以减少干扰。完整列表请到 <a href="https://www.timebricks.bid" style="color:#5b9fd4;text-decoration:underline;">网页看板</a> 查看。</p>"
+            f"观望类已省略，以减少干扰。完整列表请到 "
+            f"<a href='{SITE_URL}' style='color:{C_BLUE};text-decoration:underline;'>网页看板</a> 查看。</p>"
         )
 
     ups = [a for a in analyses if a.get("bucket") == "up"]
