@@ -188,18 +188,114 @@ def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     return out.reset_index()
 
 
+def _classify_weekly_tape(wdf: pd.DataFrame) -> Dict[str, Any]:
+    """
+    周线量价状态：放量上涨 / 缩量止跌 / 放量下跌 等。
+    用最近 1 周相对前 4 周均量、以及近 1～2 周涨跌判断。
+    """
+    empty = {
+        "label": "数据不足",
+        "code": "insufficient",
+        "detail": "周线样本不足，暂无法判断量价状态。",
+    }
+    if wdf is None or len(wdf) < 5:
+        return empty
+    if "close" not in wdf.columns or "volume" not in wdf.columns:
+        return empty
+
+    closes = wdf["close"].astype(float).tolist()
+    vols = wdf["volume"].astype(float).tolist()
+    last_c, prev_c = closes[-1], closes[-2]
+    last_v = vols[-1]
+    base_vols = vols[-5:-1]
+    avg_v = sum(base_vols) / max(len(base_vols), 1)
+    if avg_v <= 0:
+        return empty
+
+    chg = (last_c - prev_c) / prev_c * 100.0 if prev_c else 0.0
+    # 近两周方向（减弱单周噪声）
+    if len(closes) >= 3:
+        chg2 = (last_c - closes[-3]) / closes[-3] * 100.0
+    else:
+        chg2 = chg
+    vol_ratio = last_v / avg_v
+
+    up = chg > 0.3 or (chg > 0 and chg2 > 0.5)
+    down = chg < -0.3 or (chg < 0 and chg2 < -0.5)
+    flat = not up and not down
+    heavy = vol_ratio >= 1.25
+    light = vol_ratio <= 0.85
+
+    if up and heavy:
+        label, code = "放量上涨", "vol_up_rise"
+        detail = (
+            f"近周收涨约 {chg:+.1f}%，成交量为近四周均量的 {vol_ratio:.2f} 倍，偏放量推动。"
+            f"若此前周线处于收敛，需看后续一两周是否放量延续、还是迅速缩量回补整理区。"
+        )
+    elif up and light:
+        label, code = "缩量上涨", "vol_down_rise"
+        detail = (
+            f"近周收涨约 {chg:+.1f}%，但量能为均量的 {vol_ratio:.2f} 倍，上涨缺乏量能确认，"
+            f"更像修复或弱反弹；收敛结束后若无放量，向上打开的可靠性偏低。"
+        )
+    elif down and heavy:
+        label, code = "放量下跌", "vol_up_fall"
+        detail = (
+            f"近周收跌约 {chg:+.1f}%，量能为均量的 {vol_ratio:.2f} 倍，偏放量抛压。"
+            f"周线收敛若被向下放量打开，优先观察是否回补失败、波动是否继续扩张。"
+        )
+    elif down and light:
+        label, code = "缩量止跌/缩量阴跌", "vol_down_fall"
+        detail = (
+            f"近周收跌约 {chg:+.1f}%，量能仅均量的 {vol_ratio:.2f} 倍。"
+            f"缩量下跌有时是抛压衰竭（止跌雏形），也可能是阴跌无人接；需等放量周确认方向。"
+        )
+    elif flat and light:
+        label, code = "缩量整理", "vol_down_flat"
+        detail = (
+            f"近周涨跌约 {chg:+.1f}%，量能缩至均量的 {vol_ratio:.2f} 倍，典型缩量整理。"
+            f"与周线收敛同向时，关键看收敛结束后第一根（或前几根）带量周K的方向与是否回补。"
+        )
+    elif flat and heavy:
+        label, code = "放量震荡", "vol_up_flat"
+        detail = (
+            f"近周价格近乎走平（{chg:+.1f}%），但量能达均量的 {vol_ratio:.2f} 倍，多空交换激烈。"
+            f"收敛末端若持续放量而不选择方向，突破信号需等收盘站稳再确认。"
+        )
+    else:
+        label, code = "量价中性", "neutral"
+        detail = (
+            f"近周涨跌 {chg:+.1f}%，量能比 {vol_ratio:.2f}，未形成清晰的放量/缩量方向标签。"
+        )
+
+    return {
+        "label": label,
+        "code": code,
+        "detail": detail,
+        "week_change_pct": round(chg, 2),
+        "vol_ratio": round(vol_ratio, 2),
+    }
+
+
 def compute_volume_convergence(df: pd.DataFrame) -> Dict[str, Any]:
-    """从日线 OHLCV 计算日/周/月成交量收敛。"""
+    """
+    从日线 OHLCV 计算**周 / 月**成交量收敛（日线噪声大，不再输出）。
+    并给出周线量价状态一句话，便于理解关键观察点。
+    """
+    empty_w = analyze_volume_series([], "W")
+    empty_m = analyze_volume_series([], "M")
+    guide = (
+        "关键逻辑：周线收敛结束后，看第一根（或前几根）带量K线的方向与是否回补；"
+        "月线用来判断大级别是活跃段还是沉寂段。日线噪声大，已省略。"
+    )
     if df is None or len(df) < 8 or "volume" not in df.columns:
         return {
-            "daily": analyze_volume_series([], "D"),
-            "weekly": analyze_volume_series([], "W"),
-            "monthly": analyze_volume_series([], "M"),
+            "weekly": empty_w,
+            "monthly": empty_m,
+            "weekly_tape": {"label": "数据不足", "code": "insufficient", "detail": "数据不足"},
             "overall": "数据不足",
+            "guide": guide,
         }
-
-    daily_vols = [float(v) for v in df["volume"].tolist() if v is not None and not (isinstance(v, float) and math.isnan(v))]
-    d = analyze_volume_series(daily_vols, "D", lookback=48)
 
     wdf = _resample_ohlcv(df, "W-FRI")
     w = analyze_volume_series(
@@ -207,8 +303,8 @@ def compute_volume_convergence(df: pd.DataFrame) -> Dict[str, Any]:
         "W",
         lookback=36,
     )
+    tape = _classify_weekly_tape(wdf)
 
-    # pandas 2.2+ 用 ME；旧版用 M
     mdf = pd.DataFrame()
     for rule in ("ME", "M", "MS"):
         try:
@@ -223,13 +319,31 @@ def compute_volume_convergence(df: pd.DataFrame) -> Dict[str, Any]:
         lookback=24,
     )
 
-    flags = [x.get("converging") for x in (d, w, m)]
-    n_c = sum(1 for f in flags if f)
-    if n_c >= 2:
-        overall = f"多周期共振：{n_c}/3 个周期量能收敛，整理特征更强"
-    elif n_c == 1:
-        overall = "仅单一周期出现量能收敛，需结合价格结构观察"
+    # overall：围绕周+月
+    parts = []
+    if w.get("converging"):
+        parts.append("周线量能收敛中")
+    elif "扩张" in str(w.get("status") or ""):
+        parts.append("周线量能扩张")
     else:
-        overall = "日/周/月均未见明显量能收敛三角"
+        parts.append(f"周线量能{w.get('status') or '中性'}")
 
-    return {"daily": d, "weekly": w, "monthly": m, "overall": overall}
+    if m.get("converging"):
+        parts.append("月线收敛（偏沉寂整理）")
+    elif "扩张" in str(m.get("status") or ""):
+        parts.append("月线扩张（大级别仍活跃）")
+    else:
+        parts.append(f"月线{m.get('status') or '中性'}")
+
+    tape_label = tape.get("label") or ""
+    overall = "；".join(parts)
+    if tape_label and tape_label != "数据不足":
+        overall = f"周线量价：{tape_label}。{overall}"
+
+    return {
+        "weekly": w,
+        "monthly": m,
+        "weekly_tape": tape,
+        "overall": overall,
+        "guide": guide,
+    }
