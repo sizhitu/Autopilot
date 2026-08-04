@@ -68,10 +68,14 @@ WATCHLIST = dict(WATCHLIST_USER_DEFAULT)
 #  按用户的自选看板（sqlite / Supabase 持久化）
 #  未登录 → 精简默认；管理员无自选 → 全量管理员默认；普通用户清空后不回退。
 # ----------------------------------------------------------------------
-def get_user_watchlist_symbols(user_id: int) -> list:
-    """返回 [(symbol, name), ...]，按 sort_order, created_at 升序。"""
-    items = watchlist_store.get_items(user_id)
-    return items if items else []
+def get_user_watchlist_symbols(user_id, access_token: str = None) -> list:
+    """返回 [(symbol, name), ...]，按 sort_order, created_at 升序。须尽量带 access_token 以通过 RLS。"""
+    try:
+        items = watchlist_store.get_items(user_id, access_token)
+        return items if items else []
+    except Exception:
+        # 读库失败时不要伪装成「用户删光了」，交由上层降级
+        raise
 
 
 def add_user_watchlist(user_id: int, symbol: str, name: str = "") -> bool:
@@ -107,10 +111,10 @@ def invalidate_user_cache(user_id) -> None:
     _invalidate_cache(user_id)
 
 
-def resolve_watchlist_items(user_id: int = None, is_admin: bool = False) -> list:
+def resolve_watchlist_items(user_id=None, is_admin: bool = False, access_token: str = None) -> list:
     """有用户自选用自选；否则管理员全量默认 / 其他精简默认。"""
     if user_id:
-        items = get_user_watchlist_symbols(user_id)
+        items = get_user_watchlist_symbols(user_id, access_token)
         if items:
             return items
         if is_admin:
@@ -531,7 +535,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
         return (0 if (x.get('market') or '美股') == '美股' else 1, x['code'])
 
     partial = []
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         fut_to_code = {ex.submit(get_stock_status, code, name): code for code, name in items}
         for fut in as_completed(fut_to_code):
             code = fut_to_code[fut]
@@ -596,22 +600,30 @@ def _background_refresh(key, items, user_id):
                             'ts': 0, 'refreshing': False}
 
 
-def get_watchlist_status(user_id: int = None, force: bool = False, is_admin: bool = False) -> dict:
+def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = False,
+                         access_token: str = None) -> dict:
     """
     获取关注股票看板状态（接口永远秒回）。
       - 已登录且有自选 → 计算该用户看板
       - 已登录普通用户自选为空 → 空列表（允许删光，不回退）
       - 已登录管理员自选为空 → 管理员全量默认看板
       - 未登录 → 精简默认看板（约 7 只）
+      - 读自选库失败 → 降级为对应默认列表，避免整页失败
     """
     if user_id is not None:
-        user_items = get_user_watchlist_symbols(user_id)
+        cache_uid = str(user_id)
+        user_items = None
+        read_err = None
+        try:
+            user_items = get_user_watchlist_symbols(user_id, access_token)
+        except Exception as e:
+            read_err = str(e)[:120]
+            user_items = None
+
         if user_items:
-            key, items = user_id, user_items
-        elif is_admin:
-            # 管理员未配置自选时，使用全量默认池（只读展示，不自动写入）
-            key, items = f"admin_default:{user_id}", list(WATCHLIST_ADMIN_DEFAULT.items())
-        else:
+            key, items = cache_uid, user_items
+        elif user_items is not None and len(user_items) == 0 and not is_admin:
+            # 明确空列表（读成功且无行）
             empty = {
                 'success': True,
                 'computing': False,
@@ -622,9 +634,13 @@ def get_watchlist_status(user_id: int = None, force: bool = False, is_admin: boo
                 'stocks': [],
                 'empty': True,
             }
-            _CACHES[user_id] = {'data': empty, 'ts': time.time(), 'refreshing': False}
-            _CACHES[str(user_id)] = {'data': empty, 'ts': time.time(), 'refreshing': False}
+            _CACHES[cache_uid] = {'data': empty, 'ts': time.time(), 'refreshing': False}
             return empty
+        elif is_admin:
+            key, items = f"admin_default:{cache_uid}", list(WATCHLIST_ADMIN_DEFAULT.items())
+        else:
+            # 读库失败：降级精简默认，标记 degraded，避免登录后整板失败
+            key, items = f"user_fallback:{cache_uid}", list(WATCHLIST_USER_DEFAULT.items())
     else:
         key, items = 0, list(WATCHLIST_USER_DEFAULT.items())
 
