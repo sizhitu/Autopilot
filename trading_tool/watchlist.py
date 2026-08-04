@@ -30,9 +30,23 @@ import watchlist_store
 
 fetcher = DataFetcher()
 
-# 关注列表
-WATCHLIST = {
-    # 美股
+# ----------------------------------------------------------------------
+#  默认看板（两档）
+#  - USER：普通用户 / 未登录精简默认
+#  - ADMIN：管理员默认全量（原完整关注列表 + TSLA）
+#  - WATCHLIST：兼容旧代码，等同 USER
+# ----------------------------------------------------------------------
+WATCHLIST_USER_DEFAULT = {
+    '000001': '上证指数',
+    '159501': '纳指ETF嘉实',
+    '399300': '沪深300',
+    'TSLA': '特斯拉',
+    'SPCX': 'SpaceX',
+    'NVDA': '英伟达',
+    'WTI': '原油WTI',
+}
+
+WATCHLIST_ADMIN_DEFAULT = {
     'OUST': 'Ouster', 'FLY': 'Firefly Aerospace', 'SPCX': 'SpaceX',
     'FIGR': 'Figure Technology', 'MU': '美光科技', 'VCX': 'Fundrise Innovation Fund',
     'ETN': '伊顿', 'GEV': 'GE Vernova', 'HIMS': 'Hims & Hers', 'APP': 'AppLovin',
@@ -40,18 +54,19 @@ WATCHLIST = {
     'JEPI': '摩根JEPi', 'GOOG': '谷歌C', 'LITE': 'Lumentum',
     'ASTS': 'AST SpaceMobile', 'FCX': 'Freeport-McMoRan', 'ASM': 'ASM International',
     'EUV': 'EUV', 'WTI': '原油WTI', 'AVGO': '博通', 'NVDA': '英伟达', 'INTC': '英特尔',
-    # A股
+    'TSLA': '特斯拉',
     '600887': '伊利股份', '600111': '北方稀土', '601899': '紫金矿业',
     '159880': '有色ETF鹏华', '518850': '黄金ETF华夏', '560710': '船舶ETF富国', '159985': '豆粕ETF',
     '159501': '纳指ETF嘉实', '562500': '机器人ETF华夏', '513310': '中韩半导体ETF华泰柏瑞',
-    # 指数
     '000001': '上证指数', '399300': '沪深300',
 }
 
+WATCHLIST = dict(WATCHLIST_USER_DEFAULT)
+
 
 # ----------------------------------------------------------------------
-#  按用户的自选看板（sqlite 持久化）
-#  未登录 / 尚未添加任何自选的用户，回退到上方全局 WATCHLIST。
+#  按用户的自选看板（sqlite / Supabase 持久化）
+#  未登录 → 精简默认；管理员无自选 → 全量管理员默认；普通用户清空后不回退。
 # ----------------------------------------------------------------------
 def get_user_watchlist_symbols(user_id: int) -> list:
     """返回 [(symbol, name), ...]，按 sort_order, created_at 升序。"""
@@ -92,13 +107,16 @@ def invalidate_user_cache(user_id) -> None:
     _invalidate_cache(user_id)
 
 
-def resolve_watchlist_items(user_id: int = None) -> list:
-    """解析实际要计算的自选列表：有用户列表用用户的，否则用全局默认。"""
+def resolve_watchlist_items(user_id: int = None, is_admin: bool = False) -> list:
+    """有用户自选用自选；否则管理员全量默认 / 其他精简默认。"""
     if user_id:
         items = get_user_watchlist_symbols(user_id)
         if items:
             return items
-    return list(WATCHLIST.items())
+        if is_admin:
+            return list(WATCHLIST_ADMIN_DEFAULT.items())
+        return list(WATCHLIST_USER_DEFAULT.items())
+    return list(WATCHLIST_USER_DEFAULT.items())
 
 
 # 新高新低检测窗口（天数，从大到小）
@@ -578,20 +596,21 @@ def _background_refresh(key, items, user_id):
                             'ts': 0, 'refreshing': False}
 
 
-def get_watchlist_status(user_id: int = None, force: bool = False) -> dict:
+def get_watchlist_status(user_id: int = None, force: bool = False, is_admin: bool = False) -> dict:
     """
     获取关注股票看板状态（接口永远秒回）。
       - 已登录且有自选 → 计算该用户看板
-      - 已登录但自选为空 → 返回空列表（允许用户删光全部代码，不回退默认）
-      - 未登录 → 回退全局默认看板
-    命中缓存（TTL 内）直接返回；过期或强制刷新则后台“增量计算”，
-    前端可轮询拿到逐行就绪的部分结果。
+      - 已登录普通用户自选为空 → 空列表（允许删光，不回退）
+      - 已登录管理员自选为空 → 管理员全量默认看板
+      - 未登录 → 精简默认看板（约 7 只）
     """
     if user_id is not None:
-        # 直接读用户自选，空列表表示用户主动清空，禁止回退默认看板
         user_items = get_user_watchlist_symbols(user_id)
         if user_items:
             key, items = user_id, user_items
+        elif is_admin:
+            # 管理员未配置自选时，使用全量默认池（只读展示，不自动写入）
+            key, items = f"admin_default:{user_id}", list(WATCHLIST_ADMIN_DEFAULT.items())
         else:
             empty = {
                 'success': True,
@@ -603,12 +622,11 @@ def get_watchlist_status(user_id: int = None, force: bool = False) -> dict:
                 'stocks': [],
                 'empty': True,
             }
-            # 同步写空缓存，避免下次误用旧数据
             _CACHES[user_id] = {'data': empty, 'ts': time.time(), 'refreshing': False}
             _CACHES[str(user_id)] = {'data': empty, 'ts': time.time(), 'refreshing': False}
             return empty
     else:
-        key, items = 0, list(WATCHLIST.items())
+        key, items = 0, list(WATCHLIST_USER_DEFAULT.items())
 
     now = time.time()
     cache = _CACHES.get(key)
@@ -658,7 +676,7 @@ def get_watchlist_status(user_id: int = None, force: bool = False) -> dict:
 
 if __name__ == "__main__":
     # CLI 直接同步计算（不走后台增量缓存，便于本地排障）
-    data = _compute_watchlist(items=list(WATCHLIST.items()), key=None)
+    data = _compute_watchlist(items=list(WATCHLIST_ADMIN_DEFAULT.items()), key=None)
     print(f"关注股票: {data['count']}只  更新时间: {data['updated_at']}")
     print(f"{'代码':8s} {'名称':12s} {'现价':>10s} {'5日%':>7s} {'信号':6s} {'九转':20s} {'高低':12s}")
     print("-" * 90)
