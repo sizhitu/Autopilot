@@ -248,6 +248,33 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   #watchlistTable { font-size: 11px !important; }
   #watchlistTable th, #watchlistTable td { padding: 5px 6px !important; }
 }
+
+/* 成交量收敛金边三角形 */
+.vol-conv-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.vol-conv-panel .vc-head {
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:12px; margin-bottom:6px;
+}
+.vol-conv-panel .vc-status {
+  font-weight:700; font-size:11px; padding:2px 8px; border-radius:4px;
+}
+.vol-conv-panel .vc-status.ok { color:#0f1218; background:linear-gradient(135deg,#f0d78c,#d4af37); }
+.vol-conv-panel .vc-status.mid { color:var(--orange); background:rgba(230,126,34,.15); }
+.vol-conv-panel .vc-status.bad { color:var(--text-dim); background:rgba(255,255,255,.04); }
+.vol-conv-panel .vc-metrics {
+  display:flex; flex-wrap:wrap; gap:8px 12px; font-size:10px; color:var(--text-dim); margin-top:6px;
+}
+.vol-conv-panel .vc-metrics b { color:var(--text); font-weight:600; }
+.vol-conv-panel svg.vc-tri {
+  width:100%; height:72px; display:block; border-radius:6px;
+  background: radial-gradient(ellipse at 50% 0%, rgba(212,175,55,.12), transparent 70%);
+}
+
 </style>
 <!-- Supabase JS SDK（认证：邮箱 OTP / Magic Link）-->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -467,6 +494,14 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     </div>
 
     <!-- 三层一致性 -->
+    
+    <!-- 成交量收敛三角形 日/周/月 -->
+    <div class="card" id="volConvCard" style="margin-top:8px;">
+      <div class="card-title">成交量收敛 · 日 / 周 / 月</div>
+      <div id="volConvOverall" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;line-height:1.5;">加载标的后显示量能收敛监控</div>
+      <div id="volConvPanels" style="display:grid;grid-template-columns:1fr;gap:10px;"></div>
+    </div>
+
     <div class="card">
       <div class="card-title">三层一致性检验</div>
       <div id="layersContainer">
@@ -1360,6 +1395,97 @@ function switchTab(name, el) {
   document.getElementById('tab-' + name).classList.remove('hidden');
   if (name === 'admin') loadAdmin();
 }
+
+function updateVolumeConvergence(vc) {
+  const overall = document.getElementById('volConvOverall');
+  const panels = document.getElementById('volConvPanels');
+  if (!overall || !panels) return;
+  if (!vc) {
+    overall.textContent = '暂无量能收敛数据';
+    panels.innerHTML = '';
+    return;
+  }
+  overall.textContent = vc.overall || '';
+  const keys = ['daily', 'weekly', 'monthly'];
+  panels.innerHTML = keys.map(k => {
+    const d = vc[k] || {};
+    const st = d.status || '—';
+    const cls = d.converging ? 'ok' : (st.indexOf('扩张') >= 0 ? 'mid' : 'bad');
+    const svg = renderVolTriangleSvg(d);
+    return `<div class="vol-conv-panel">
+      <div class="vc-head">
+        <span style="font-weight:600;color:var(--text);">${d.label || k}</span>
+        <span class="vc-status ${cls}">${st}</span>
+      </div>
+      ${svg}
+      <div class="vc-metrics">
+        <span>上沿斜率 <b>${fmtSlope(d.upper_slope)}</b></span>
+        <span>下沿斜率 <b>${fmtSlope(d.lower_slope)}</b></span>
+        <span>夹角 <b>${d.angle_deg != null ? d.angle_deg + '°' : '—'}</b></span>
+        <span>振幅收缩 <b>${d.amplitude_shrink_pct != null ? d.amplitude_shrink_pct + '%' : '—'}</b></span>
+        <span>评分 <b>${d.score != null ? d.score : '—'}</b></span>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.5;">${d.summary || ''}</div>
+    </div>`;
+  }).join('');
+}
+function fmtSlope(v) {
+  if (v == null || isNaN(v)) return '—';
+  const n = Number(v);
+  return (n >= 0 ? '+' : '') + n.toFixed(4);
+}
+function renderVolTriangleSvg(d) {
+  const W = 320, H = 72, pad = 6;
+  const upper = d.upper_line || [];
+  const lower = d.lower_line || [];
+  const vols = d.vols || [];
+  const n = Math.max(upper.length, lower.length, vols.length, 2);
+  const xAt = i => pad + (i / (n - 1)) * (W - 2 * pad);
+  const yAt = v => {
+    const vv = Math.max(0, Math.min(1, Number(v) || 0));
+    return H - pad - vv * (H - 2 * pad);
+  };
+  let polyU = '', polyL = '', area = '', bars = '';
+  for (let i = 0; i < n; i++) {
+    const x = xAt(i);
+    if (upper[i] != null) polyU += (i ? ' L' : 'M') + x + ' ' + yAt(upper[i]);
+    if (lower[i] != null) polyL += (i ? ' L' : 'M') + x + ' ' + yAt(lower[i]);
+  }
+  // shaded triangle-like band between upper and lower
+  if (upper.length && lower.length) {
+    area = 'M' + xAt(0) + ' ' + yAt(upper[0]);
+    for (let i = 1; i < upper.length; i++) area += ' L' + xAt(i) + ' ' + yAt(upper[i]);
+    for (let i = lower.length - 1; i >= 0; i--) area += ' L' + xAt(i) + ' ' + yAt(lower[i]);
+    area += ' Z';
+  }
+  // volume stems (subtle)
+  const step = Math.max(1, Math.floor(n / 40));
+  for (let i = 0; i < vols.length; i += step) {
+    const x = xAt(i);
+    const y0 = H - pad;
+    const y1 = yAt(vols[i]);
+    bars += `<line x1="${x}" y1="${y0}" x2="${x}" y2="${y1}" stroke="rgba(212,175,55,0.25)" stroke-width="2"/>`;
+  }
+  const gid = 'vc' + (d.timeframe || 'X') + Math.random().toString(36).slice(2, 7);
+  return `<svg class="vc-tri" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="${gid}Fill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#f0d78c" stop-opacity="0.4"/>
+        <stop offset="50%" stop-color="#d4af37" stop-opacity="0.18"/>
+        <stop offset="100%" stop-color="#d4af37" stop-opacity="0.05"/>
+      </linearGradient>
+      <filter id="${gid}Glow">
+        <feGaussianBlur stdDeviation="1.4" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    ${bars}
+    <path d="${area}" fill="url(#${gid}Fill)" stroke="none"/>
+    <path d="${polyU}" fill="none" stroke="#f5e6a8" stroke-width="2" filter="url(#${gid}Glow)" stroke-linejoin="round"/>
+    <path d="${polyL}" fill="none" stroke="#d4af37" stroke-width="2" filter="url(#${gid}Glow)" stroke-linejoin="round"/>
+  </svg>`;
+}
+
 function switchView(view) {
   document.getElementById('viewAnalysis').classList.toggle('active', view === 'analysis');
   document.getElementById('viewBacktest').classList.toggle('active', view === 'backtest');
@@ -1684,6 +1810,7 @@ async function fetchQuote(symbol, name, market) {
     if (json.stale) showToast('⚠ 当前行情为缓存快照，可能延迟', 'info');
     updateNineTurnDetail(json.nine_turn);
     updateHlVal(json.high_low, json.valuation);
+    updateVolumeConvergence(json.volume_convergence);
     fetchProfile(symbol);   // 异步补充公司主营业务（不阻塞图表）
     lastChartData = json.chart;
     switchView('analysis');      // 先切换视图，确保画布可见
@@ -1748,6 +1875,7 @@ async function runAnalysis() {
     updateResults(json.data, json.meta);
     updateNineTurnDetail(json.nine_turn);
     updateHlVal(json.high_low, json.valuation);
+    updateVolumeConvergence(json.volume_convergence);
     lastChartData = json.chart;
     switchView('analysis');
     drawChart(json.chart);
