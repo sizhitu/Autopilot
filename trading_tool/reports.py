@@ -40,6 +40,7 @@ C_RED = "#e74c3c"
 C_ORANGE = "#e67e22"
 C_GOLD = "#d4af37"
 C_BLUE = "#5b9fd4"
+SITE_URL = "https://www.timebricks.bid"
 
 
 def _report_period_label(period: str = "weekly") -> Tuple[str, str]:
@@ -206,7 +207,7 @@ def _build_board_table(analyses: List[dict]) -> str:
         return (
             f"<p style='color:{C_DIM};font-size:13px;line-height:1.6;'>"
             f"本期自选中<strong>没有</strong>系统标为「即将上涨 / 即将下跌」的标的，"
-            f"观望类已省略，以减少干扰。可到网页看板查看完整列表。</p>"
+            f"观望类已省略，以减少干扰。完整列表请到 <a href="https://www.timebricks.bid" style="color:#5b9fd4;text-decoration:underline;">网页看板</a> 查看。</p>"
         )
 
     ups = [a for a in analyses if a.get("bucket") == "up"]
@@ -410,14 +411,15 @@ def _fallback_deep(a: dict) -> str:
         biz_one = biz_one[:70] + "…"
 
     return (
-        f"<h3 style='color:{C_GOLD};font-size:15px;margin:16px 0 6px;'>{code} {name} "
+        f"<div style='margin:0 0 28px;padding:0 0 20px;border-bottom:1px solid {C_BORDER};'>"
+        f"<h3 style='color:{C_GOLD};font-size:15px;margin:0 0 12px;line-height:1.4;'>{code} {name} "
         f"<span style='color:{side_c};font-size:12px;font-weight:700;'>· {side}</span></h3>"
-        f"<ul style='color:{C_TEXT};font-size:13px;line-height:1.7;margin:0;padding-left:18px;'>"
-        f"<li><strong style='color:{C_BLUE};'>叙事</strong>：{th}"
+        f"<ul style='color:{C_TEXT};font-size:13px;line-height:1.85;margin:0;padding-left:18px;'>"
+        f"<li style='margin:0 0 10px;'><strong style='color:{C_BLUE};'>叙事</strong>：{th}"
         f"{(' 业务画像：' + biz_one) if biz_one else ''}</li>"
-        f"<li><strong style='color:{C_ORANGE};'>供需瓶颈</strong>：{sup}</li>"
-        f"<li><strong style='color:{C_GOLD};'>质地</strong>：{qual}</li>"
-        f"<li><strong style='color:{side_c};'>信号交叉</strong>：相对位置 "
+        f"<li style='margin:0 0 10px;'><strong style='color:{C_ORANGE};'>供需瓶颈</strong>：{sup}</li>"
+        f"<li style='margin:0 0 10px;'><strong style='color:{C_GOLD};'>质地</strong>：{qual}</li>"
+        f"<li style='margin:0 0 10px;'><strong style='color:{side_c};'>信号交叉</strong>：相对位置 "
         f"<span style='color:{C_GOLD};font-weight:700;'>{val}</span>"
         f"{('（' + val_d + '）') if val_d else ''}，近5日 "
         f"<span style='color:{_color_for_chg(a.get('change_5d'))};font-weight:700;'>{_pct(a.get('change_5d'))}</span>；"
@@ -425,9 +427,9 @@ def _fallback_deep(a: dict) -> str:
         f"趋势 <span style='color:{_color_for_trend(a)};font-weight:700;'>{trend}</span>，"
         f"动作 <span style='color:{_color_for_action(a)};font-weight:700;'>{action}</span>。"
         f"同向则价格行为与结构叙事较一致；背离则优先降低单标签权重。</li>"
-        f"<li><strong style='color:{C_DIM};'>证伪</strong>：若行业资本开支/政策或需求主线被公开数据证伪，"
+        f"<li style='margin:0;'><strong style='color:{C_DIM};'>证伪</strong>：若行业资本开支/政策或需求主线被公开数据证伪，"
         f"或价格跌破关键均线区且放量反向，原「瓶颈溢价」叙事需降权。</li>"
-        f"</ul>"
+        f"</ul></div>"
     )
 
 
@@ -435,8 +437,11 @@ def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) ->
     table = _build_board_table(classified.get("board") or [])
     w = classified.get("watch_count") or 0
     watch_note = (
-        f"另有 {w} 只观望未列入本邮件（请到网页看板查看）。"
-        if w else "本期无额外观望省略项。"
+        f'另有 {w} 只观望未列入本邮件（'
+        f'<a href="{SITE_URL}" style="color:{C_BLUE};text-decoration:underline;">到网页查看</a>）。'
+        if w else
+        f'本期无额外观望省略项 · '
+        f'<a href="{SITE_URL}" style="color:{C_BLUE};text-decoration:underline;">www.timebricks.bid</a>'
     )
     period_key = "monthly" if "月" in (period_cn or "") else "weekly"
     formal, short = _report_period_label(period_key)
@@ -468,14 +473,22 @@ def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) ->
   <p style="color:{C_DIM};font-size:11px;margin:0 0 8px;">只列即将上涨 / 即将下跌；纵向阅读，无需左右滑。</p>
   {table}
 
-  <div style="margin-top:22px;">
-    <h2 style="color:{C_TEXT};font-size:15px;margin:0 0 8px;">二、重点研究速读</h2>
-    <p style="color:{C_DIM};font-size:11px;margin:0 0 6px;">叙事 → 供需瓶颈 → 质地 → 信号交叉 → 证伪（短版深研，非操作建议）。</p>
+  <div style="margin-top:28px;">
+    <h2 style="color:{C_TEXT};font-size:15px;margin:0 0 10px;">二、重点研究速读</h2>
+    <p style="color:{C_DIM};font-size:11px;margin:0 0 14px;line-height:1.6;">叙事 → 供需瓶颈 → 质地 → 信号交叉 → 证伪（短版深研，非操作建议）。</p>
+    <div style="line-height:1.85;">
     {deep_html}
+    </div>
   </div>
 
-  <p style="color:{C_DIM};font-size:11px;margin:22px 0 0;line-height:1.55;border-top:1px solid {C_BORDER};padding-top:10px;">
+  <p style="color:{C_DIM};font-size:11px;margin:28px 0 0;line-height:1.65;border-top:1px solid {C_BORDER};padding-top:14px;">
     {DISCLAIMER}
+  </p>
+  <p style="text-align:center;margin:18px 0 8px;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
+    <a href="{SITE_URL}" style="color:{C_BLUE};text-decoration:underline;font-weight:600;">打开 TimeBricks 网页看板 →</a>
+  </p>
+  <p style="text-align:center;margin:0 0 6px;font-size:11px;color:{C_DIM};font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
+    {SITE_URL}
   </p>
 </div>
 </body></html>"""
@@ -486,7 +499,7 @@ def _fallback_html(period: str, email: str, classified: dict) -> str:
     if not classified.get("focus"):
         deep = f"<p style='color:{C_DIM};'>本期无明确上涨/下跌标签标的，故无重点展开。</p>"
     else:
-        deep = "\n".join(_fallback_deep(a) for a in classified["focus"])
+        deep = "".join(_fallback_deep(a) for a in classified["focus"])
     return _wrap_email(period_cn, email, classified, deep)
 
 
