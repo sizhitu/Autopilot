@@ -56,6 +56,22 @@ import ratelimit
 import reports
 import volume_convergence
 
+def _safe_volume_convergence(df):
+    """量能收敛失败时不阻断行情接口。"""
+    try:
+        return _safe_volume_convergence(df)
+    except Exception as e:
+        return {
+            "daily": {"timeframe": "D", "label": "日线", "status": "计算失败", "converging": False,
+                      "summary": str(e)[:120], "vols": [], "upper_line": [], "lower_line": []},
+            "weekly": {"timeframe": "W", "label": "周线", "status": "计算失败", "converging": False,
+                       "summary": "", "vols": [], "upper_line": [], "lower_line": []},
+            "monthly": {"timeframe": "M", "label": "月线", "status": "计算失败", "converging": False,
+                        "summary": "", "vols": [], "upper_line": [], "lower_line": []},
+            "overall": "量能收敛计算暂时不可用",
+        }
+
+
 app = FastAPI(title="藤本茂融合策略 Web 工具 API", version="3.0")
 fetcher = DataFetcher()
 
@@ -614,7 +630,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         "nine_turn": nine_turn,
         "high_low": extra["high_low"],
         "valuation": extra["valuation"],
-        "volume_convergence": volume_convergence.compute_volume_convergence(df),
+        "volume_convergence": _safe_volume_convergence(df),
         "meta": {
             "rows": len(df),
             "last_close": round(float(df['close'].iloc[-1]), 2),
@@ -866,7 +882,7 @@ async def analyze_csv(
             "nine_turn": nine_turn,
             "high_low": extra["high_low"],
             "valuation": extra["valuation"],
-            "volume_convergence": volume_convergence.compute_volume_convergence(df),
+            "volume_convergence": _safe_volume_convergence(df),
             "meta": {
                 "rows": len(df),
                 "last_close": round(float(df['close'].iloc[-1]), 2),
