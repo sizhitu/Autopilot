@@ -59,7 +59,7 @@ import volume_convergence
 def _safe_volume_convergence(df):
     """量能收敛失败时不阻断行情接口。"""
     try:
-        return _safe_volume_convergence(df)
+        return volume_convergence.compute_volume_convergence(df)
     except Exception as e:
         return {
             "daily": {"timeframe": "D", "label": "日线", "status": "计算失败", "converging": False,
