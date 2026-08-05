@@ -2027,6 +2027,24 @@ function setWatchUpdatedLabel(json) {
   }
 }
 
+
+function mergeWatchRows(incoming, previous) {
+  // 未完成的行继续用上一轮完整数据，已返回的行用新数据覆盖
+  if (!previous || !previous.length) return incoming || [];
+  if (!incoming || !incoming.length) return previous;
+  const prevMap = {};
+  previous.forEach(s => { if (s && s.code) prevMap[String(s.code).toUpperCase()] = s; });
+  return incoming.map(s => {
+    if (!s) return s;
+    const code = String(s.code || '').toUpperCase();
+    const old = prevMap[code];
+    if (!old) return s;
+    const isPlaceholder = s.pending || s.price === '-' || s.signal === '计算中';
+    if (isPlaceholder) return { ...old, pending: false, stale_row: true };
+    return s;
+  });
+}
+
 async function loadWatchlist(forceRefresh = false) {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
@@ -2059,6 +2077,7 @@ async function loadWatchlist(forceRefresh = false) {
       }
       watchNotes = json.notes || {};
       if (stocks.length) {
+        stocks = mergeWatchRows(stocks, _lastWatchRows);
         setWatchUpdatedLabel(json);
         renderWatchlistSummary(json.summary || {});
         renderWatchlist(stocks);
