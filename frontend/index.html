@@ -1112,7 +1112,8 @@ async function finishSession(session, opts = {}) {
   localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
   refreshAuthUI(); closeAuth();
   if (!opts.silent) showToast('登录成功', 'ok');
-  setupRealtime(); loadWatchlist();
+  setupRealtime();
+  if (!opts.silent) loadWatchlist();
 }
 
 function doLogout() {
@@ -1380,6 +1381,7 @@ async function initAuth() {
 
   refreshAuthUI();
   setupRealtime();
+  try { loadWatchlist(); } catch (e) {}
 }
 
 let currentSymbol = '';
@@ -1941,15 +1943,18 @@ async function loadSample() {
 // 分析工具默认真实标的（无真实代码时：直接切 Tab / 模拟数据之后）
 const DEFAULT_ANALYSIS = { code: 'NVDA', name: '英伟达', market: '美股' };
 let _analysisLoading = false;
+let _analysisLoadGuard = null;
 
 async function ensureAnalysisSymbol() {
-  // 先保证 Tab 已切过来；缺 K 线则重新拉行情
   if (currentSymbol && lastChartData && lastChartData.candles && lastChartData.candles.length) {
     try { drawChart(lastChartData); } catch (e) {}
     return;
   }
   if (_analysisLoading) return;
   _analysisLoading = true;
+  // 防止请求挂起导致永远无法再次进入分析页
+  clearTimeout(_analysisLoadGuard);
+  _analysisLoadGuard = setTimeout(function () { _analysisLoading = false; }, 20000);
   try {
     const code = currentSymbol || DEFAULT_ANALYSIS.code;
     const name = currentSymbol ? (currentName || '') : DEFAULT_ANALYSIS.name;
@@ -1959,12 +1964,14 @@ async function ensureAnalysisSymbol() {
     const meta = document.getElementById('chartMeta');
     if (meta) meta.textContent = '行情加载失败，请搜索代码或刷新';
   } finally {
+    clearTimeout(_analysisLoadGuard);
     _analysisLoading = false;
   }
 }
 
 // === 主Tab切换 ===
 function switchMainTab(tab) {
+  // 始终先切换视图，不依赖任何网络请求
   try {
     document.getElementById('tabAnalysis').classList.toggle('active', tab === 'analysis');
     document.getElementById('tabWatchlist').classList.toggle('active', tab === 'watchlist');
@@ -1975,12 +1982,11 @@ function switchMainTab(tab) {
     document.getElementById('analysisView').classList.toggle('hidden', tab !== 'analysis');
     document.getElementById('watchlistView').classList.toggle('hidden', tab !== 'watchlist');
   } catch (e) {}
-  // 视图切换与数据加载解耦，避免加载失败卡住 Tab
   if (tab === 'watchlist') {
-    try { loadWatchlist(); } catch (e) {}
+    try { loadWatchlist(false); } catch (e) {}
   }
   if (tab === 'analysis') {
-    ensureAnalysisSymbol().catch(() => {});
+    ensureAnalysisSymbol().catch(function () {});
   }
 }
 
@@ -2056,13 +2062,34 @@ function mergeWatchRows(incoming, previous) {
   });
 }
 
+let _wlInflight = null;
+let _wlPollTimer = null;
+let _wlPollCount = 0;
+let _wlPendingForce = false;
+const _WL_MAX_POLL = 12;  // 最多轮询次数，避免长时间空刷
+
 async function loadWatchlist(forceRefresh = false) {
+  if (_wlInflight) {
+    if (forceRefresh) _wlPendingForce = true;
+    return _wlInflight;
+  }
+  _wlInflight = _loadWatchlistBody(forceRefresh).finally(function () {
+    _wlInflight = null;
+    if (_wlPendingForce) {
+      _wlPendingForce = false;
+      loadWatchlist(true);
+    }
+  });
+  return _wlInflight;
+}
+
+async function _loadWatchlistBody(forceRefresh) {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
-  // 有上次完整数据则继续展示，并保留上次更新时间
+  // 有上次完整数据则继续展示，并保留上次更新时间（不整表闪空）
   if (_lastWatchRows && _lastWatchRows.length) {
     renderWatchlist(_lastWatchRows);
-    setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
+    if (forceRefresh) setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
   } else if (_lastWatchSkeleton && _lastWatchSkeleton.length) {
     renderWatchlist(buildSkeletonRows(_lastWatchSkeleton));
     setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
@@ -2077,7 +2104,6 @@ async function loadWatchlist(forceRefresh = false) {
       _watchWasComputing = true;
       let stocks = json.stocks || [];
       const total = json.total || stocks.length || (json.count || 0);
-      // 优先用接口行；若几乎全是占位且本地有完整旧数据，则继续用旧数据（体验更稳）
       const usable = stocks.filter(s => s && !s.pending && s.price !== '-' && s.signal !== '计算中');
       if (usable.length === 0 && _lastWatchRows && _lastWatchRows.length) {
         stocks = _lastWatchRows;
@@ -2096,9 +2122,19 @@ async function loadWatchlist(forceRefresh = false) {
       } else {
         body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">正在准备自选列表…</td></tr>`;
       }
-      setTimeout(() => loadWatchlist(false), 1500);
+      // 单一轮询定时器 + 次数上限，避免冷启动连环刷新
+      clearTimeout(_wlPollTimer);
+      if (_wlPollCount < _WL_MAX_POLL) {
+        _wlPollCount += 1;
+        _wlPollTimer = setTimeout(function () { loadWatchlist(false); }, 2000);
+      } else {
+        _wlPollCount = 0;
+        _watchWasComputing = false;
+      }
       return;
     }
+    _wlPollCount = 0;
+    clearTimeout(_wlPollTimer);
 
     watchNotes = json.notes || {};
     const stocks = Array.isArray(json.stocks) ? json.stocks : [];
@@ -2118,7 +2154,7 @@ async function loadWatchlist(forceRefresh = false) {
     renderWatchlist(stocks);
     _lastWatchRows = stocks.slice();
     _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
-    if (_watchWasComputing && json.updated_at) {
+    if (_watchWasComputing && forceRefresh && json.updated_at) {
       showToast('看板已更新至 ' + json.updated_at, 'ok');
     }
     _watchWasComputing = false;
@@ -2737,7 +2773,6 @@ async function loadLadderTable() {
   data.sell_ladder.forEach(i => { const c = i.action === '持有' ? 'hold' : 'sell'; st.innerHTML += `<tr><td>${i.trigger}</td><td class="${c}">${i.action}</td><td>${i.desc}</td></tr>`; });
 }
 loadLadderTable().catch(()=>{});
-loadWatchlist();  // 自选看板为默认页，打开即加载
 initAuth().then(function(){ try { maybeHandlePasswordRecovery(); } catch(e){} });
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
 </script>
