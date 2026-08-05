@@ -1833,7 +1833,12 @@ async function fetchQuote(symbol, name, market) {
       fetchProfile(symbol);
     }
     switchView('analysis');
-    switchMainTab('analysis');
+    // 已在分析 Tab 时不要再调 switchMainTab，避免与 ensureAnalysisSymbol 重入死锁
+    const onAnalysis = document.getElementById('analysisView') &&
+      !document.getElementById('analysisView').classList.contains('hidden');
+    if (!onAnalysis) {
+      switchMainTab('analysis');
+    }
     if (json.chart && json.chart.candles && json.chart.candles.length) {
       lastChartData = json.chart;
       drawChart(json.chart);
@@ -1944,17 +1949,22 @@ async function loadSample() {
 const DEFAULT_ANALYSIS = { code: 'NVDA', name: '英伟达', market: '美股' };
 let _analysisLoading = false;
 let _analysisLoadGuard = null;
+let _analysisLoadStarted = 0;
 
 async function ensureAnalysisSymbol() {
   if (currentSymbol && lastChartData && lastChartData.candles && lastChartData.candles.length) {
     try { drawChart(lastChartData); } catch (e) {}
     return;
   }
+  // 超过 8 秒仍标记 loading 则强制解锁（避免偶发卡住）
+  if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 8000) {
+    _analysisLoading = false;
+  }
   if (_analysisLoading) return;
   _analysisLoading = true;
-  // 防止请求挂起导致永远无法再次进入分析页
+  _analysisLoadStarted = Date.now();
   clearTimeout(_analysisLoadGuard);
-  _analysisLoadGuard = setTimeout(function () { _analysisLoading = false; }, 20000);
+  _analysisLoadGuard = setTimeout(function () { _analysisLoading = false; }, 12000);
   try {
     const code = currentSymbol || DEFAULT_ANALYSIS.code;
     const name = currentSymbol ? (currentName || '') : DEFAULT_ANALYSIS.name;
@@ -1983,9 +1993,14 @@ function switchMainTab(tab) {
     document.getElementById('watchlistView').classList.toggle('hidden', tab !== 'watchlist');
   } catch (e) {}
   if (tab === 'watchlist') {
+    // 切回看板时不强制刷新，避免与冷启动轮询叠加成多次闪动
     try { loadWatchlist(false); } catch (e) {}
   }
   if (tab === 'analysis') {
+    // 用户主动点击时允许打断卡住的 loading
+    if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 3000) {
+      _analysisLoading = false;
+    }
     ensureAnalysisSymbol().catch(function () {});
   }
 }
@@ -2083,18 +2098,29 @@ async function loadWatchlist(forceRefresh = false) {
   return _wlInflight;
 }
 
+let _lastWatchSig = '';
+
+function _watchRowsSig(stocks) {
+  if (!stocks || !stocks.length) return '';
+  return stocks.map(function (s) {
+    return [s.code, s.price, s.signal, s.change_1d, s.pending ? 1 : 0].join(':');
+  }).join('|');
+}
+
 async function _loadWatchlistBody(forceRefresh) {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
-  // 有上次完整数据则继续展示，并保留上次更新时间（不整表闪空）
-  if (_lastWatchRows && _lastWatchRows.length) {
-    renderWatchlist(_lastWatchRows);
+  const hasRows = _lastWatchRows && _lastWatchRows.length;
+  // 已有数据时不展示整块 loading，避免闪三下
+  if (hasRows) {
     if (forceRefresh) setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
   } else if (_lastWatchSkeleton && _lastWatchSkeleton.length) {
     renderWatchlist(buildSkeletonRows(_lastWatchSkeleton));
     setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
+    loading.classList.remove('hidden');
+  } else {
+    loading.classList.remove('hidden');
   }
-  loading.classList.remove('hidden');
   try {
     const res = await api('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''));
     const json = await res.json();
@@ -2104,7 +2130,7 @@ async function _loadWatchlistBody(forceRefresh) {
       _watchWasComputing = true;
       let stocks = json.stocks || [];
       const total = json.total || stocks.length || (json.count || 0);
-      const usable = stocks.filter(s => s && !s.pending && s.price !== '-' && s.signal !== '计算中');
+      let usable = stocks.filter(s => s && !s.pending && s.price !== '-' && s.signal !== '计算中');
       if (usable.length === 0 && _lastWatchRows && _lastWatchRows.length) {
         stocks = _lastWatchRows;
       } else if (!stocks.length && (json.symbols || []).length) {
@@ -2115,18 +2141,38 @@ async function _loadWatchlistBody(forceRefresh) {
       watchNotes = json.notes || {};
       if (stocks.length) {
         stocks = mergeWatchRows(stocks, _lastWatchRows);
+        usable = stocks.filter(s => s && !s.pending && s.price !== '-' && s.signal !== '计算中');
         setWatchUpdatedLabel(json);
-        renderWatchlistSummary(json.summary || {});
-        renderWatchlist(stocks);
-        _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
-      } else {
+        const sig = _watchRowsSig(stocks);
+        // 内容未变则不重绘表格，减少「刷新感」
+        if (sig !== _lastWatchSig) {
+          renderWatchlistSummary(json.summary || {});
+          renderWatchlist(stocks);
+          _lastWatchSig = sig;
+          _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
+          // 若已有完整可用行，记下作为稳定底图
+          if (usable.length >= Math.max(total, 1) * 0.8) {
+            _lastWatchRows = stocks.slice();
+          }
+        }
+      } else if (!hasRows) {
         body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">正在准备自选列表…</td></tr>`;
       }
-      // 单一轮询定时器 + 次数上限，避免冷启动连环刷新
       clearTimeout(_wlPollTimer);
-      if (_wlPollCount < _WL_MAX_POLL) {
+      // 已展示接近完整数据时放慢轮询；次数仍有上限
+      const nearlyDone = total > 0 && usable.length >= total;
+      if (nearlyDone) {
+        // 再确认一次即可，避免连环闪
+        if (_wlPollCount < 2) {
+          _wlPollCount += 1;
+          _wlPollTimer = setTimeout(function () { loadWatchlist(false); }, 3000);
+        } else {
+          _wlPollCount = 0;
+          _watchWasComputing = false;
+        }
+      } else if (_wlPollCount < _WL_MAX_POLL) {
         _wlPollCount += 1;
-        _wlPollTimer = setTimeout(function () { loadWatchlist(false); }, 2000);
+        _wlPollTimer = setTimeout(function () { loadWatchlist(false); }, 2500);
       } else {
         _wlPollCount = 0;
         _watchWasComputing = false;
@@ -2135,6 +2181,7 @@ async function _loadWatchlistBody(forceRefresh) {
     }
     _wlPollCount = 0;
     clearTimeout(_wlPollTimer);
+    _lastWatchSig = '';
 
     watchNotes = json.notes || {};
     const stocks = Array.isArray(json.stocks) ? json.stocks : [];
