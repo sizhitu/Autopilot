@@ -1900,9 +1900,43 @@ async function runAnalysis() {
 }
 async function loadSample() {
   document.getElementById('csvFile').value = '';
+  // 清空真实代码，标记为模拟态；切回分析 Tab 时会重新拉默认 NVDA
   currentSymbol = '';
-  document.getElementById('stockInfo').style.display = 'none';
+  currentName = '';
+  currentMarket = '';
+  const info = document.getElementById('stockInfo');
+  info.style.display = 'flex';
+  info.innerHTML = '<span class="symbol">SAMPLE</span> <span class="stock-name">模拟数据</span> <span class="market" style="color:var(--text-dim);">[演示]</span>';
+  const ind = document.getElementById('industryTag');
+  const biz = document.getElementById('businessSummary');
+  if (ind) ind.style.display = 'none';
+  if (biz) biz.style.display = 'none';
   runAnalysis();
+}
+
+// 分析工具默认真实标的（无真实代码时：直接切 Tab / 模拟数据之后）
+const DEFAULT_ANALYSIS = { code: 'NVDA', name: '英伟达', market: '美股' };
+let _analysisLoading = false;
+
+async function ensureAnalysisSymbol() {
+  // 已有真实代码：只重绘
+  if (currentSymbol) {
+    if (lastChartData) {
+      try { drawChart(lastChartData); } catch (e) {}
+    }
+    return;
+  }
+  // 无真实代码（含点过模拟数据）：每次切到分析 Tab 都加载默认英伟达
+  if (_analysisLoading) return;
+  _analysisLoading = true;
+  try {
+    await fetchQuote(DEFAULT_ANALYSIS.code, DEFAULT_ANALYSIS.name, DEFAULT_ANALYSIS.market);
+  } catch (e) {
+    const meta = document.getElementById('chartMeta');
+    if (meta) meta.textContent = '默认标的加载失败，请搜索代码';
+  } finally {
+    _analysisLoading = false;
+  }
 }
 
 // === 主Tab切换 ===
@@ -1916,6 +1950,7 @@ function switchMainTab(tab) {
   document.getElementById('analysisView').classList.toggle('hidden', tab !== 'analysis');
   document.getElementById('watchlistView').classList.toggle('hidden', tab !== 'watchlist');
   if (tab === 'watchlist') loadWatchlist();
+  if (tab === 'analysis') ensureAnalysisSymbol();
 }
 
 // === 移动端手势：分析页向左滑动返回看板 ===
@@ -2608,7 +2643,6 @@ async function loadLadderTable() {
   data.sell_ladder.forEach(i => { const c = i.action === '持有' ? 'hold' : 'sell'; st.innerHTML += `<tr><td>${i.trigger}</td><td class="${c}">${i.action}</td><td>${i.desc}</td></tr>`; });
 }
 loadLadderTable().catch(()=>{});
-loadSample();
 loadWatchlist();  // 自选看板为默认页，打开即加载
 initAuth().then(function(){ try { maybeHandlePasswordRecovery(); } catch(e){} });
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
