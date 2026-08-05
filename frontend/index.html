@@ -1830,10 +1830,14 @@ async function fetchQuote(symbol, name, market) {
     if (!json.industry || !json.business_summary) {
       fetchProfile(symbol);
     }
-    lastChartData = json.chart;
-    switchView('analysis');      // 先切换视图，确保画布可见
-    switchMainTab('analysis');   // 跳转到分析工具主页面
-    drawChart(json.chart);       // 画布可见��再绘制（避免 offsetWidth=0 导致空白）
+    switchView('analysis');
+    switchMainTab('analysis');
+    if (json.chart && json.chart.candles && json.chart.candles.length) {
+      lastChartData = json.chart;
+      drawChart(json.chart);
+    } else {
+      document.getElementById('chartMeta').textContent = '行情已返回但缺少K线，请点刷新或重新搜索';
+    }
   } catch(e) {
     document.getElementById('chartMeta').textContent = '错误: ' + e.message;
   }
@@ -1939,21 +1943,21 @@ const DEFAULT_ANALYSIS = { code: 'NVDA', name: '英伟达', market: '美股' };
 let _analysisLoading = false;
 
 async function ensureAnalysisSymbol() {
-  // 已有真实代码：只重绘
-  if (currentSymbol) {
-    if (lastChartData) {
-      try { drawChart(lastChartData); } catch (e) {}
-    }
+  // 先保证 Tab 已切过来；缺 K 线则重新拉行情
+  if (currentSymbol && lastChartData && lastChartData.candles && lastChartData.candles.length) {
+    try { drawChart(lastChartData); } catch (e) {}
     return;
   }
-  // 无真实代码（含点过模拟数据）：每次切到分析 Tab 都加载默认英伟达
   if (_analysisLoading) return;
   _analysisLoading = true;
   try {
-    await fetchQuote(DEFAULT_ANALYSIS.code, DEFAULT_ANALYSIS.name, DEFAULT_ANALYSIS.market);
+    const code = currentSymbol || DEFAULT_ANALYSIS.code;
+    const name = currentSymbol ? (currentName || '') : DEFAULT_ANALYSIS.name;
+    const market = currentSymbol ? (currentMarket || '') : DEFAULT_ANALYSIS.market;
+    await fetchQuote(code, name, market);
   } catch (e) {
     const meta = document.getElementById('chartMeta');
-    if (meta) meta.textContent = '默认标的加载失败，请搜索代码';
+    if (meta) meta.textContent = '行情加载失败，请搜索代码或刷新';
   } finally {
     _analysisLoading = false;
   }
@@ -1961,16 +1965,23 @@ async function ensureAnalysisSymbol() {
 
 // === 主Tab切换 ===
 function switchMainTab(tab) {
-  document.getElementById('tabAnalysis').classList.toggle('active', tab === 'analysis');
-  document.getElementById('tabWatchlist').classList.toggle('active', tab === 'watchlist');
-  document.getElementById('tabAnalysis').style.borderBottomColor = tab === 'analysis' ? 'var(--gold)' : 'transparent';
-  document.getElementById('tabWatchlist').style.borderBottomColor = tab === 'watchlist' ? 'var(--gold)' : 'transparent';
-  document.getElementById('tabAnalysis').style.color = tab === 'analysis' ? 'var(--gold)' : 'var(--text-dim)';
-  document.getElementById('tabWatchlist').style.color = tab === 'watchlist' ? 'var(--gold)' : 'var(--text-dim)';
-  document.getElementById('analysisView').classList.toggle('hidden', tab !== 'analysis');
-  document.getElementById('watchlistView').classList.toggle('hidden', tab !== 'watchlist');
-  if (tab === 'watchlist') loadWatchlist();
-  if (tab === 'analysis') ensureAnalysisSymbol();
+  try {
+    document.getElementById('tabAnalysis').classList.toggle('active', tab === 'analysis');
+    document.getElementById('tabWatchlist').classList.toggle('active', tab === 'watchlist');
+    document.getElementById('tabAnalysis').style.borderBottomColor = tab === 'analysis' ? 'var(--gold)' : 'transparent';
+    document.getElementById('tabWatchlist').style.borderBottomColor = tab === 'watchlist' ? 'var(--gold)' : 'transparent';
+    document.getElementById('tabAnalysis').style.color = tab === 'analysis' ? 'var(--gold)' : 'var(--text-dim)';
+    document.getElementById('tabWatchlist').style.color = tab === 'watchlist' ? 'var(--gold)' : 'var(--text-dim)';
+    document.getElementById('analysisView').classList.toggle('hidden', tab !== 'analysis');
+    document.getElementById('watchlistView').classList.toggle('hidden', tab !== 'watchlist');
+  } catch (e) {}
+  // 视图切换与数据加载解耦，避免加载失败卡住 Tab
+  if (tab === 'watchlist') {
+    try { loadWatchlist(); } catch (e) {}
+  }
+  if (tab === 'analysis') {
+    ensureAnalysisSymbol().catch(() => {});
+  }
 }
 
 // === 移动端手势：分析页向左滑动返回看板 ===
