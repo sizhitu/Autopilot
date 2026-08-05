@@ -587,6 +587,14 @@ async def get_quote(req: QuoteRequest, request: Request = None,
     优先回退行情缓存，再回退每日 K 线缓存，并标记 stale=True 告知前端数据可能延迟。
     """
     _rate_check(authorization, request, "quote", 20, 60)
+    # 命中短时分析结果缓存：直接返回（同一标的重复打开详情页秒开）
+    cached_hit = cache.get_quote_cache(req.symbol)
+    if cached_hit and not getattr(req, "force", False):
+        cached_hit = dict(cached_hit)
+        cached_hit["stale"] = False
+        cached_hit["cache_hit"] = True
+        return JSONResponse(content=_to_jsonable(cached_hit),
+                            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
     try:
         df = fetcher.fetch(req.symbol, req.days)
         source = "live"
@@ -595,8 +603,9 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         # 第一层兜底：直接用此前缓存的完整行情分析结果
         cached = cache.get_quote_cache(req.symbol)
         if cached:
+            cached = dict(cached)
             cached["stale"] = True
-            return JSONResponse(content=cached,
+            return JSONResponse(content=_to_jsonable(cached),
                                 headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
         # 第二层兜底：用缓存的每日 K 线重建 DataFrame
         stored = cache.get_daily_cache(req.symbol)
@@ -621,6 +630,23 @@ async def get_quote(req: QuoteRequest, request: Request = None,
     nine_turn = calc_nine_turn_display(df)
     extra = _extra_metrics(df, req.symbol)
 
+    # 本地映射行业/简介：随 quote 一并返回，避免前端再等一轮 /api/profile
+    _ind = None
+    _biz = None
+    try:
+        from data_fetcher import STOCK_META
+        _m = STOCK_META.get(str(req.symbol).upper()) or STOCK_META.get(str(req.symbol))
+        if _m:
+            _ind = _m.get("industry")
+            _biz = _m.get("desc")
+        if not _ind:
+            _ind = fetcher.fetch_industry(req.symbol)
+        if not _biz:
+            # 仅在映射缺失时才走网络；常见标的不额外耗时
+            pass
+    except Exception:
+        pass
+
     payload = _to_jsonable({
         "success": True,
         "symbol": req.symbol,
@@ -631,6 +657,8 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         "high_low": extra["high_low"],
         "valuation": extra["valuation"],
         "volume_convergence": _safe_volume_convergence(df),
+        "industry": _ind,
+        "business_summary": _biz,
         "meta": {
             "rows": len(df),
             "last_close": round(float(df['close'].iloc[-1]), 2),
