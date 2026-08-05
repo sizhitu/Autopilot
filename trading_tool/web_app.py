@@ -587,11 +587,10 @@ async def get_quote(req: QuoteRequest, request: Request = None,
     优先回退行情缓存，再回退每日 K 线缓存，并标记 stale=True 告知前端数据可能延迟。
     """
     _rate_check(authorization, request, "quote", 20, 60)
-    # 命中短时缓存且含完整 chart 时才直接返回；无 K 线则重新计算（避免省内存去掉 chart 后详情空白）
+    # 命中短时分析结果缓存：直接返回（同一标的重复打开详情页秒开）
     cached_hit = cache.get_quote_cache(req.symbol)
     if (cached_hit and not getattr(req, "force", False)
             and isinstance(cached_hit, dict)
-            and not cached_hit.get("chart_omitted")
             and isinstance(cached_hit.get("chart"), dict)
             and (cached_hit.get("chart") or {}).get("candles")):
         cached_hit = dict(cached_hit)
@@ -606,10 +605,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
     except Exception as e:
         # 第一层兜底：直接用此前缓存的完整行情分析结果
         cached = cache.get_quote_cache(req.symbol)
-        if (cached and isinstance(cached, dict)
-                and not cached.get("chart_omitted")
-                and isinstance(cached.get("chart"), dict)
-                and (cached.get("chart") or {}).get("candles")):
+        if cached:
             cached = dict(cached)
             cached["stale"] = True
             return JSONResponse(content=_to_jsonable(cached),
