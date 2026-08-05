@@ -162,7 +162,7 @@ def result_to_dict(result) -> dict:
     return d
 
 
-def df_to_chart_json(df: pd.DataFrame, result, show_last=120) -> dict:
+def df_to_chart_json(df: pd.DataFrame, result, show_last=80) -> dict:
     """提取K线+均线数据供前端绘图"""
     recent = df.tail(show_last).copy().reset_index(drop=True)
 
