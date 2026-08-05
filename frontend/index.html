@@ -1990,8 +1990,10 @@ document.addEventListener('touchend', function(e){
 
 // === 自选看板 ===
 let watchNotes = {};
-
-let _lastWatchSkeleton = null;  // 上次代码/名称骨架，进入页先展示
+let _lastWatchSkeleton = null;   // 代码/名称骨架
+let _lastWatchRows = null;       // 上一次完整行情行（刷新中继续展示）
+let _lastWatchUpdatedAt = '';    // 上一次「计算完成」的更新时间
+let _watchWasComputing = false;  // 用于完成时轻提示
 
 function buildSkeletonRows(symbols) {
   if (!symbols || !symbols.length) return [];
@@ -2009,43 +2011,65 @@ function buildSkeletonRows(symbols) {
   }));
 }
 
+function setWatchUpdatedLabel(json) {
+  const el = document.getElementById('watchlistUpdated');
+  if (!el) return;
+  const t = (json && (json.updated_at || json.prev_updated_at)) || _lastWatchUpdatedAt || '';
+  if (json && json.computing) {
+    el.textContent = t ? (`更新于 ${t} · 刷新中…`) : '首次加载中…';
+    return;
+  }
+  if (t) {
+    el.textContent = `更新于 ${t}`;
+    _lastWatchUpdatedAt = t;
+  } else {
+    el.textContent = '';
+  }
+}
+
 async function loadWatchlist(forceRefresh = false) {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
-  // 先展示上一次的代码/名称骨架，避免整表「计算中」空白
-  if (_lastWatchSkeleton && _lastWatchSkeleton.length) {
-    renderWatchlist(_lastWatchSkeleton.map(s => ({ ...s, pending: true, price: s.price || '-', signal: s.signal === '计算中' ? '计算中' : (s.signal || '计算中') })));
-    document.getElementById('watchlistUpdated').textContent = '更新指标中…';
+  // 有上次完整数据则继续展示，并保留上次更新时间
+  if (_lastWatchRows && _lastWatchRows.length) {
+    renderWatchlist(_lastWatchRows);
+    setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
+  } else if (_lastWatchSkeleton && _lastWatchSkeleton.length) {
+    renderWatchlist(buildSkeletonRows(_lastWatchSkeleton));
+    setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
   }
   loading.classList.remove('hidden');
   try {
     const res = await api('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''));
     const json = await res.json();
     if (!json.success) throw new Error('获取失败');
-    // 后台仍在计算：优先渲染已有行；没有行则用 symbols 骨架
+
     if (json.computing) {
+      _watchWasComputing = true;
       let stocks = json.stocks || [];
       const total = json.total || stocks.length || (json.count || 0);
-      if (!stocks.length && (json.symbols || []).length) {
+      // 优先用接口行；若几乎全是占位且本地有完整旧数据，则继续用旧数据（体验更稳）
+      const usable = stocks.filter(s => s && !s.pending && s.price !== '-' && s.signal !== '计算中');
+      if (usable.length === 0 && _lastWatchRows && _lastWatchRows.length) {
+        stocks = _lastWatchRows;
+      } else if (!stocks.length && (json.symbols || []).length) {
         stocks = buildSkeletonRows(json.symbols);
-      }
-      if (!stocks.length && _lastWatchSkeleton && _lastWatchSkeleton.length) {
+      } else if (!stocks.length && _lastWatchSkeleton && _lastWatchSkeleton.length) {
         stocks = buildSkeletonRows(_lastWatchSkeleton);
       }
       watchNotes = json.notes || {};
       if (stocks.length) {
-        const done = stocks.filter(s => !s.pending && s.price !== '-' && s.signal !== '计算中').length;
-        const tag = json.cache_hit ? '缓存刷新中' : '加载中';
-        document.getElementById('watchlistUpdated').textContent = `${tag} ${done}/${total || stocks.length}…`;
+        setWatchUpdatedLabel(json);
         renderWatchlistSummary(json.summary || {});
         renderWatchlist(stocks);
         _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
       } else {
         body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">正在准备自选列表…</td></tr>`;
       }
-      setTimeout(() => loadWatchlist(false), json.cache_hit ? 2000 : 1200);
+      setTimeout(() => loadWatchlist(false), 1500);
       return;
     }
+
     watchNotes = json.notes || {};
     const stocks = Array.isArray(json.stocks) ? json.stocks : [];
     if (json.empty || (currentUser && stocks.length === 0 && !json.computing)) {
@@ -2054,15 +2078,33 @@ async function loadWatchlist(forceRefresh = false) {
       body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:28px 16px;line-height:1.7;">
         自选列表为空<br><span style="font-size:12px;">在上方输入代码或名称，点击「+ 添加」开始关注</span>
       </td></tr>`;
+      _lastWatchRows = null;
       return;
     }
-    const tip = json.cache_hit ? '（缓存秒开）' : '';
-    document.getElementById('watchlistUpdated').textContent = `更新: ${json.updated_at || ''}${tip}`;
+
+    // 全部就绪：更新时间戳 + 可选轻提示
+    setWatchUpdatedLabel(json);
     renderWatchlistSummary(json.summary || {});
     renderWatchlist(stocks);
+    _lastWatchRows = stocks.slice();
     _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
+    if (_watchWasComputing && json.updated_at) {
+      showToast('看板已更新至 ' + json.updated_at, 'ok');
+    }
+    _watchWasComputing = false;
   } catch(e) {
-    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message || e}</td></tr>`;
+    // 失败时尽量保留旧表，只改文案
+    if (_lastWatchRows && _lastWatchRows.length) {
+      setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt });
+      const el = document.getElementById('watchlistUpdated');
+      if (el && _lastWatchUpdatedAt) {
+        el.textContent = `更新于 ${_lastWatchUpdatedAt} · 刷新失败`;
+      }
+      showToast('看板刷新失败，仍显示上次数据', 'info');
+    } else {
+      body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message || e}</td></tr>`;
+    }
+    _watchWasComputing = false;
   } finally {
     loading.classList.add('hidden');
   }
