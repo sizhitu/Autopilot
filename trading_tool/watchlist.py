@@ -555,15 +555,18 @@ def _prev_updated_at(cache_entry) -> str:
 def _compute_watchlist(items: list = None, user_id: int = None, key: int = None) -> dict:
     """真正计算全部关注股票状态（并行抓取提速，应在后台线程执行）。
 
-    当传入 key 时，会“边算边写”：每完成一只就把已就绪的股票增量写入
-    _CACHES[key]['data']，使前端可以轮询到逐行就绪的看板，而不必傻等全部算完。
+    刷新策略：先保留上一轮完整行，每算出一只就**原地替换该行**，
+    未完成的代码继续显示旧行情，避免「一瞬间整表变空再填」。
     """
     if items is None:
         items = resolve_watchlist_items(user_id)
     total = len(items)
-    # 初始化增量缓存（key 给定时），让前端可立即轮询到“计算中（含部分结果）”
-    if key is not None:
-        seeded0 = [{
+
+    def _sort_key(x):
+        return (0 if (x.get('market') or '美股') == '美股' else 1, str(x.get('code') or ''))
+
+    def _placeholder(c, n):
+        return {
             'code': c, 'name': n or c,
             'market': '美股' if not str(c).isdigit() else 'A股',
             'price': '-', 'change_1d': None, 'change_5d': None,
@@ -573,23 +576,45 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
             'trend_filter': '—', 'trend_filter_color': 'gray',
             'nine_turn': '—', 'high_low': '—',
             'pending': True, 'error': None,
-        } for c, n in items]
-        _CACHES[key] = {
-            'data': {'success': True, 'computing': True, 'updated_at': '',
-                     'count': 0, 'total': total, 'summary': {}, 'stocks': seeded0,
-                     'symbols': [{'code': c, 'name': n} for c, n in items]},
-            'ts': time.time(), 'refreshing': True,
         }
 
-    def _sort_key(x):
-        return (0 if (x.get('market') or '美股') == '美股' else 1, x['code'])
-
-    # 计算中保留「上次完整结果」的更新时间，全部完成后再换成新时间
     prev_ts = ""
+    prev_by_code = {}
     if key is not None and key in _CACHES:
-        prev_ts = _prev_updated_at(_CACHES.get(key))
+        prev_data = (_CACHES[key].get('data') or {})
+        prev_ts = prev_data.get('updated_at') or prev_data.get('prev_updated_at') or ''
+        for s in (prev_data.get('stocks') or []):
+            if s and s.get('code'):
+                prev_by_code[str(s['code']).upper()] = dict(s)
 
-    partial = []
+    base = {}
+    for c, n in items:
+        cu = str(c).upper()
+        old = prev_by_code.get(cu)
+        if old and old.get('signal') not in (None, '', '计算中') and old.get('price') not in (None, '', '-', '…'):
+            row = dict(old)
+            row['name'] = n or row.get('name') or c
+            row['pending'] = False
+            row['stale_row'] = True
+            base[cu] = row
+        else:
+            base[cu] = _placeholder(c, n)
+
+    if key is not None:
+        stocks0 = sorted(base.values(), key=_sort_key)
+        _CACHES[key] = {
+            'data': {
+                'success': True, 'computing': True,
+                'updated_at': prev_ts, 'prev_updated_at': prev_ts,
+                'count': sum(1 for s in stocks0 if not s.get('pending')),
+                'total': total, 'summary': {}, 'stocks': stocks0,
+                'symbols': [{'code': c, 'name': n} for c, n in items],
+            },
+            'ts': (_CACHES.get(key) or {}).get('ts') or time.time(),
+            'refreshing': True,
+        }
+
+    done = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
         fut_to_code = {
             ex.submit(_status_dict_cached, code, name, 200): code for code, name in items
@@ -604,20 +629,34 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
                     'market': '美股' if not str(code).isdigit() else 'A股',
                     'price': '-', 'signal': '观望', 'error': '获取失败', 'pending': False,
                 }
-            partial.append(row)
+            row = dict(row)
+            row['pending'] = False
+            row['stale_row'] = False
+            done[str(code).upper()] = row
+
             if key is not None:
-                sorted_partial = sorted(partial, key=_sort_key)
-                # 合并：已算完的覆盖，未算完的保留旧行（若有）
+                merged = []
+                for c, n in items:
+                    cu = str(c).upper()
+                    if cu in done:
+                        merged.append(done[cu])
+                    else:
+                        merged.append(base.get(cu) or _placeholder(c, n))
+                merged.sort(key=_sort_key)
                 _CACHES[key]['data'] = {
                     'success': True, 'computing': True,
-                    'updated_at': prev_ts,           # 仍显示上次时间
-                    'prev_updated_at': prev_ts,
-                    'count': len(sorted_partial), 'total': total,
-                    'summary': {}, 'stocks': sorted_partial,
+                    'updated_at': prev_ts, 'prev_updated_at': prev_ts,
+                    'count': len(done), 'total': total,
+                    'summary': {}, 'stocks': merged,
                     'symbols': [{'code': c, 'name': n} for c, n in items],
                 }
 
-    # 最终排序：美股在前，A股在后
+    # 最终：按自选顺序合并全部 done
+    partial = []
+    for c, n in items:
+        cu = str(c).upper()
+        partial.append(done.get(cu) or base.get(cu) or _placeholder(c, n))
+# 最终排序：美股在前，A股在后
     partial.sort(key=_sort_key)
 
     # 分类汇总（操盘建议）
