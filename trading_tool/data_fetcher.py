@@ -75,6 +75,8 @@ STOCK_META = {
     'WTI':  {'industry': '大宗商品·原油', 'desc': '跟踪美国 WTI 原油价格的商品标的（期货/ETF）。'},
     'AVGO': {'industry': '半导体·软件', 'desc': '通信与 AI 定制芯片(ASIC)及基础设施软件(VMware)供应商。'},
     'NVDA': {'industry': '半导体·AI芯片', 'desc': 'GPU 与加速计算龙头，主营数据中心 AI 芯片、游戏显卡与网络。'},
+    'TSLA': {'industry': '新能源车·自动驾驶', 'desc': '电动汽车与储能、机器人业务，主营整车销售与 FSD 软件。'},
+    '159501': {'industry': '纳指ETF', 'desc': '嘉实跟踪纳斯达克100，配置美股科技龙头的 QDII-ETF。'},
     'INTC': {'industry': '半导体·CPU', 'desc': '全球主要 CPU 与晶圆代工供应商，覆盖 PC、数据中心与代工。'},
     # A股 ETF（基金，东财 F10 无 ORG_PROFILE，故人工维护兜底）
     '159880': {'industry': '有色金属ETF', 'desc': '跟踪有色金属指数的场内基金，覆盖铜、铝、黄金等工业金属与贵金属。'},
@@ -111,7 +113,7 @@ _STOOQ_INDEX = {'^GSPC': '.inx', '^IXIC': '.ixic', '^DJI': '.dji', '^VIX': '^vix
 # K线缓存：同一标的短时间内（看板刷新 + 详情页）只真实抓取一次，显著降低限流命中率
 _KLINE_CACHE = {}
 _KLINE_CACHE_TS = {}
-_KLINE_TTL = 120  # 秒
+_KLINE_TTL = 180  # 秒
 
 
 def _kline_cache_get(key):
@@ -460,7 +462,7 @@ class DataFetcher:
                   'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
                   'klt': '101', 'fqt': '1', 'secid': secid,
                   'end': '20500101', 'lmt': str(min(days + 60, 800))}
-        r = self.session.get(url, params=params, timeout=8,
+        r = self.session.get(url, params=params, timeout=4,
                              headers={'User-Agent': _rotate_ua(),
                                       'Referer': 'https://quote.eastmoney.com/'})
         if r.status_code != 200:
@@ -619,32 +621,32 @@ class DataFetcher:
 
     def fetch_cn_stock(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
-        A 股日 K 优先级：
-          1) 东方财富前复权（fqt=1）
-          2) 腾讯前复权（qfq）——东财在海外机房常失败时的主备源
-          3) 新浪未复权 + 本地拆分修正（检测 1:2 等跳空后缩放历史价）
+        A 股日 K 优先级（兼顾速度与复权准确性）：
+          1) 腾讯前复权（qfq）——海外/Render 上通常最快、最稳
+          2) 东方财富前复权（fqt=1，短超时）
+          3) 新浪未复权 + 本地拆分修正
 
         解决：159880 等 ETF 拆分后，未复权昨收导致日涨跌约 -50% 的假值。
         """
         sina_symbol = self._normalize_cn_symbol(symbol)
         out = pd.DataFrame()
 
-        # 1) 东财前复权
+        # 1) 腾讯前复权（海外机房优先，避免先等东财超时）
         for sym in (sina_symbol, self._swap_exchange(sina_symbol)):
             if len(out) > 0:
                 break
             try:
-                out = self._fetch_em_kline(sym, days)
+                out = self._fetch_tencent_qfq_kline(sym, days)
             except Exception:
                 out = pd.DataFrame()
 
-        # 2) 腾讯前复权
+        # 2) 东财前复权（短超时）
         if len(out) == 0:
             for sym in (sina_symbol, self._swap_exchange(sina_symbol)):
                 if len(out) > 0:
                     break
                 try:
-                    out = self._fetch_tencent_qfq_kline(sym, days)
+                    out = self._fetch_em_kline(sym, days)
                 except Exception:
                     out = pd.DataFrame()
 
@@ -659,7 +661,7 @@ class DataFetcher:
                 out = self._adjust_cn_splits(out)
 
         if len(out) == 0:
-            raise ValueError("东方财富/腾讯/新浪均未返回数据，请检查股票代码")
+            raise ValueError("腾讯/东方财富/新浪均未返回数据，请检查股票代码")
         return out.tail(days).reset_index(drop=True)
 
     def fetch(self, symbol: str, days: int = 300) -> pd.DataFrame:
@@ -756,7 +758,7 @@ class DataFetcher:
             em = ('SH' if code.startswith('6') else 'SZ') + code
             r = self.session.get(
                 f"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={em}",
-                timeout=12,
+                timeout=6,
                 headers={'User-Agent': 'Mozilla/5.0',
                          'Referer': 'https://emweb.securities.eastmoney.com/'})
             if r.status_code == 200:
@@ -816,7 +818,7 @@ class DataFetcher:
         try:
             r = self.session.get(
                 f"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={em_code}",
-                timeout=12,
+                timeout=6,
                 headers={'User-Agent': 'Mozilla/5.0',
                          'Referer': 'https://emweb.securities.eastmoney.com/'})
             if r.status_code != 200:
@@ -927,7 +929,7 @@ class DataFetcher:
         try:
             r = self.session.get(
                 f"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={em_code}",
-                timeout=12,
+                timeout=6,
                 headers={'User-Agent': 'Mozilla/5.0',
                          'Referer': 'https://emweb.securities.eastmoney.com/'})
             if r.status_code != 200:
