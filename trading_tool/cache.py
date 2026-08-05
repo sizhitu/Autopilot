@@ -153,13 +153,22 @@ def get_quote_cache(symbol: str) -> Optional[dict]:
 
 
 def set_quote_cache(symbol: str, payload: dict, ttl: int = QUOTE_TTL) -> None:
-    # 缓存去掉大体积 chart 序列，仅保留分析摘要，显著降低内存
-    slim = dict(payload) if isinstance(payload, dict) else payload
-    if isinstance(slim, dict) and "chart" in slim:
-        slim = dict(slim)
-        slim.pop("chart", None)
-        slim["chart_omitted"] = True
-    set_json(f"quote:{symbol.upper()}", slim, ttl)
+    """缓存完整分析结果（含 chart）。K 线过长时截断 candles 以控制内存。"""
+    data = dict(payload) if isinstance(payload, dict) else payload
+    if isinstance(data, dict) and isinstance(data.get("chart"), dict):
+        ch = dict(data["chart"])
+        candles = ch.get("candles")
+        max_n = 80
+        if isinstance(candles, list) and len(candles) > max_n:
+            ch = dict(ch)
+            for k, v in list(ch.items()):
+                if isinstance(v, list) and len(v) == len(candles):
+                    ch[k] = v[-max_n:]
+            ch["candles"] = candles[-max_n:]
+        data = dict(data)
+        data["chart"] = ch
+        data.pop("chart_omitted", None)
+    set_json(f"quote:{symbol.upper()}", data, ttl)
 
 
 def get_report_cache(symbol: str) -> Optional[dict]:
