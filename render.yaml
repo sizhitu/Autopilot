@@ -32,11 +32,21 @@ services:
         value: /tmp/autopilot.db
 
       # ===== 缓存层 =====
-      # 早期可留空，自动回退到 Postgres `cache` 表；后期接入 Upstash Redis：
+      # 未配 Upstash 时自动用 Supabase `cache` 表；配了 Redis 则优先 Redis。
       - key: UPSTASH_REDIS_REST_URL
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
+      # quote 分析结果（含 chart）：盘中短缓存 / 休市长缓存
+      # 不要同时设 CACHE_QUOTE_TTL（若设置则强制固定秒数，忽略下面两项）
+      - key: CACHE_QUOTE_TTL_ACTIVE
+        value: "900"          # 交易活跃时段 15 分钟
+      - key: CACHE_QUOTE_TTL_IDLE
+        value: "86400"        # 休市/周末 24 小时
+      - key: CACHE_QUOTE_L1_TTL
+        value: "60"           # 进程内防抖 60 秒
+      - key: CACHE_MEM_MAX_KEYS
+        value: "40"           # 进程内存缓存条目上限
 
       # ===== 应用邮件（EDM / 客服工单，走 Resend API）=====
       # 认证邮件（验证码 / Magic Link）在 Supabase 后台把 Auth 邮件绑定到 Resend。
