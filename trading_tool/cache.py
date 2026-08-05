@@ -26,12 +26,30 @@ import supabase_client
 UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
 UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
 
-# 本地内存回退
+# 本地内存回退（有上限，防止 Render 小实例 OOM）
 _MEM: dict = {}
 _MEM_TS: dict = {}
+_MEM_MAX_KEYS = int(os.getenv("CACHE_MEM_MAX_KEYS", "40"))
 
-QUOTE_TTL = int(os.getenv("CACHE_QUOTE_TTL", "300"))       # 实时行情缓存（秒）
+QUOTE_TTL = int(os.getenv("CACHE_QUOTE_TTL", "180"))       # 实时行情缓存（秒）略缩短省内存
 REPORT_TTL = int(os.getenv("CACHE_REPORT_TTL", "21600"))   # AI 报告缓存（秒，6h）
+
+
+def _mem_prune(now: float = None) -> None:
+    """清理过期项；超上限时按过期时间淘汰最旧。"""
+    now = now if now is not None else time.time()
+    expired = [k for k, exp in list(_MEM_TS.items()) if exp <= now]
+    for k in expired:
+        _MEM.pop(k, None)
+        _MEM_TS.pop(k, None)
+    if len(_MEM) <= _MEM_MAX_KEYS:
+        return
+    # 按过期时间升序淘汰（越早过期越先删）
+    ordered = sorted(_MEM_TS.items(), key=lambda x: x[1])
+    overflow = len(_MEM) - _MEM_MAX_KEYS
+    for k, _ in ordered[:overflow]:
+        _MEM.pop(k, None)
+        _MEM_TS.pop(k, None)
 
 _BACKEND = None
 
@@ -76,9 +94,11 @@ def get_json(key: str) -> Optional[dict]:
         except Exception:
             return None
     # memory
+    _mem_prune()
     if key in _MEM and (key not in _MEM_TS or _MEM_TS[key] > time.time()):
         return _MEM[key]
     _MEM.pop(key, None)
+    _MEM_TS.pop(key, None)
     return None
 
 
@@ -104,6 +124,7 @@ def set_json(key: str, value: dict, ttl: int = QUOTE_TTL) -> None:
     # memory
     _MEM[key] = value
     _MEM_TS[key] = time.time() + ttl
+    _mem_prune()
 
 
 def delete(key: str) -> None:
@@ -132,7 +153,13 @@ def get_quote_cache(symbol: str) -> Optional[dict]:
 
 
 def set_quote_cache(symbol: str, payload: dict, ttl: int = QUOTE_TTL) -> None:
-    set_json(f"quote:{symbol.upper()}", payload, ttl)
+    # 缓存去掉大体积 chart 序列，仅保留分析摘要，显著降低内存
+    slim = dict(payload) if isinstance(payload, dict) else payload
+    if isinstance(slim, dict) and "chart" in slim:
+        slim = dict(slim)
+        slim.pop("chart", None)
+        slim["chart_omitted"] = True
+    set_json(f"quote:{symbol.upper()}", slim, ttl)
 
 
 def get_report_cache(symbol: str) -> Optional[dict]:
