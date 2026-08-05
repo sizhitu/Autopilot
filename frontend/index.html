@@ -1826,7 +1826,10 @@ async function fetchQuote(symbol, name, market) {
     updateNineTurnDetail(json.nine_turn);
     updateHlVal(json.high_low, json.valuation);
     updateVolumeConvergence(json.volume_convergence);
-    fetchProfile(symbol);   // 异步补充公司主营业务（不阻塞图表）
+    applyProfileBits(json.industry, json.business_summary);
+    if (!json.industry || !json.business_summary) {
+      fetchProfile(symbol);
+    }
     lastChartData = json.chart;
     switchView('analysis');      // 先切换视图，确保画布可见
     switchMainTab('analysis');   // 跳转到分析工具主页面
@@ -1837,6 +1840,23 @@ async function fetchQuote(symbol, name, market) {
 }
 
 // === 公司主营业务 + 行业分类（异步补充） ===
+
+function applyProfileBits(industry, businessSummary) {
+  const el = document.getElementById('businessSummary');
+  const tagEl = document.getElementById('industryTag');
+  if (!el || !tagEl) return;
+  if (industry) {
+    tagEl.textContent = '行业：' + industry;
+    tagEl.style.display = 'inline-block';
+  }
+  if (businessSummary && String(businessSummary).trim()) {
+    let txt = String(businessSummary).trim().replace(/\s+/g, ' ');
+    if (txt.length > 160) txt = txt.slice(0, 160) + '…';
+    el.textContent = '主营业务：' + txt;
+    el.style.display = 'block';
+  }
+}
+
 async function fetchProfile(symbol) {
   const el = document.getElementById('businessSummary');
   const tagEl = document.getElementById('industryTag');
