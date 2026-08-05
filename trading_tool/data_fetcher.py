@@ -113,19 +113,36 @@ _STOOQ_INDEX = {'^GSPC': '.inx', '^IXIC': '.ixic', '^DJI': '.dji', '^VIX': '^vix
 # K线缓存：同一标的短时间内（看板刷新 + 详情页）只真实抓取一次，显著降低限流命中率
 _KLINE_CACHE = {}
 _KLINE_CACHE_TS = {}
-_KLINE_TTL = 180  # 秒
+_KLINE_TTL = 120  # 秒
+_KLINE_CACHE_MAX = 32  # 最多缓存多少份 DataFrame，防止 OOM
+
+
+def _kline_cache_prune(now=None):
+    now = now if now is not None else time.time()
+    dead = [k for k, ts in list(_KLINE_CACHE_TS.items()) if (now - ts) >= _KLINE_TTL]
+    for k in dead:
+        _KLINE_CACHE.pop(k, None)
+        _KLINE_CACHE_TS.pop(k, None)
+    if len(_KLINE_CACHE) <= _KLINE_CACHE_MAX:
+        return
+    ordered = sorted(_KLINE_CACHE_TS.items(), key=lambda x: x[1])
+    for k, _ in ordered[: max(0, len(_KLINE_CACHE) - _KLINE_CACHE_MAX)]:
+        _KLINE_CACHE.pop(k, None)
+        _KLINE_CACHE_TS.pop(k, None)
 
 
 def _kline_cache_get(key):
+    _kline_cache_prune()
     ts = _KLINE_CACHE_TS.get(key)
     if ts and (time.time() - ts) < _KLINE_TTL:
         return _KLINE_CACHE.get(key)
     return None
 
 
-def _kline_cache_set(key, df):
-    _KLINE_CACHE[key] = df
+def _kline_cache_set(key, frame):
+    _KLINE_CACHE[key] = frame
     _KLINE_CACHE_TS[key] = time.time()
+    _kline_cache_prune()
 
 
 class DataFetcher:
