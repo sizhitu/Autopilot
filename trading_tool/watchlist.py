@@ -510,15 +510,14 @@ def _status_to_dict(st: StockStatus) -> dict:
 
 # 缓存：按 user_id 分桶（0 = 全局默认看板），后台刷新，接口永远秒回
 _CACHES = {}          # key -> {'data':..., 'ts':..., 'refreshing':...}
-_WATCHLIST_SOFT_TTL = 45    # 秒内纯内存命中，毫秒级返回且不触发重算
-_WATCHLIST_TTL = 900        # 可展示热数据窗口（后台静默刷新）
-_STATUS_CACHE = {}          # code -> {'ts', 'data'} 单票状态短缓存
+_WATCHLIST_SOFT_TTL = 45    # 秒内纯内存命中，毫秒级返回
+_WATCHLIST_TTL = 900
+_STATUS_CACHE = {}
 _STATUS_TTL = 90
 _refresh_lock = threading.Lock()
 
 
 def _status_dict_cached(code: str, name: str, days: int = 200) -> dict:
-    """单票状态短缓存：看板多用户/重复刷新时毫秒级命中。"""
     k = str(code).strip().upper()
     hit = _STATUS_CACHE.get(k)
     now = time.time()
@@ -536,16 +535,21 @@ def _status_dict_cached(code: str, name: str, days: int = 200) -> dict:
 
 
 def _has_usable_stocks(data: dict) -> bool:
-    stocks = (data or {}).get("stocks") or []
-    for s in stocks:
-        if not s:
-            continue
-        if s.get("error"):
+    for s in (data or {}).get("stocks") or []:
+        if not s or s.get("error"):
             continue
         px = s.get("price")
         if px not in (None, "", "-", "…") and s.get("signal") not in (None, "", "计算中"):
             return True
     return False
+
+
+def _prev_updated_at(cache_entry) -> str:
+    if not cache_entry or not isinstance(cache_entry.get("data"), dict):
+        return ""
+    return (cache_entry["data"].get("updated_at")
+            or cache_entry["data"].get("prev_updated_at")
+            or "")
 
 
 def _compute_watchlist(items: list = None, user_id: int = None, key: int = None) -> dict:
@@ -580,6 +584,11 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
     def _sort_key(x):
         return (0 if (x.get('market') or '美股') == '美股' else 1, x['code'])
 
+    # 计算中保留「上次完整结果」的更新时间，全部完成后再换成新时间
+    prev_ts = ""
+    if key is not None and key in _CACHES:
+        prev_ts = _prev_updated_at(_CACHES.get(key))
+
     partial = []
     with ThreadPoolExecutor(max_workers=6) as ex:
         fut_to_code = {
@@ -596,13 +605,16 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
                     'price': '-', 'signal': '观望', 'error': '获取失败', 'pending': False,
                 }
             partial.append(row)
-            # 增量写回缓存：每完成一只就更新，前端即可逐行看到已就绪的股票
             if key is not None:
                 sorted_partial = sorted(partial, key=_sort_key)
+                # 合并：已算完的覆盖，未算完的保留旧行（若有）
                 _CACHES[key]['data'] = {
-                    'success': True, 'computing': True, 'updated_at': '',
+                    'success': True, 'computing': True,
+                    'updated_at': prev_ts,           # 仍显示上次时间
+                    'prev_updated_at': prev_ts,
                     'count': len(sorted_partial), 'total': total,
                     'summary': {}, 'stocks': sorted_partial,
+                    'symbols': [{'code': c, 'name': n} for c, n in items],
                 }
 
     # 最终排序：美股在前，A股在后
@@ -698,7 +710,7 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
     now = time.time()
     cache = _CACHES.get(key)
 
-    # —— 毫秒级路径：软 TTL 内完整命中 ——
+    # 软 TTL：完整可用数据 → 毫秒级返回，不改时间戳
     if (not force and cache and isinstance(cache.get('data'), dict)
             and (now - cache.get('ts', 0)) < _WATCHLIST_SOFT_TTL
             and _has_usable_stocks(cache['data'])):
@@ -708,18 +720,25 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         out['stale'] = False
         return out
 
-    # —— SWR：有可用旧数据则立刻返回，后台静默刷新 ——
-    if (cache and isinstance(cache.get('data'), dict)
-            and _has_usable_stocks(cache['data'])):
+    # SWR：有上次结果 → 立刻返回（保留上次 updated_at），后台刷新
+    if cache and isinstance(cache.get('data'), dict) and _has_usable_stocks(cache['data']):
         out = dict(cache['data'])
         out['cache_hit'] = True
         out['stale'] = (now - cache.get('ts', 0)) >= _WATCHLIST_SOFT_TTL
+        prev_ts = out.get('updated_at') or out.get('prev_updated_at') or ''
+        out['prev_updated_at'] = prev_ts
+        out['updated_at'] = prev_ts  # 刷新完成前不改展示时间
         need_refresh = force or out['stale']
         if need_refresh:
             with _refresh_lock:
                 c2 = _CACHES.get(key)
                 if c2 and not c2.get('refreshing'):
                     c2['refreshing'] = True
+                    # 启动刷新时不要清空 updated_at
+                    if isinstance(c2.get('data'), dict):
+                        c2['data']['computing'] = True
+                        c2['data']['prev_updated_at'] = prev_ts
+                        c2['data']['updated_at'] = prev_ts
                     threading.Thread(
                         target=_background_refresh, args=(key, items, user_id), daemon=True
                     ).start()
@@ -728,16 +747,16 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
             out['computing'] = bool(cache.get('refreshing'))
         return out
 
-    # —— 无可用缓存：骨架 + 后台计算 ——
+    # 无可用缓存：骨架 + 后台计算
     with _refresh_lock:
         cache = _CACHES.get(key)
         if not (cache and cache.get('refreshing')):
             item_codes = [c for c, _ in items]
             item_name = {c: n for c, n in items}
             prev = []
+            prev_ts = _prev_updated_at(cache) if cache else ''
             if cache and isinstance(cache.get('data'), dict):
                 prev = list(cache['data'].get('stocks') or [])
-            # 只保留仍在自选中的旧行
             code_set = set(item_codes)
             seeded = [s for s in prev if s.get('code') in code_set]
             have = {s.get('code') for s in seeded}
@@ -755,7 +774,8 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                         'pending': True, 'error': None,
                     })
             _CACHES[key] = {
-                'data': {'success': True, 'computing': True, 'updated_at': '',
+                'data': {'success': True, 'computing': True,
+                         'updated_at': prev_ts, 'prev_updated_at': prev_ts,
                          'count': len(seeded), 'total': len(items),
                          'summary': {}, 'stocks': seeded,
                          'symbols': [{'code': c, 'name': n} for c, n in items]},
@@ -787,7 +807,6 @@ if __name__ == "__main__":
 
 
 def _warm_default_watchlist():
-    """进程启动后预热未登录默认看板，使首屏接近毫秒级。"""
     try:
         time.sleep(1.5)
         get_watchlist_status(user_id=None, force=True, is_admin=False)
