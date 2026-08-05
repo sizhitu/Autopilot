@@ -2035,14 +2035,15 @@ async function loadWatchlist(forceRefresh = false) {
       watchNotes = json.notes || {};
       if (stocks.length) {
         const done = stocks.filter(s => !s.pending && s.price !== '-' && s.signal !== '计算中').length;
-        document.getElementById('watchlistUpdated').textContent = `加载中 ${done || stocks.length}/${total || stocks.length}…`;
+        const tag = json.cache_hit ? '缓存刷新中' : '加载中';
+        document.getElementById('watchlistUpdated').textContent = `${tag} ${done}/${total || stocks.length}…`;
         renderWatchlistSummary(json.summary || {});
         renderWatchlist(stocks);
         _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
       } else {
         body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">正在准备自选列表…</td></tr>`;
       }
-      setTimeout(() => loadWatchlist(false), 1500);
+      setTimeout(() => loadWatchlist(false), json.cache_hit ? 2000 : 1200);
       return;
     }
     watchNotes = json.notes || {};
@@ -2055,7 +2056,8 @@ async function loadWatchlist(forceRefresh = false) {
       </td></tr>`;
       return;
     }
-    document.getElementById('watchlistUpdated').textContent = `更新: ${json.updated_at || ''}`;
+    const tip = json.cache_hit ? '（缓存秒开）' : '';
+    document.getElementById('watchlistUpdated').textContent = `更新: ${json.updated_at || ''}${tip}`;
     renderWatchlistSummary(json.summary || {});
     renderWatchlist(stocks);
     _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
