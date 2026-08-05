@@ -1901,35 +1901,8 @@ async function runAnalysis() {
 async function loadSample() {
   document.getElementById('csvFile').value = '';
   currentSymbol = '';
-  currentName = '';
-  currentMarket = '';
-  const info = document.getElementById('stockInfo');
-  info.style.display = 'flex';
-  info.innerHTML = '<span class="symbol">SAMPLE</span> <span class="stock-name">模拟数据</span> <span class="market" style="color:var(--text-dim);">[演示]</span>';
-  document.getElementById('industryTag').style.display = 'none';
-  document.getElementById('businessSummary').style.display = 'none';
+  document.getElementById('stockInfo').style.display = 'none';
   runAnalysis();
-}
-
-// 分析工具默认真实标的（未从看板点入、也未搜索时）
-const DEFAULT_ANALYSIS = { code: 'NVDA', name: '英伟达', market: '美股' };
-let _analysisBootstrapped = false;
-
-async function ensureAnalysisSymbol() {
-  if (currentSymbol) {
-    if (lastChartData) {
-      try { drawChart(lastChartData); } catch (e) {}
-    }
-    return;
-  }
-  if (_analysisBootstrapped) return;
-  _analysisBootstrapped = true;
-  try {
-    await fetchQuote(DEFAULT_ANALYSIS.code, DEFAULT_ANALYSIS.name, DEFAULT_ANALYSIS.market);
-  } catch (e) {
-    _analysisBootstrapped = false;
-    document.getElementById('chartMeta').textContent = '默认标的加载失败，请搜索代码';
-  }
 }
 
 // === 主Tab切换 ===
@@ -1943,7 +1916,6 @@ function switchMainTab(tab) {
   document.getElementById('analysisView').classList.toggle('hidden', tab !== 'analysis');
   document.getElementById('watchlistView').classList.toggle('hidden', tab !== 'watchlist');
   if (tab === 'watchlist') loadWatchlist();
-  if (tab === 'analysis') ensureAnalysisSymbol();
 }
 
 // === 移动端手势：分析页向左滑动返回看板 ===
@@ -1964,28 +1936,58 @@ document.addEventListener('touchend', function(e){
 // === 自选看板 ===
 let watchNotes = {};
 
+let _lastWatchSkeleton = null;  // 上次代码/名称骨架，进入页先展示
+
+function buildSkeletonRows(symbols) {
+  if (!symbols || !symbols.length) return [];
+  return symbols.map(s => ({
+    code: s.code || s.symbol,
+    name: s.name || s.code || '',
+    market: s.market || ((/^[0-9]/.test(String(s.code || s.symbol || ''))) ? 'A股' : '美股'),
+    price: '-', change_1d: null, change_5d: null,
+    signal: '计算中', signal_color: 'gray',
+    action: '计算中', action_color: 'gray',
+    timing: '—', timing_color: 'gray',
+    trend_filter: '—', trend_filter_color: 'gray',
+    nine_turn: '—', high_low: '—',
+    pending: true, error: null,
+  }));
+}
+
 async function loadWatchlist(forceRefresh = false) {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
+  // 先展示上一次的代码/名称骨架，避免整表「计算中」空白
+  if (_lastWatchSkeleton && _lastWatchSkeleton.length) {
+    renderWatchlist(_lastWatchSkeleton.map(s => ({ ...s, pending: true, price: s.price || '-', signal: s.signal === '计算中' ? '计算中' : (s.signal || '计算中') })));
+    document.getElementById('watchlistUpdated').textContent = '更新指标中…';
+  }
   loading.classList.remove('hidden');
   try {
     const res = await api('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''));
     const json = await res.json();
     if (!json.success) throw new Error('获取失败');
-    // 后台仍在计算：渲染已就绪的行（逐行就绪），并继续轮询，直到全部完成
+    // 后台仍在计算：优先渲染已有行；没有行则用 symbols 骨架
     if (json.computing) {
-      const stocks = json.stocks || [];
+      let stocks = json.stocks || [];
       const total = json.total || stocks.length || (json.count || 0);
+      if (!stocks.length && (json.symbols || []).length) {
+        stocks = buildSkeletonRows(json.symbols);
+      }
+      if (!stocks.length && _lastWatchSkeleton && _lastWatchSkeleton.length) {
+        stocks = buildSkeletonRows(_lastWatchSkeleton);
+      }
+      watchNotes = json.notes || {};
       if (stocks.length) {
-        watchNotes = json.notes || {};
-        document.getElementById('watchlistUpdated').textContent = `加载中 ${stocks.length}/${total}…`;
+        const done = stocks.filter(s => !s.pending && s.price !== '-' && s.signal !== '计算中').length;
+        document.getElementById('watchlistUpdated').textContent = `加载中 ${done || stocks.length}/${total || stocks.length}…`;
         renderWatchlistSummary(json.summary || {});
         renderWatchlist(stocks);
+        _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
       } else {
-        body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">数据计算中，请稍候…</td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">正在准备自选列表…</td></tr>`;
       }
-      // 继续轮询，逐行刷新已就绪的股票
-      setTimeout(() => loadWatchlist(false), 2000);
+      setTimeout(() => loadWatchlist(false), 1500);
       return;
     }
     watchNotes = json.notes || {};
@@ -2001,6 +2003,7 @@ async function loadWatchlist(forceRefresh = false) {
     document.getElementById('watchlistUpdated').textContent = `更新: ${json.updated_at || ''}`;
     renderWatchlistSummary(json.summary || {});
     renderWatchlist(stocks);
+    _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
   } catch(e) {
     body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message || e}</td></tr>`;
   } finally {
@@ -2040,6 +2043,7 @@ function renderWatchlistSummary(summary) {
 }
 
 function renderWatchlist(stocks) {
+  const isPending = (s) => !!(s && (s.pending || s.signal === '计算中' || s.price === '-' || s.price === '' || s.price == null));
   // 默认按代码字母顺序排序
   stocks = (stocks || []).slice().sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { sensitivity: 'base' }));
   const body = document.getElementById('watchlistBody');
@@ -2095,8 +2099,8 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 6px;font-weight:600;color:var(--gold);white-space:nowrap;">${
         currentUser ? `<button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-right:4px;">✕</button>` : ''
       }<span onclick="event.stopPropagation();editNote('${s.code}')" title="${(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};border-bottom:${watchNotes[s.code]?'1px dotted var(--gold)':'none'};">${s.code}</span></td>
-      <td style="padding:5px 6px;">${s.name}</td>
-      <td style="padding:5px 6px;text-align:right;font-family:monospace;">${s.price}</td>
+      <td style="padding:5px 6px;font-weight:500;">${s.name || '—'}</td>
+      <td style="padding:5px 6px;text-align:right;font-family:monospace;color:${(s.pending || s.price === '-' || s.signal === '计算中') ? 'var(--text-dim)' : 'inherit'};">${(s.pending || s.price === '-' || s.signal === '计算中') && (s.price === '-' || s.price == null) ? '…' : s.price}</td>
       <td style="padding:5px 6px;text-align:right;color:${dayColor};font-weight:600;">${dayText}</td>
       <td style="padding:5px 6px;text-align:right;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:5px 6px;white-space:normal;line-height:1.25;"><span style="color:${timingColor};font-weight:600;">${timingText}</span>${ntSub}</td>
@@ -2604,6 +2608,7 @@ async function loadLadderTable() {
   data.sell_ladder.forEach(i => { const c = i.action === '持有' ? 'hold' : 'sell'; st.innerHTML += `<tr><td>${i.trigger}</td><td class="${c}">${i.action}</td><td>${i.desc}</td></tr>`; });
 }
 loadLadderTable().catch(()=>{});
+loadSample();
 loadWatchlist();  // 自选看板为默认页，打开即加载
 initAuth().then(function(){ try { maybeHandlePasswordRecovery(); } catch(e){} });
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
