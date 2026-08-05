@@ -510,8 +510,42 @@ def _status_to_dict(st: StockStatus) -> dict:
 
 # 缓存：按 user_id 分桶（0 = 全局默认看板），后台刷新，接口永远秒回
 _CACHES = {}          # key -> {'data':..., 'ts':..., 'refreshing':...}
-_WATCHLIST_TTL = 300
+_WATCHLIST_SOFT_TTL = 45    # 秒内纯内存命中，毫秒级返回且不触发重算
+_WATCHLIST_TTL = 900        # 可展示热数据窗口（后台静默刷新）
+_STATUS_CACHE = {}          # code -> {'ts', 'data'} 单票状态短缓存
+_STATUS_TTL = 90
 _refresh_lock = threading.Lock()
+
+
+def _status_dict_cached(code: str, name: str, days: int = 200) -> dict:
+    """单票状态短缓存：看板多用户/重复刷新时毫秒级命中。"""
+    k = str(code).strip().upper()
+    hit = _STATUS_CACHE.get(k)
+    now = time.time()
+    if hit and (now - hit["ts"]) < _STATUS_TTL and isinstance(hit.get("data"), dict):
+        d = dict(hit["data"])
+        if name:
+            d["name"] = name
+        d["pending"] = False
+        return d
+    st = get_stock_status(code, name, days=days)
+    d = _status_to_dict(st)
+    d["pending"] = False
+    _STATUS_CACHE[k] = {"ts": now, "data": dict(d)}
+    return d
+
+
+def _has_usable_stocks(data: dict) -> bool:
+    stocks = (data or {}).get("stocks") or []
+    for s in stocks:
+        if not s:
+            continue
+        if s.get("error"):
+            continue
+        px = s.get("price")
+        if px not in (None, "", "-", "…") and s.get("signal") not in (None, "", "计算中"):
+            return True
+    return False
 
 
 def _compute_watchlist(items: list = None, user_id: int = None, key: int = None) -> dict:
@@ -547,17 +581,21 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
         return (0 if (x.get('market') or '美股') == '美股' else 1, x['code'])
 
     partial = []
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        fut_to_code = {ex.submit(get_stock_status, code, name): code for code, name in items}
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        fut_to_code = {
+            ex.submit(_status_dict_cached, code, name, 200): code for code, name in items
+        }
         for fut in as_completed(fut_to_code):
             code = fut_to_code[fut]
             try:
-                st = fut.result()
+                row = fut.result()
             except Exception:
-                st = StockStatus(code=code, name=dict(items).get(code, code),
-                                 market='美股' if not code.isdigit() else 'A股')
-                st.error = "获取失败"
-            partial.append(_status_to_dict(st))
+                row = {
+                    'code': code, 'name': dict(items).get(code, code),
+                    'market': '美股' if not str(code).isdigit() else 'A股',
+                    'price': '-', 'signal': '观望', 'error': '获取失败', 'pending': False,
+                }
+            partial.append(row)
             # 增量写回缓存：每完成一只就更新，前端即可逐行看到已就绪的股票
             if key is not None:
                 sorted_partial = sorted(partial, key=_sort_key)
@@ -659,12 +697,38 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
 
     now = time.time()
     cache = _CACHES.get(key)
-    # 命中且未过期且非强制刷新 → 直接返回
-    if not force and cache and cache['data'] is not None and (now - cache['ts']) < _WATCHLIST_TTL:
-        cache['data']["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return cache['data']
 
-    # 需要刷新：确保仅一个后台刷新在跑；保留已有行 + 为新增代码放占位，避免列表被清空
+    # —— 毫秒级路径：软 TTL 内完整命中 ——
+    if (not force and cache and isinstance(cache.get('data'), dict)
+            and (now - cache.get('ts', 0)) < _WATCHLIST_SOFT_TTL
+            and _has_usable_stocks(cache['data'])):
+        out = dict(cache['data'])
+        out['computing'] = False
+        out['cache_hit'] = True
+        out['stale'] = False
+        return out
+
+    # —— SWR：有可用旧数据则立刻返回，后台静默刷新 ——
+    if (cache and isinstance(cache.get('data'), dict)
+            and _has_usable_stocks(cache['data'])):
+        out = dict(cache['data'])
+        out['cache_hit'] = True
+        out['stale'] = (now - cache.get('ts', 0)) >= _WATCHLIST_SOFT_TTL
+        need_refresh = force or out['stale']
+        if need_refresh:
+            with _refresh_lock:
+                c2 = _CACHES.get(key)
+                if c2 and not c2.get('refreshing'):
+                    c2['refreshing'] = True
+                    threading.Thread(
+                        target=_background_refresh, args=(key, items, user_id), daemon=True
+                    ).start()
+            out['computing'] = True
+        else:
+            out['computing'] = bool(cache.get('refreshing'))
+        return out
+
+    # —— 无可用缓存：骨架 + 后台计算 ——
     with _refresh_lock:
         cache = _CACHES.get(key)
         if not (cache and cache.get('refreshing')):
@@ -720,3 +784,15 @@ if __name__ == "__main__":
             print(f"{s['code']:8s} {s['name']:12s} ERROR: {s['error']}")
         else:
             print(f"{s['code']:8s} {s['name']:12s} {s['price']:>10.2f} {s['change_5d']:>6.1f}% {s['signal']:6s} {s['nine_turn']:20s} {s['high_low']:12s}")
+
+
+def _warm_default_watchlist():
+    """进程启动后预热未登录默认看板，使首屏接近毫秒级。"""
+    try:
+        time.sleep(1.5)
+        get_watchlist_status(user_id=None, force=True, is_admin=False)
+    except Exception:
+        pass
+
+
+threading.Thread(target=_warm_default_watchlist, daemon=True, name="warm-watchlist").start()
