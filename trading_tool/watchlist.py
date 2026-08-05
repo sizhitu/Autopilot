@@ -525,9 +525,21 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
     total = len(items)
     # 初始化增量缓存（key 给定时），让前端可立即轮询到“计算中（含部分结果）”
     if key is not None:
+        seeded0 = [{
+            'code': c, 'name': n or c,
+            'market': '美股' if not str(c).isdigit() else 'A股',
+            'price': '-', 'change_1d': None, 'change_5d': None,
+            'signal': '计算中', 'signal_color': 'gray',
+            'action': '计算中', 'action_color': 'gray',
+            'timing': '—', 'timing_color': 'gray',
+            'trend_filter': '—', 'trend_filter_color': 'gray',
+            'nine_turn': '—', 'high_low': '—',
+            'pending': True, 'error': None,
+        } for c, n in items]
         _CACHES[key] = {
             'data': {'success': True, 'computing': True, 'updated_at': '',
-                     'count': 0, 'total': total, 'summary': {}, 'stocks': []},
+                     'count': 0, 'total': total, 'summary': {}, 'stocks': seeded0,
+                     'symbols': [{'code': c, 'name': n} for c, n in items]},
             'ts': time.time(), 'refreshing': True,
         }
 
@@ -574,6 +586,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
         'total': total,
         'summary': summary,
         'stocks': partial,
+        'symbols': [{'code': c, 'name': n} for c, n in items],
     }
     if key is not None:
         _CACHES[key] = {'data': final, 'ts': time.time(), 'refreshing': False}
@@ -670,13 +683,18 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                         'code': c, 'name': item_name.get(c) or c,
                         'market': '美股' if not str(c).isdigit() else 'A股',
                         'price': '-', 'change_1d': None, 'change_5d': None,
-                        'signal': '计算中', 'nine_turn': '-', 'high_low': '-',
-                        'error': None,
+                        'signal': '计算中', 'signal_color': 'gray',
+                        'action': '计算中', 'action_color': 'gray',
+                        'timing': '—', 'timing_color': 'gray',
+                        'trend_filter': '—', 'trend_filter_color': 'gray',
+                        'nine_turn': '—', 'high_low': '—',
+                        'pending': True, 'error': None,
                     })
             _CACHES[key] = {
                 'data': {'success': True, 'computing': True, 'updated_at': '',
                          'count': len(seeded), 'total': len(items),
-                         'summary': {}, 'stocks': seeded},
+                         'summary': {}, 'stocks': seeded,
+                         'symbols': [{'code': c, 'name': n} for c, n in items]},
                 'ts': time.time(), 'refreshing': True,
             }
             threading.Thread(
@@ -687,7 +705,8 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
     if cache and cache['data'] is not None:
         return cache['data']
     return {'success': True, 'computing': True, 'updated_at': '',
-            'count': 0, 'total': len(items), 'summary': {}, 'stocks': []}
+            'count': 0, 'total': len(items), 'summary': {}, 'stocks': [],
+            'symbols': [{'code': c, 'name': n} for c, n in items]}
 
 
 if __name__ == "__main__":
