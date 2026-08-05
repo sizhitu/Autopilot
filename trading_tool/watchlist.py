@@ -552,69 +552,94 @@ def _prev_updated_at(cache_entry) -> str:
             or "")
 
 
-def _compute_watchlist(items: list = None, user_id: int = None, key: int = None) -> dict:
-    """真正计算全部关注股票状态（并行抓取提速，应在后台线程执行）。
+def _placeholder_row(code: str, name: str) -> dict:
+    return {
+        'code': code, 'name': name or code,
+        'market': '美股' if not str(code).isdigit() else 'A股',
+        'price': '-', 'change_1d': None, 'change_5d': None,
+        'signal': '计算中', 'signal_color': 'gray',
+        'action': '计算中', 'action_color': 'gray',
+        'timing': '—', 'timing_color': 'gray',
+        'trend_filter': '—', 'trend_filter_color': 'gray',
+        'nine_turn': '—', 'high_low': '—',
+        'pending': True, 'error': None,
+    }
 
-    刷新策略：先保留上一轮完整行，每算出一只就**原地替换该行**，
-    未完成的代码继续显示旧行情，避免「一瞬间整表变空再填」。
+
+def _row_usable(s: dict) -> bool:
+    if not s or s.get('error') or s.get('pending'):
+        return False
+    px = s.get('price')
+    return px not in (None, '', '-', '…') and s.get('signal') not in (None, '', '计算中')
+
+
+def _compute_watchlist(items: list = None, user_id: int = None, key=None,
+                       bust_status_cache: bool = False) -> dict:
+    """真正计算全部关注股票状态（并行）。
+
+    刷新时以「上次完整行」为底图，每完成一只只替换该行，
+    避免中间态只剩已完成的几只、其它行空白。
     """
     if items is None:
         items = resolve_watchlist_items(user_id)
     total = len(items)
+    name_of = {str(c): (n or c) for c, n in items}
 
     def _sort_key(x):
         return (0 if (x.get('market') or '美股') == '美股' else 1, str(x.get('code') or ''))
 
-    def _placeholder(c, n):
-        return {
-            'code': c, 'name': n or c,
-            'market': '美股' if not str(c).isdigit() else 'A股',
-            'price': '-', 'change_1d': None, 'change_5d': None,
-            'signal': '计算中', 'signal_color': 'gray',
-            'action': '计算中', 'action_color': 'gray',
-            'timing': '—', 'timing_color': 'gray',
-            'trend_filter': '—', 'trend_filter_color': 'gray',
-            'nine_turn': '—', 'high_low': '—',
-            'pending': True, 'error': None,
-        }
-
+    # 底图：优先保留缓存里可用的旧行
+    base = {}  # upper code -> row
     prev_ts = ""
-    prev_by_code = {}
-    if key is not None and key in _CACHES:
-        prev_data = (_CACHES[key].get('data') or {})
-        prev_ts = prev_data.get('updated_at') or prev_data.get('prev_updated_at') or ''
-        for s in (prev_data.get('stocks') or []):
-            if s and s.get('code'):
-                prev_by_code[str(s['code']).upper()] = dict(s)
+    if key is not None:
+        existing = _CACHES.get(key)
+        prev_ts = _prev_updated_at(existing)
+        if existing and isinstance(existing.get('data'), dict):
+            for s in existing['data'].get('stocks') or []:
+                if s and s.get('code'):
+                    base[str(s['code']).upper()] = dict(s)
 
-    base = {}
-    for c, n in items:
-        cu = str(c).upper()
-        old = prev_by_code.get(cu)
-        if old and old.get('signal') not in (None, '', '计算中') and old.get('price') not in (None, '', '-', '…'):
-            row = dict(old)
-            row['name'] = n or row.get('name') or c
-            row['pending'] = False
-            row['stale_row'] = True
-            base[cu] = row
-        else:
-            base[cu] = _placeholder(c, n)
+    if bust_status_cache:
+        for c, _ in items:
+            _STATUS_CACHE.pop(str(c).strip().upper(), None)
+
+    def _assemble_display(done_map: dict) -> list:
+        """当前自选顺序组装：新结果覆盖，否则旧可用行，否则占位。"""
+        rows = []
+        for c, n in items:
+            cu = str(c).upper()
+            if cu in done_map:
+                r = dict(done_map[cu])
+                r['name'] = n or r.get('name') or c
+                r['pending'] = False
+                rows.append(r)
+            elif cu in base and _row_usable(base[cu]):
+                r = dict(base[cu])
+                r['name'] = n or r.get('name') or c
+                rows.append(r)
+            else:
+                rows.append(_placeholder_row(c, n or c))
+        rows.sort(key=_sort_key)
+        return rows
 
     if key is not None:
-        stocks0 = sorted(base.values(), key=_sort_key)
+        display0 = _assemble_display({})
         _CACHES[key] = {
             'data': {
                 'success': True, 'computing': True,
                 'updated_at': prev_ts, 'prev_updated_at': prev_ts,
-                'count': sum(1 for s in stocks0 if not s.get('pending')),
-                'total': total, 'summary': {}, 'stocks': stocks0,
+                'count': sum(1 for s in display0 if _row_usable(s)),
+                'total': total,
+                'summary': (existing.get('data') or {}).get('summary', {}) if existing else {},
+                'stocks': display0,
                 'symbols': [{'code': c, 'name': n} for c, n in items],
             },
-            'ts': (_CACHES.get(key) or {}).get('ts') or time.time(),
+            # 刷新过程中不要把 ts 刷成 now，避免被误判为「新完整结果」
+            'ts': (existing.get('ts') if existing else time.time()),
             'refreshing': True,
         }
 
-    done = {}
+    done_map = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
         fut_to_code = {
             ex.submit(_status_dict_cached, code, name, 200): code for code, name in items
@@ -625,39 +650,25 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
                 row = fut.result()
             except Exception:
                 row = {
-                    'code': code, 'name': dict(items).get(code, code),
+                    'code': code, 'name': name_of.get(str(code), code),
                     'market': '美股' if not str(code).isdigit() else 'A股',
                     'price': '-', 'signal': '观望', 'error': '获取失败', 'pending': False,
                 }
-            row = dict(row)
-            row['pending'] = False
-            row['stale_row'] = False
-            done[str(code).upper()] = row
-
+            done_map[str(code).upper()] = row
             if key is not None:
-                merged = []
-                for c, n in items:
-                    cu = str(c).upper()
-                    if cu in done:
-                        merged.append(done[cu])
-                    else:
-                        merged.append(base.get(cu) or _placeholder(c, n))
-                merged.sort(key=_sort_key)
+                display = _assemble_display(done_map)
                 _CACHES[key]['data'] = {
                     'success': True, 'computing': True,
                     'updated_at': prev_ts, 'prev_updated_at': prev_ts,
-                    'count': len(done), 'total': total,
-                    'summary': {}, 'stocks': merged,
+                    'count': sum(1 for s in display if _row_usable(s)),
+                    'total': total,
+                    'summary': {},
+                    'stocks': display,
                     'symbols': [{'code': c, 'name': n} for c, n in items],
                 }
 
-    # 最终：按自选顺序合并全部 done
-    partial = []
-    for c, n in items:
-        cu = str(c).upper()
-        partial.append(done.get(cu) or base.get(cu) or _placeholder(c, n))
-# 最终排序：美股在前，A股在后
-    partial.sort(key=_sort_key)
+    # 最终结果
+    partial = _assemble_display(done_map)
 
     # 分类汇总（操盘建议）
     summary = {'即将上涨关注': 0, '上涨见顶关注': 0, '下跌观望': 0, 'error': 0}
@@ -682,10 +693,11 @@ def _compute_watchlist(items: list = None, user_id: int = None, key: int = None)
     return final
 
 
-def _background_refresh(key, items, user_id):
+def _background_refresh(key, items, user_id, bust_status_cache: bool = False):
     """后台刷新某个看板缓存（边算边增量写入 _CACHES[key]，带兜底熔断）"""
     try:
-        _compute_watchlist(items=items, user_id=user_id, key=key)
+        _compute_watchlist(items=items, user_id=user_id, key=key,
+                           bust_status_cache=bust_status_cache)
     except Exception:
         # 兜底：确保刷新标记被清除，避免前端一直轮询却永远算不完
         entry = _CACHES.get(key)
@@ -779,7 +791,9 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                         c2['data']['prev_updated_at'] = prev_ts
                         c2['data']['updated_at'] = prev_ts
                     threading.Thread(
-                        target=_background_refresh, args=(key, items, user_id), daemon=True
+                        target=_background_refresh,
+                        args=(key, items, user_id, force),
+                        daemon=True,
                     ).start()
             out['computing'] = True
         else:
@@ -821,7 +835,7 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                 'ts': time.time(), 'refreshing': True,
             }
             threading.Thread(
-                target=_background_refresh, args=(key, items, user_id), daemon=True
+                target=_background_refresh, args=(key, items, user_id, force), daemon=True
             ).start()
 
     cache = _CACHES.get(key)
