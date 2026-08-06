@@ -1742,6 +1742,34 @@ async function resolveSymbol(input) {
 }
 
 // === 自选添加（支持名称 → 代码）===
+
+function optimisticWatchInsert(code, name) {
+  const row = {
+    code: code,
+    name: name || code,
+    market: /^[0-9]/.test(String(code)) ? 'A股' : '美股',
+    price: '-', change_1d: null, change_5d: null,
+    signal: '计算中', signal_color: 'gray',
+    action: '计算中', action_color: 'gray',
+    timing: '—', timing_color: 'gray',
+    trend_filter: '—', trend_filter_color: 'gray',
+    nine_turn: '—', high_low: '—',
+    pending: true, error: null,
+  };
+  const cur = Array.isArray(_lastWatchRows) ? _lastWatchRows.slice() : [];
+  const up = String(code).toUpperCase();
+  if (!cur.some(s => s && String(s.code).toUpperCase() === up)) {
+    cur.push(row);
+  }
+  _lastWatchRows = cur;
+  _lastWatchSkeleton = cur.map(s => ({ code: s.code, name: s.name, market: s.market }));
+  _lastWatchSig = '';  // 强制允许下一次重绘
+  try {
+    renderWatchlist(cur);
+    setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
+  } catch (e) {}
+}
+
 async function addWatch() {
   const inp = document.getElementById('watchInput');
   const raw = inp.value.trim();
@@ -1753,7 +1781,12 @@ async function addWatch() {
     inp.value = '';
     document.getElementById('watchSuggest').style.display = 'none';
     showToast('已添加 ' + resolved.code + (resolved.name ? ('（' + resolved.name + '）') : ''), 'ok');
-    loadWatchlist(true);  // 强制刷新，跳过看板缓存
+    optimisticWatchInsert(resolved.code, resolved.name || '');
+    // 取消进行中的非 force 轮询，立刻 force 拉齐指标
+    clearTimeout(_wlPollTimer);
+    _wlPollCount = 0;
+    _wlPendingForce = true;
+    if (!_wlInflight) loadWatchlist(true);
   } catch (e) {
     const m = String(e.message || e);
     if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
@@ -1767,7 +1800,11 @@ async function addWatchResolved(code, name) {
     document.getElementById('watchInput').value = '';
     document.getElementById('watchSuggest').style.display = 'none';
     showToast('已添加 ' + code + (name ? ('（' + name + '）') : ''), 'ok');
-    loadWatchlist(true);  // 强制刷新，跳过看板缓存
+    optimisticWatchInsert(code, name || '');
+    clearTimeout(_wlPollTimer);
+    _wlPollCount = 0;
+    _wlPendingForce = true;
+    if (!_wlInflight) loadWatchlist(true);
   } catch (e) {
     const m = String(e.message || e);
     if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
@@ -2144,8 +2181,9 @@ async function _loadWatchlistBody(forceRefresh) {
         usable = stocks.filter(s => s && !s.pending && s.price !== '-' && s.signal !== '计算中');
         setWatchUpdatedLabel(json);
         const sig = _watchRowsSig(stocks);
-        // 内容未变则不重绘表格，减少「刷新感」
-        if (sig !== _lastWatchSig) {
+        const codeChanged = (stocks.length !== (_lastWatchRows || []).length);
+        // 内容未变则不重绘；但代码数量变化必须重绘（新增/删除）
+        if (sig !== _lastWatchSig || codeChanged || forceRefresh) {
           renderWatchlistSummary(json.summary || {});
           renderWatchlist(stocks);
           _lastWatchSig = sig;
