@@ -100,10 +100,15 @@ def remove_user_watchlist(user_id: int, symbol: str) -> bool:
 def _invalidate_cache(user_id) -> None:
     """使某用户的看板缓存失效（增删自选后调用）。"""
     caches = globals().get("_CACHES")
-    if caches is not None and user_id is not None:
-        caches.pop(user_id, None)
-        # 字符串/UUID 与 int 两种 key 都清一遍，避免类型不一致导致清不掉
-        caches.pop(str(user_id), None)
+    if caches is None or user_id is None:
+        return
+    uid = str(user_id)
+    for k in (
+        user_id, uid,
+        f"admin_default:{uid}", f"admin_default:{user_id}",
+        f"user_fallback:{uid}", f"user_fallback:{user_id}",
+    ):
+        caches.pop(k, None)
 
 
 def invalidate_user_cache(user_id) -> None:
@@ -577,6 +582,37 @@ def _has_usable_stocks(data: dict) -> bool:
     return False
 
 
+def _align_stocks_to_items(stocks, items: list) -> list:
+    """按当前自选列表对齐行：去掉已删、为新增代码补占位。"""
+    if not items:
+        return []
+    by = {}
+    for s in stocks or []:
+        if s and s.get('code') is not None:
+            by[str(s['code']).upper()] = dict(s)
+    out = []
+    for c, n in items:
+        cu = str(c).upper()
+        if cu in by:
+            row = dict(by[cu])
+            if n:
+                row['name'] = n
+            out.append(row)
+        else:
+            out.append({
+                'code': c, 'name': n or c,
+                'market': '美股' if not str(c).isdigit() else 'A股',
+                'price': '-', 'change_1d': None, 'change_5d': None,
+                'signal': '计算中', 'signal_color': 'gray',
+                'action': '计算中', 'action_color': 'gray',
+                'timing': '—', 'timing_color': 'gray',
+                'trend_filter': '—', 'trend_filter_color': 'gray',
+                'nine_turn': '—', 'high_low': '—',
+                'pending': True, 'error': None,
+            })
+    return out
+
+
 def _prev_updated_at(cache_entry) -> str:
     if not cache_entry or not isinstance(cache_entry.get("data"), dict):
         return ""
@@ -788,25 +824,41 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
     now = time.time()
     cache = _CACHES.get(key)
 
-    # 软 TTL：完整可用数据 → 毫秒级返回，不改时间戳
+    # 软 TTL：完整可用数据 → 毫秒级返回；但必须与当前自选 codes 对齐
     if (not force and cache and isinstance(cache.get('data'), dict)
             and (now - cache.get('ts', 0)) < _WATCHLIST_SOFT_TTL
             and _has_usable_stocks(cache['data'])):
         out = dict(cache['data'])
-        out['computing'] = False
-        out['cache_hit'] = True
-        out['stale'] = False
-        return out
+        aligned = _align_stocks_to_items(out.get('stocks') or [], items)
+        # 自选有增删时不能当纯命中，需后台补齐新代码
+        cached_codes = {str(s.get('code')).upper() for s in (out.get('stocks') or []) if s}
+        want_codes = {str(c).upper() for c, _ in items}
+        if cached_codes == want_codes:
+            out['stocks'] = aligned
+            out['count'] = len(aligned)
+            out['total'] = len(items)
+            out['symbols'] = [{'code': c, 'name': n} for c, n in items]
+            out['computing'] = False
+            out['cache_hit'] = True
+            out['stale'] = False
+            return out
+        # codes 不一致：走 SWR 刷新
 
-    # SWR：有上次结果 → 立刻返回（保留上次 updated_at），后台刷新
+    # SWR：有上次结果 → 立刻返回对齐后的列表（新增代码先占位），后台刷新
     if cache and isinstance(cache.get('data'), dict) and _has_usable_stocks(cache['data']):
         out = dict(cache['data'])
+        out['stocks'] = _align_stocks_to_items(out.get('stocks') or [], items)
+        out['count'] = len(out['stocks'])
+        out['total'] = len(items)
+        out['symbols'] = [{'code': c, 'name': n} for c, n in items]
         out['cache_hit'] = True
         out['stale'] = (now - cache.get('ts', 0)) >= _WATCHLIST_SOFT_TTL
         prev_ts = out.get('updated_at') or out.get('prev_updated_at') or ''
         out['prev_updated_at'] = prev_ts
         out['updated_at'] = prev_ts  # 刷新完成前不改展示时间
-        need_refresh = force or out['stale']
+        need_refresh = force or out['stale'] or (
+            {str(s.get('code')).upper() for s in out['stocks'] if s and s.get('pending')}
+        )
         if need_refresh:
             with _refresh_lock:
                 c2 = _CACHES.get(key)
