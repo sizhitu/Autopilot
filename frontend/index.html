@@ -2434,7 +2434,17 @@ function updateNineTurnDetail(nt) {
   const hasDaily = nt && nt.daily_direction && nt.daily_direction !== 'none' && nt.daily_count > 0;
   const hasMonthly = nt && nt.monthly_direction && nt.monthly_direction !== 'none' && nt.monthly_count > 0;
   if (!hasDaily && !hasMonthly) {
-    el.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:10px;">当前无九转信号，趋势尚未形成可识别的连续计数结构。可先对照上方「适用环境 / 最强信号组合」理解用法。</div>`;
+    const wm0 = (nt && nt.weekly_macd) || {};
+    const sc0 = (nt && nt.strongest_combo) || {};
+    let extra = '';
+    if (wm0.label) {
+      const dc = wm0.divergence === 'bull' ? 'var(--green)' : (wm0.divergence === 'bear' ? 'var(--red)' : 'var(--text-dim)');
+      extra += `<div style="margin-top:10px;text-align:left;"><b style="color:${dc};">${wm0.label}</b><div style="color:var(--text-dim);font-size:11px;margin-top:4px;">${wm0.detail || ''}</div></div>`;
+    }
+    if (sc0.active) {
+      extra += `<div style="margin-top:8px;color:var(--gold);font-weight:600;text-align:left;">${sc0.label}</div>`;
+    }
+    el.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:10px;">当前无九转信号，趋势尚未形成可识别的连续计数结构。可先对照上方「适用环境 / 最强信号组合」理解用法。</div>` + extra;
     return;
   }
 
@@ -2480,13 +2490,37 @@ function updateNineTurnDetail(nt) {
   if (hasMonthly) meaningBlocks += `<div class="nt-meaning"><b style="color:var(--text);">月级：</b>${_meaning('月', nt.monthly_direction, nt.monthly_count, nt.monthly_is_complete, nt.monthly_is_completing)}</div>`;
 
   const concept = `神奇九转（TD Sequential 简化版）：以“当日收盘价 vs 前第 4 根 K 线收盘价”的连续比较进行 1-9 计数。下跌计数第 9 天/月为潜在买点，上涨计数第 9 天/月为潜在卖点；第 7-8 天/月视为“即将完成”的预警区。`;
-  const tip = `用法提示：优先在震荡市、弱牛/弱熊中参考；强趋势单边加速时九转与背离都易连续出信号却不反转。研究上更强的组合是「日线九转完成 + 周线 MACD 背离」；日级与月级同向时权重高于单级别。`;
+  const tip = `用法提示：优先在震荡市、弱牛/弱熊中参考；强趋势单边加速时九转与背离都易连续出信号却不反转。日级与月级同向时权重高于单级别。`;
+
+  const wm = (nt && nt.weekly_macd) || {};
+  const sc = (nt && nt.strongest_combo) || {};
+  const div = wm.divergence || 'none';
+  const divColor = div === 'bull' ? 'var(--green)' : (div === 'bear' ? 'var(--red)' : 'var(--text-dim)');
+  let macdHtml = `<div class="nt-current" style="margin-top:10px;">周线 MACD 背离</div>`;
+  macdHtml += `<div class="nt-meaning"><b style="color:${divColor};">${wm.label || '周线 MACD'}</b>`;
+  if (wm.dif != null && wm.dea != null) {
+    macdHtml += ` <span style="color:var(--text-dim);font-size:11px;">DIF ${wm.dif} / DEA ${wm.dea}` +
+      (wm.hist != null ? ` / 柱 ${wm.hist}` : '') + `</span>`;
+  }
+  macdHtml += `<div style="margin-top:4px;color:var(--text-dim);">${wm.detail || ''}</div></div>`;
+
+  let comboHtml = '';
+  if (sc.active) {
+    const ccol = sc.type === 'bull' ? 'var(--green)' : 'var(--red)';
+    comboHtml = `<div style="margin-top:10px;padding:10px 12px;border-radius:8px;border:1px solid ${ccol};background:rgba(255,215,0,0.06);">` +
+      `<div style="font-weight:700;color:${ccol};">${sc.label || '最强组合'}</div>` +
+      `<div style="font-size:11px;color:var(--text-dim);margin-top:4px;line-height:1.55;">${sc.detail || ''}</div></div>`;
+  } else {
+    comboHtml = `<div class="nt-tip" style="margin-top:8px;">${sc.label || '未形成最强组合'}：${sc.detail || '需日线九转完成且与周线 MACD 背离同向。'}</div>`;
+  }
 
   el.innerHTML =
     `<div class="nt-concept">${concept}</div>` +
     `<div class="nt-current">当前状态</div>` +
     `<div class="nt-levels">${statusRows}</div>` +
     meaningBlocks +
+    macdHtml +
+    comboHtml +
     `<div class="nt-tip">${tip}</div>`;
 }
 
