@@ -209,10 +209,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .industry-tag { margin-top:4px; display:inline-block; font-size:11px; font-weight:600; color:var(--gold); background:rgba(212,175,55,0.12); border:1px solid rgba(212,175,55,0.35); padding:2px 9px; border-radius:999px; }
 
 /* 自选看板表格：列宽合计 100%，间距视觉均匀 */
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 860px; border-collapse: collapse; }
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 780px; border-collapse: collapse; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
-  padding: 6px 8px !important;   /* 左右统一 8px，列与列之间视觉等距 */
+  padding: 6px 4px !important;   /* 左右 4px，列间距约为原先一半 */
   box-sizing: border-box;
 }
 #watchlistTable th {
@@ -429,15 +429,15 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <table id="watchlistTable" style="width:100%; border-collapse:collapse; font-size:12px;">
       <thead>
         <tr style="color:var(--text-dim); border-bottom:1px solid var(--border);">
-          <th style="padding:6px 8px;">代码</th>
-          <th style="padding:6px 8px;">名称</th>
-          <th style="padding:6px 8px;">现价</th>
-          <th style="padding:6px 8px;">日</th>
-          <th style="padding:6px 8px;">近5日</th>
-          <th style="padding:6px 8px;" title="TD Sequential 日/月九转时机">九转时机</th>
-          <th style="padding:6px 8px;" title="均线系统趋势过滤">趋势过滤</th>
-          <th style="padding:6px 8px;" title="时机×趋势综合建议（非投资建议）">建议动作</th>
-          <th style="padding:6px 8px;">新高/估值</th>
+          <th style="padding:6px 4px;">代码</th>
+          <th style="padding:6px 4px;">名称</th>
+          <th style="padding:6px 4px;">现价</th>
+          <th style="padding:6px 4px;">日</th>
+          <th style="padding:6px 4px;">近5日</th>
+          <th style="padding:6px 4px;" title="TD Sequential 日/月九转时机">九转时机</th>
+          <th style="padding:6px 4px;" title="均线系统趋势过滤">趋势过滤</th>
+          <th style="padding:6px 4px;" title="时机×趋势综合建议（非投资建议）">建议动作</th>
+          <th style="padding:6px 4px;">新高/估值</th>
         </tr>
       </thead>
       <tbody id="watchlistBody"></tbody>
