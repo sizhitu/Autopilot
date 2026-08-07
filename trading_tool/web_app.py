@@ -330,10 +330,26 @@ async def public_config():
 #  认证本身由前端 supabase-js + Supabase Auth 完成（注册 / 邮箱 OTP / Magic Link）。
 #  后端只校验前端传来的 JWT，并返回/同步用户资料。
 # ================================================================
+def _client_country(request: Request) -> str:
+    """从边缘/代理头取国家码（如 AU、CN）；无则空串。不写 IP。"""
+    for h in ("cf-ipcountry", "CF-IPCountry", "x-vercel-ip-country", "x-country-code"):
+        v = (request.headers.get(h) or "").strip().upper()
+        if v and v not in ("XX", "T1", "UNKNOWN", "ZZ"):
+            return v[:8]
+    return ""
+
+
 @app.get("/api/auth/me")
-async def api_me(user: dict = Depends(auth.get_current_user)):
-    """返回当前登录用户信息（并防御性同步 profiles 行）。"""
+async def api_me(request: Request, user: dict = Depends(auth.get_current_user)):
+    """返回当前登录用户信息；同步 profiles，并更新 last_seen / 会话级 last_login。"""
     profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
+    country = _client_country(request)
+    try:
+        touched = user_store.touch_profile_activity(user["id"], country=country or None)
+        if touched:
+            profile.update({k: touched[k] for k in touched if k != "id"})
+    except Exception:
+        pass
     digest = user_store.get_digest_prefs(user["id"])
     return {
         "success": True,
@@ -345,6 +361,10 @@ async def api_me(user: dict = Depends(auth.get_current_user)):
             "is_admin": bool(profile.get("is_admin") or user.get("is_admin")),
             "digest_enabled": digest.get("enabled", False),
             "digest_freq": digest.get("freq", "weekly"),
+            "last_login_at": profile.get("last_login_at"),
+            "last_seen_at": profile.get("last_seen_at"),
+            "last_login_country": profile.get("last_login_country"),
+            "login_count": int(profile.get("login_count") or 0),
         },
     }
 
