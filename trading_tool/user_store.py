@@ -5,10 +5,13 @@ Supabase 模式：profiles 表（受 RLS，经 service 客户端绕过 RLS 供�
 本地回退：未配置 Supabase 时返回空结果（本地开发主要验证看板/缓存，后台统计为次要）。
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import db
 import supabase_client
+
+# 同一用户在此窗口内多次 /api/auth/me 只计一次「登录」，只更新 last_seen
+_LOGIN_SESSION_HOURS = 12
 
 
 def get_or_create_profile(uid: str, email: str = "", display_name: str = "") -> dict:
@@ -25,47 +28,112 @@ def get_or_create_profile(uid: str, email: str = "", display_name: str = "") -> 
         if ins.data:
             return ins.data[0]
         return {"id": uid, "email": email, "display_name": display_name, "is_admin": False}
-    # 本地回退
     return {"id": uid, "email": email, "display_name": display_name, "is_admin": False}
+
+
+def _parse_ts(val):
+    if not val:
+        return None
+    if isinstance(val, datetime):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+    try:
+        s = str(val).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def touch_profile_activity(uid: str, country: str = None) -> dict:
+    """
+    方案 A：更新 last_seen_at；会话窗口外再更新 last_login_at / login_count / country。
+    不写入 IP 明文。列未迁移时静默失败，不影响登录主流程。
+    """
+    if not uid or not supabase_client.using_supabase():
+        return {}
+    try:
+        client = supabase_client.get_service_client()
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        row = client.table("profiles").select(
+            "id,last_login_at,last_seen_at,login_count,last_login_country"
+        ).eq("id", uid).limit(1).execute()
+        if not row.data:
+            return {}
+        cur = row.data[0]
+        last_login = _parse_ts(cur.get("last_login_at"))
+        count = int(cur.get("login_count") or 0)
+        is_new_session = last_login is None or (now - last_login) > timedelta(hours=_LOGIN_SESSION_HOURS)
+        updates = {"last_seen_at": now_iso}
+        if is_new_session:
+            updates["last_login_at"] = now_iso
+            updates["login_count"] = count + 1
+            if country:
+                updates["last_login_country"] = str(country).upper()[:8]
+        client.table("profiles").update(updates).eq("id", uid).execute()
+        cur.update(updates)
+        return cur
+    except Exception:
+        return {}
 
 
 def list_profiles(limit: int = 100, offset: int = 0) -> tuple:
     """返回 (rows, total)。"""
     if supabase_client.using_supabase():
         client = supabase_client.get_service_client()
-        rows = (client.table("profiles")
-                .select("id,email,display_name,is_admin,created_at")
-                .order("created_at", desc=True)
-                .limit(limit).offset(offset).execute()).data or []
+        try:
+            rows = (client.table("profiles")
+                    .select(
+                        "id,email,display_name,is_admin,created_at,"
+                        "last_login_at,last_seen_at,last_login_country,login_count"
+                    )
+                    .order("created_at", desc=True)
+                    .limit(limit).offset(offset).execute()).data or []
+        except Exception:
+            rows = (client.table("profiles")
+                    .select("id,email,display_name,is_admin,created_at")
+                    .order("created_at", desc=True)
+                    .limit(limit).offset(offset).execute()).data or []
         total = (client.table("profiles").select("id", count="exact").execute()).count or len(rows)
         out = [{
             "id": r["id"], "email": r.get("email"), "display_name": r.get("display_name"),
             "verified": True, "is_admin": bool(r.get("is_admin")),
-            "created_at": r.get("created_at"), "last_login": None,
+            "created_at": r.get("created_at"),
+            "last_login": r.get("last_login_at"),
+            "last_seen": r.get("last_seen_at"),
+            "last_login_country": r.get("last_login_country"),
+            "login_count": int(r.get("login_count") or 0),
         } for r in rows]
         return out, total
     return [], 0
 
 
 def user_stats() -> dict:
-    """注册用户统计：总数 / 已验证 / 近7天 / 近30天。"""
+    """注册用户统计：总数 / 近7、30天注册 / 近7天活跃（last_seen）。"""
     if supabase_client.using_supabase():
         client = supabase_client.get_service_client()
         total = (client.table("profiles").select("id", count="exact").execute()).count or 0
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         d7 = (now - timedelta(days=7)).isoformat()
         d30 = (now - timedelta(days=30)).isoformat()
         recent_7 = (client.table("profiles").select("id", count="exact")
                      .gte("created_at", d7).execute()).count or 0
         recent_30 = (client.table("profiles").select("id", count="exact")
                       .gte("created_at", d30).execute()).count or 0
+        active_7 = 0
+        try:
+            active_7 = (client.table("profiles").select("id", count="exact")
+                        .gte("last_seen_at", d7).execute()).count or 0
+        except Exception:
+            pass
         return {
             "total_users": total,
-            "verified_users": total,   # Supabase 需验证邮箱才能拿到会话，故已注册即视为已验证
+            "verified_users": total,
             "recent_7d": recent_7,
             "recent_30d": recent_30,
+            "active_7d": active_7,
         }
-    return {"total_users": 0, "verified_users": 0, "recent_7d": 0, "recent_30d": 0}
+    return {"total_users": 0, "verified_users": 0, "recent_7d": 0, "recent_30d": 0, "active_7d": 0}
 
 
 # ---------- 看板邮件推送偏好（存 settings/cache，无需改 profiles 表结构）----------
