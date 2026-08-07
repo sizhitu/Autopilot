@@ -1,0 +1,88 @@
+name: Monthly market merge
+
+on:
+  schedule:
+    # 每月 2 日 UTC 01:00 合并上月
+    - cron: "0 1 2 * *"
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Year (empty = prev month logic)"
+        required: false
+        default: ""
+      month:
+        description: "Month 1-12 (empty = prev month)"
+        required: false
+        default: ""
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Autopilot
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      - name: Checkout Autopilot-data
+        uses: actions/checkout@v4
+        with:
+          repository: sizhitu/Autopilot-data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data-repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -q pandas pyarrow
+
+      - name: Merge month
+        working-directory: app
+        run: |
+          if [ -n "${{ github.event.inputs.year }}" ] && [ -n "${{ github.event.inputs.month }}" ]; then
+            python scripts/archive/merge_month.py --data-root ../data-repo/data \
+              --year ${{ github.event.inputs.year }} --month ${{ github.event.inputs.month }}
+          else
+            python scripts/archive/merge_month.py --data-root ../data-repo/data --prev-month
+          fi
+
+      - name: Prune daily older than 90 days (optional)
+        working-directory: data-repo
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from datetime import datetime, timedelta, timezone
+          root = Path("data/daily")
+          if not root.exists():
+              raise SystemExit(0)
+          cutoff = datetime.now(timezone.utc).date() - timedelta(days=90)
+          removed = 0
+          for p in root.rglob("*.parquet"):
+              try:
+                  # path .../YYYY/MM/DD.parquet
+                  parts = p.parts
+                  y, m, d = int(parts[-3]), int(parts[-2]), int(p.stem)
+                  from datetime import date
+                  if date(y, m, d) < cutoff:
+                      p.unlink()
+                      removed += 1
+              except Exception:
+                  pass
+          print("removed", removed)
+          PY
+
+      - name: Commit and push
+        working-directory: data-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/monthly data/daily || true
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "data(monthly): merge and prune $(date -u +%Y-%m-%d)"
+            git push
+          fi
