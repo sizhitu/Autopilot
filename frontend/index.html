@@ -2,7 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a1d27">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Autopilot">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="description" content="藤本茂融合策略智能分析工具 - 美股/A股/ETF/指数实时分析与回测">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
 <title>藤本茂融合策略 - 智能分析工具 v2.3</title>
 <style>
 :root {
@@ -273,6 +283,39 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .vol-conv-panel svg.vc-tri {
   width:100%; height:72px; display:block; border-radius:6px;
   background: radial-gradient(ellipse at 50% 0%, rgba(212,175,55,.12), transparent 70%);
+}
+
+
+/* ===== PWA Install Banner ===== */
+#pwaInstallBanner {
+  display: none;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 9999;
+  background: linear-gradient(135deg, #1a1d27, #252836);
+  border-top: 1px solid #2a2d3a;
+  padding: 12px 16px;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
+  align-items: center; gap: 12px;
+  font-size: 13px;
+}
+#pwaInstallBanner.show { display: flex; }
+#pwaInstallBanner .pwa-icon {
+  width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
+  background: #f1c40f; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #0f1117; font-size: 18px;
+}
+#pwaInstallBanner .pwa-text { flex: 1; min-width: 0; }
+#pwaInstallBanner .pwa-text strong { display: block; color: #e0e0e0; margin-bottom: 2px; }
+#pwaInstallBanner .pwa-text span { color: #888; font-size: 12px; }
+#pwaInstallBanner .pwa-btns { display: flex; gap: 8px; flex-shrink: 0; }
+#pwaInstallBanner .pwa-btn {
+  padding: 8px 14px; border-radius: 6px; border: none; font-size: 12px;
+  font-weight: 600; cursor: pointer;
+}
+#pwaInstallBanner .pwa-btn-primary { background: #f1c40f; color: #0f1117; }
+#pwaInstallBanner .pwa-btn-secondary { background: transparent; color: #888; border: 1px solid #2a2d3a; }
+@media (max-width: 480px) {
+  #pwaInstallBanner { padding: 10px 12px; }
+  #pwaInstallBanner .pwa-text span { display: none; }
 }
 
 </style>
@@ -3105,6 +3148,102 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
   <textarea id="ctMsg" rows="5" placeholder="咨询内容（必填）"></textarea>
   <button class="btn" style="width:100%;margin-top:4px;" onclick="submitContact()">发送咨询</button>
 </div>
+
+
+<!-- PWA Install Banner -->
+<div id="pwaInstallBanner">
+  <div class="pwa-icon">A</div>
+  <div class="pwa-text">
+    <strong>安装 Autopilot 到桌面</strong>
+    <span>像 App 一样一键打开，无需每次输入网址</span>
+  </div>
+  <div class="pwa-btns">
+    <button class="pwa-btn pwa-btn-secondary" id="pwaDismissBtn">稍后</button>
+    <button class="pwa-btn pwa-btn-primary" id="pwaInstallBtn">安装</button>
+  </div>
+</div>
+
+
+<script>
+/* ===== PWA: Service Worker + Install Prompt ===== */
+(function() {
+  // Register Service Worker
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('/sw.js')
+        .then(function(reg) { console.log('[PWA] SW registered', reg.scope); })
+        .catch(function(err) { console.warn('[PWA] SW register failed', err); });
+    });
+  }
+
+  // Install prompt
+  let deferredPrompt = null;
+  const banner = document.getElementById('pwaInstallBanner');
+  const installBtn = document.getElementById('pwaInstallBtn');
+  const dismissBtn = document.getElementById('pwaDismissBtn');
+
+  // Don't show if already installed or user dismissed recently
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
+  }
+  function wasDismissed() {
+    try {
+      const t = localStorage.getItem('pwa_dismiss_ts');
+      if (!t) return false;
+      return (Date.now() - parseInt(t, 10)) < 7 * 24 * 3600 * 1000; // 7 days
+    } catch(e) { return false; }
+  }
+
+  window.addEventListener('beforeinstallprompt', function(e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (!isStandalone() && !wasDismissed() && banner) {
+      banner.classList.add('show');
+    }
+  });
+
+  if (installBtn) {
+    installBtn.addEventListener('click', async function() {
+      if (!deferredPrompt) {
+        // Fallback: show manual instructions for iOS / unsupported
+        alert('请使用浏览器菜单「添加到主屏幕」/「安装应用」来安装。\n\n' +
+              'iOS Safari：点击底部分享按钮 → 添加到主屏幕\n' +
+              'Android Chrome：菜单 → 安装应用 / 添加到主屏幕');
+        return;
+      }
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log('[PWA] user choice:', outcome);
+      deferredPrompt = null;
+      if (banner) banner.classList.remove('show');
+    });
+  }
+
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', function() {
+      if (banner) banner.classList.remove('show');
+      try { localStorage.setItem('pwa_dismiss_ts', String(Date.now())); } catch(e) {}
+    });
+  }
+
+  // Hide banner if already running as installed app
+  if (isStandalone() && banner) {
+    banner.classList.remove('show');
+  }
+
+  // iOS: show a soft tip after a delay if not standalone (no beforeinstallprompt on iOS)
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !isStandalone() && !wasDismissed()) {
+    setTimeout(function() {
+      if (banner && !deferredPrompt) {
+        banner.classList.add('show');
+        // Change button text for iOS
+        if (installBtn) installBtn.textContent = '如何安装';
+      }
+    }, 4000);
+  }
+})();
+</script>
 
 </body>
 </html>
