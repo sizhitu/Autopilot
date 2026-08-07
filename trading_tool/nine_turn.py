@@ -24,6 +24,12 @@ from typing import List, Optional
 import pandas as pd
 import numpy as np
 
+try:
+    from macd_divergence import detect_weekly_macd_divergence, combine_nine_turn_macd
+except Exception:  # pragma: no cover
+    detect_weekly_macd_divergence = None
+    combine_nine_turn_macd = None
+
 
 @dataclass
 class NineTurnResult:
@@ -293,6 +299,34 @@ def calc_nine_turn_display(df: pd.DataFrame) -> dict:
     if conflict:
         text += "（背离·观望）"
 
+    # 周线 MACD 背离 + 与日线九转完成的组合
+    weekly_macd = {
+        "divergence": "none",
+        "label": "周线 MACD 未计算",
+        "detail": "",
+        "dif": None,
+        "dea": None,
+        "hist": None,
+        "weeks": 0,
+    }
+    strongest = {
+        "active": False,
+        "type": "none",
+        "label": "未形成最强组合",
+        "detail": "",
+    }
+    try:
+        if detect_weekly_macd_divergence is not None:
+            weekly_macd = detect_weekly_macd_divergence(df)
+        if combine_nine_turn_macd is not None:
+            strongest = combine_nine_turn_macd(
+                bool(daily.is_complete),
+                daily.direction or "none",
+                weekly_macd,
+            )
+    except Exception:
+        pass
+
     return {
         "daily_text": daily_text,
         "monthly_text": monthly_text,
@@ -316,6 +350,8 @@ def calc_nine_turn_display(df: pd.DataFrame) -> dict:
         "conflict": conflict,
         "suggestion": suggestion,
         "suggestion_detail": suggestion_detail,
+        "weekly_macd": weekly_macd,
+        "strongest_combo": strongest,
     }
 
 
