@@ -1,0 +1,20 @@
+# Autopilot-data 默认归档列表：CODE [可选中文名]
+# 一行一个；# 开头为注释
+000001 上证指数
+159501 纳指ETF嘉实
+399300 沪深300
+TSLA 特斯拉
+SPCX SpaceX
+NVDA 英伟达
+WTI 原油WTI
+AAPL
+MSFT
+GOOG
+AMZN
+META
+AVGO
+MU
+600887 伊利股份
+601899 紫金矿业
+159880 有色ETF鹏华
+518850 黄金ETF华夏
