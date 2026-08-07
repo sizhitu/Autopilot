@@ -225,9 +225,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 #watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 8%; }   /* 现价 */
 #watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 7%; }   /* 日 */
 #watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 8%; }   /* 近5日 */
-#watchlistTable td:nth-child(3),
-#watchlistTable td:nth-child(4),
-#watchlistTable td:nth-child(5) { text-align: right; }   /* 数字列内容右对齐，表头保持居中 */
+/* 数据行：代码/名称左对齐，其余列居中（表头仍居中） */
+#watchlistTable td:nth-child(1),
+#watchlistTable td:nth-child(2) { text-align: left; }
+#watchlistTable td:nth-child(n+3) { text-align: center !important; }
 #watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 15%; }  /* 九转时机 */
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }  /* 趋势过滤 */
 #watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }  /* 建议动作 */
@@ -2410,9 +2411,9 @@ function renderWatchlist(stocks) {
         currentUser ? `<button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-right:4px;">✕</button>` : ''
       }<span onclick="event.stopPropagation();editNote('${s.code}')" title="${(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};border-bottom:${watchNotes[s.code]?'1px dotted var(--gold)':'none'};">${s.code}</span></td>
       <td style="padding:5px 6px;font-weight:500;">${s.name || '—'}</td>
-      <td style="padding:5px 6px;text-align:right;font-family:monospace;color:${(s.pending || s.price === '-' || s.signal === '计算中') ? 'var(--text-dim)' : 'inherit'};">${(s.pending || s.price === '-' || s.signal === '计算中') && (s.price === '-' || s.price == null) ? '…' : s.price}</td>
-      <td style="padding:5px 6px;text-align:right;color:${dayColor};font-weight:600;">${dayText}</td>
-      <td style="padding:5px 6px;text-align:right;color:${chgColor};font-weight:600;">${chgText}</td>
+      <td style="padding:5px 6px;font-family:monospace;color:${(s.pending || s.price === '-' || s.signal === '计算中') ? 'var(--text-dim)' : 'inherit'};">${(s.pending || s.price === '-' || s.signal === '计算中') && (s.price === '-' || s.price == null) ? '…' : s.price}</td>
+      <td style="padding:5px 6px;color:${dayColor};font-weight:600;">${dayText}</td>
+      <td style="padding:5px 6px;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:5px 6px;white-space:normal;line-height:1.25;"><span style="color:${timingColor};font-weight:600;">${timingText}</span>${ntSub}</td>
       <td style="padding:5px 6px;"><span style="color:${trendColor};font-weight:600;">${trendText}</span></td>
       <td style="padding:5px 6px;" title="${actionTip}"><span style="color:${actionColor};font-weight:700;">${actionText}</span></td>
