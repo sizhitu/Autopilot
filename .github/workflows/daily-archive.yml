@@ -2,27 +2,58 @@ name: Daily market archive
 
 on:
   schedule:
-    # 美股大致收盘后 UTC 22:00；A 股另一次 UTC 10:00（北京 18:00）
     - cron: "0 22 * * 1-5"
     - cron: "0 10 * * 1-5"
   workflow_dispatch:
+    inputs:
+      target:
+        description: "data-repo = Autopilot-data；self = 写入本仓 data-archive/"
+        required: false
+        default: "data-repo"
+        type: choice
+        options:
+          - data-repo
+          - self
 
 jobs:
   archive:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout Autopilot (code)
         uses: actions/checkout@v4
         with:
           path: app
 
+      - name: Validate DATA_REPO_TOKEN (when target=data-repo)
+        if: ${{ github.event.inputs.target != 'self' }}
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          if [ -z "$DATA_REPO_TOKEN" ]; then
+            echo "::error::未配置 Secret DATA_REPO_TOKEN。"
+            echo "请到 Autopilot → Settings → Secrets → Actions 新增 DATA_REPO_TOKEN。"
+            echo "值使用 classic PAT，勾选 repo（需能访问私有仓 sizhitu/Autopilot-data）。"
+            echo "或本次手动运行时把 target 选为 self，写入本仓 data-archive/。"
+            exit 1
+          fi
+
       - name: Checkout Autopilot-data
+        if: ${{ github.event.inputs.target != 'self' }}
         uses: actions/checkout@v4
         with:
           repository: sizhitu/Autopilot-data
           token: ${{ secrets.DATA_REPO_TOKEN }}
           path: data-repo
+
+      - name: Prepare self data-archive folder
+        if: ${{ github.event.inputs.target == 'self' }}
+        run: |
+          mkdir -p app/data-archive
+          # 用本仓工作树作为 data-repo 目录
+          rm -rf data-repo
+          cp -a app/data-archive data-repo || mkdir -p data-repo
+          mkdir -p data-repo/data/daily data-repo/data/monthly
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,15 +61,16 @@ jobs:
           python-version: "3.11"
 
       - name: Install deps
-        run: |
-          pip install -q pandas numpy requests pyarrow
+        run: pip install -q pandas numpy requests pyarrow
 
       - name: Prepare symbols file
         run: |
           if [ -f data-repo/symbols.txt ]; then
             cp data-repo/symbols.txt /tmp/symbols.txt
-          else
+          elif [ -f app/scripts/archive/symbols.default.txt ]; then
             cp app/scripts/archive/symbols.default.txt /tmp/symbols.txt
+          else
+            echo "NVDA" > /tmp/symbols.txt
           fi
           echo "--- symbols ---"
           cat /tmp/symbols.txt
@@ -52,15 +84,33 @@ jobs:
             --days 8 \
             --fetch-days 40
 
-      - name: Commit and push to data repo
+      - name: Commit and push to Autopilot-data
+        if: ${{ github.event.inputs.target != 'self' }}
         working-directory: data-repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/daily || true
+          git add -A
           if git diff --staged --quiet; then
             echo "No changes"
           else
             git commit -m "data(daily): archive $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      - name: Commit and push to this repo (data-archive/)
+        if: ${{ github.event.inputs.target == 'self' }}
+        working-directory: app
+        run: |
+          mkdir -p data-archive
+          rm -rf data-archive/data
+          cp -a ../data-repo/data data-archive/data
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data-archive
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "data(daily): archive to data-archive $(date -u +%Y-%m-%d)"
             git push
           fi
