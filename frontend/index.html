@@ -215,12 +215,19 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   padding: 6px 8px !important;   /* 左右统一 8px，列与列之间视觉等距 */
   box-sizing: border-box;
 }
+#watchlistTable th {
+  text-align: center !important;  /* 表头居中，视觉更整齐 */
+  font-weight: 600;
+}
 #watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }
 #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 9%; }    /* 代码（含删除按钮） */
 #watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 12%; }   /* 名称 */
-#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 8%; text-align: right; }   /* 现价 */
-#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 7%; text-align: right; }   /* 日 */
-#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 8%; text-align: right; }   /* 近5日 */
+#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 8%; }   /* 现价 */
+#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 7%; }   /* 日 */
+#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 8%; }   /* 近5日 */
+#watchlistTable td:nth-child(3),
+#watchlistTable td:nth-child(4),
+#watchlistTable td:nth-child(5) { text-align: right; }   /* 数字列内容右对齐，表头保持居中 */
 #watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 15%; }  /* 九转时机 */
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }  /* 趋势过滤 */
 #watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }  /* 建议动作 */
@@ -420,12 +427,12 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   <div class="card" style="overflow-x:auto;">
     <table id="watchlistTable" style="width:100%; border-collapse:collapse; font-size:12px;">
       <thead>
-        <tr style="text-align:left; color:var(--text-dim); border-bottom:1px solid var(--border);">
+        <tr style="color:var(--text-dim); border-bottom:1px solid var(--border);">
           <th style="padding:6px 8px;">代码</th>
           <th style="padding:6px 8px;">名称</th>
-          <th style="padding:6px 8px; text-align:right;">现价</th>
-          <th style="padding:6px 8px; text-align:right;">日</th>
-          <th style="padding:6px 8px; text-align:right;">近5日</th>
+          <th style="padding:6px 8px;">现价</th>
+          <th style="padding:6px 8px;">日</th>
+          <th style="padding:6px 8px;">近5日</th>
           <th style="padding:6px 8px;" title="TD Sequential 日/月九转时机">九转时机</th>
           <th style="padding:6px 8px;" title="均线系统趋势过滤">趋势过滤</th>
           <th style="padding:6px 8px;" title="时机×趋势综合建议（非投资建议）">建议动作</th>
