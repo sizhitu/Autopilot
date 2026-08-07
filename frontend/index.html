@@ -364,7 +364,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     </div>
     <div id="watchlistSummary" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px;"></div>
     <div style="margin-top:8px; font-size:11px; color:var(--text-dim); display:flex; gap:16px; flex-wrap:wrap;">
-      <span><span style="color:var(--orange);font-weight:700;">●</span> 九转时机：下跌九转买点 / 上涨九转卖点</span>
+      <span><span style="color:var(--orange);font-weight:700;">●</span> 九转时机：下跌九转买点 / 上涨九转卖点（更适震荡与弱趋势；强单边中易失效）</span>
       <span><span style="color:var(--green);font-weight:700;">●</span> 趋势过滤：多头 / 空头 / 震荡</span>
       <span><span style="color:var(--gold);font-weight:700;">●</span> 建议动作：时机×趋势综合（冲突则降权为观察）</span>
       <span style="color:var(--text-dim);">汇总仍按「即将上涨 / 见顶 / 观望」统计</span>
@@ -482,6 +482,15 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <!-- 神奇九转 详解 -->
     <div class="card" id="nineTurnDetailCard">
       <div class="card-title">神奇九转 · 详解</div>
+      <div id="nineTurnUsageNote" style="font-size:11px;line-height:1.65;color:var(--text-dim);background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+        <div style="color:var(--text);font-weight:600;margin-bottom:4px;">适用环境（优先）</div>
+        <div>震荡市、弱牛 / 弱熊：价格来回试探时，九转计数更容易对应阶段性转折。</div>
+        <div style="color:var(--text);font-weight:600;margin:8px 0 4px;">慎用环境</div>
+        <div>强趋势、尤其单边加速段：九转与背离都容易失效，可连续出现「第 9」而不反转，需以降权或观望处理。</div>
+        <div style="color:var(--gold);font-weight:600;margin:8px 0 4px;">最强信号组合（研究参考）</div>
+        <div><b style="color:var(--text);">日线九转完成</b> + <b style="color:var(--text);">周线 MACD 背离</b>（下跌九转配合周线底背离偏多观察；上涨九转配合周线顶背离偏空观察）。单一日线九转权重低于该组合。</div>
+        <div style="margin-top:6px;opacity:.85;">说明仅供研究框架，不构成投资建议；信号需结合趋势过滤与自身风控。</div>
+      </div>
       <div id="nineTurnDetailBody" class="nt-block">
         <div style="color:var(--text-dim);text-align:center;padding:10px;">等待分析</div>
       </div>
@@ -2425,7 +2434,7 @@ function updateNineTurnDetail(nt) {
   const hasDaily = nt && nt.daily_direction && nt.daily_direction !== 'none' && nt.daily_count > 0;
   const hasMonthly = nt && nt.monthly_direction && nt.monthly_direction !== 'none' && nt.monthly_count > 0;
   if (!hasDaily && !hasMonthly) {
-    el.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:10px;">当前无九转信号，趋势尚未形成可识别的连续计数结构</div>`;
+    el.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:10px;">当前无九转信号，趋势尚未形成可识别的连续计数结构。可先对照上方「适用环境 / 最强信号组合」理解用法。</div>`;
     return;
   }
 
@@ -2471,7 +2480,7 @@ function updateNineTurnDetail(nt) {
   if (hasMonthly) meaningBlocks += `<div class="nt-meaning"><b style="color:var(--text);">月级：</b>${_meaning('月', nt.monthly_direction, nt.monthly_count, nt.monthly_is_complete, nt.monthly_is_completing)}</div>`;
 
   const concept = `神奇九转（TD Sequential 简化版）：以“当日收盘价 vs 前第 4 根 K 线收盘价”的连续比较进行 1-9 计数。下跌计数第 9 天/月为潜在买点，上涨计数第 9 天/月为潜在卖点；第 7-8 天/月视为“即将完成”的预警区。`;
-  const tip = `日级与月级分别代表短中期与更大级别趋势；当月级与日级同向时信号共振，参考价值更高。`;
+  const tip = `用法提示：优先在震荡市、弱牛/弱熊中参考；强趋势单边加速时九转与背离都易连续出信号却不反转。研究上更强的组合是「日线九转完成 + 周线 MACD 背离」；日级与月级同向时权重高于单级别。`;
 
   el.innerHTML =
     `<div class="nt-concept">${concept}</div>` +
