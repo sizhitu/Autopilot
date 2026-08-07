@@ -2,18 +2,25 @@ name: Monthly market merge
 
 on:
   schedule:
-    # 每月 2 日 UTC 01:00 合并上月
     - cron: "0 1 2 * *"
   workflow_dispatch:
     inputs:
       year:
-        description: "Year (empty = prev month logic)"
+        description: "Year (empty = previous month)"
         required: false
         default: ""
       month:
-        description: "Month 1-12 (empty = prev month)"
+        description: "Month 1-12 (empty = previous month)"
         required: false
         default: ""
+      target:
+        description: "data-repo or self"
+        required: false
+        default: "data-repo"
+        type: choice
+        options:
+          - data-repo
+          - self
 
 jobs:
   merge:
@@ -24,12 +31,30 @@ jobs:
         with:
           path: app
 
+      - name: Validate token
+        if: ${{ github.event.inputs.target != 'self' }}
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          if [ -z "$DATA_REPO_TOKEN" ]; then
+            echo "::error::未配置 DATA_REPO_TOKEN，无法写入私有仓 Autopilot-data"
+            exit 1
+          fi
+
       - name: Checkout Autopilot-data
+        if: ${{ github.event.inputs.target != 'self' }}
         uses: actions/checkout@v4
         with:
           repository: sizhitu/Autopilot-data
           token: ${{ secrets.DATA_REPO_TOKEN }}
           path: data-repo
+
+      - name: Use self data-archive
+        if: ${{ github.event.inputs.target == 'self' }}
+        run: |
+          mkdir -p app/data-archive/data
+          rm -rf data-repo
+          cp -a app/data-archive data-repo
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -49,12 +74,12 @@ jobs:
             python scripts/archive/merge_month.py --data-root ../data-repo/data --prev-month
           fi
 
-      - name: Prune daily older than 90 days (optional)
+      - name: Prune daily older than 90 days
         working-directory: data-repo
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          from datetime import datetime, timedelta, timezone
+          from datetime import datetime, timedelta, timezone, date
           root = Path("data/daily")
           if not root.exists():
               raise SystemExit(0)
@@ -62,10 +87,8 @@ jobs:
           removed = 0
           for p in root.rglob("*.parquet"):
               try:
-                  # path .../YYYY/MM/DD.parquet
                   parts = p.parts
                   y, m, d = int(parts[-3]), int(parts[-2]), int(p.stem)
-                  from datetime import date
                   if date(y, m, d) < cutoff:
                       p.unlink()
                       removed += 1
@@ -74,15 +97,29 @@ jobs:
           print("removed", removed)
           PY
 
-      - name: Commit and push
+      - name: Push data-repo
+        if: ${{ github.event.inputs.target != 'self' }}
         working-directory: data-repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/monthly data/daily || true
-          if git diff --staged --quiet; then
-            echo "No changes"
-          else
-            git commit -m "data(monthly): merge and prune $(date -u +%Y-%m-%d)"
+          git add -A
+          if git diff --staged --quiet; then echo "No changes"; else
+            git commit -m "data(monthly): merge $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      - name: Push self
+        if: ${{ github.event.inputs.target == 'self' }}
+        working-directory: app
+        run: |
+          mkdir -p data-archive
+          rm -rf data-archive/data
+          cp -a ../data-repo/data data-archive/data
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data-archive
+          if git diff --staged --quiet; then echo "No changes"; else
+            git commit -m "data(monthly): merge to data-archive $(date -u +%Y-%m-%d)"
             git push
           fi
