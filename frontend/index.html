@@ -208,22 +208,23 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .business-summary { margin-top:4px; font-size:11px; line-height:1.5; color:var(--text-dim); padding:5px 9px; background:var(--bg); border-left:3px solid var(--purple); border-radius:0 6px 6px 0; }
 .industry-tag { margin-top:4px; display:inline-block; font-size:11px; font-weight:600; color:var(--gold); background:rgba(212,175,55,0.12); border:1px solid rgba(212,175,55,0.35); padding:2px 9px; border-radius:999px; }
 
-/* 自选看板表格：收紧列间距，内容更紧凑协调 */
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 820px; border-collapse: collapse; }
+/* 自选看板表格：列宽合计 100%，间距视觉均匀 */
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 860px; border-collapse: collapse; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
-  padding: 5px 6px !important;
+  padding: 6px 8px !important;   /* 左右统一 8px，列与列之间视觉等距 */
+  box-sizing: border-box;
 }
 #watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }
-#watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 7%; }   /* 代码 */
-#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 11%; }  /* 名称 */
-#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 7%; }   /* 现价 */
-#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 6%; }   /* 日 */
-#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 7%; }   /* 近5日 */
-#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 16%; }  /* 九转时机 */
-#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 9%; }   /* 趋势过滤 */
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 11%; }  /* 建议动作 */
-#watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 16%; }  /* 新高/估值 */
+#watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 9%; }    /* 代码（含删除按钮） */
+#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 12%; }   /* 名称 */
+#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 8%; text-align: right; }   /* 现价 */
+#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 7%; text-align: right; }   /* 日 */
+#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 8%; text-align: right; }   /* 近5日 */
+#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 15%; }  /* 九转时机 */
+#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }  /* 趋势过滤 */
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }  /* 建议动作 */
+#watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 19%; }  /* 新高/估值 */
 #watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:1px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
 /* 详情页：新高/新低/估值 卡片 */
@@ -256,7 +257,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   .left { flex: none; }
   .right { min-width: 0; max-width: none; flex: none; }
   #watchlistTable { font-size: 11px !important; }
-  #watchlistTable th, #watchlistTable td { padding: 5px 6px !important; }
+  #watchlistTable th, #watchlistTable td { padding: 5px 6px !important; } /* 小屏略紧凑，仍保持左右相等 */
 }
 
 /* 成交量收敛金边三角形 */
@@ -420,15 +421,15 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <table id="watchlistTable" style="width:100%; border-collapse:collapse; font-size:12px;">
       <thead>
         <tr style="text-align:left; color:var(--text-dim); border-bottom:1px solid var(--border);">
-          <th style="padding:5px 6px;">代码</th>
-          <th style="padding:5px 6px;">名称</th>
-          <th style="padding:5px 6px; text-align:right;">现价</th>
-          <th style="padding:5px 6px; text-align:right;">日</th>
-          <th style="padding:5px 6px; text-align:right;">近5日</th>
-          <th style="padding:5px 6px;" title="TD Sequential 日/月九转时机">九转时机</th>
-          <th style="padding:5px 6px;" title="均线系统趋势过滤">趋势过滤</th>
-          <th style="padding:5px 6px;" title="时机×趋势综合建议（非投资建议）">建议动作</th>
-          <th style="padding:5px 6px;">新高/估值</th>
+          <th style="padding:6px 8px;">代码</th>
+          <th style="padding:6px 8px;">名称</th>
+          <th style="padding:6px 8px; text-align:right;">现价</th>
+          <th style="padding:6px 8px; text-align:right;">日</th>
+          <th style="padding:6px 8px; text-align:right;">近5日</th>
+          <th style="padding:6px 8px;" title="TD Sequential 日/月九转时机">九转时机</th>
+          <th style="padding:6px 8px;" title="均线系统趋势过滤">趋势过滤</th>
+          <th style="padding:6px 8px;" title="时机×趋势综合建议（非投资建议）">建议动作</th>
+          <th style="padding:6px 8px;">新高/估值</th>
         </tr>
       </thead>
       <tbody id="watchlistBody"></tbody>
