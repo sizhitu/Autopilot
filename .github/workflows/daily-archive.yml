@@ -1,0 +1,66 @@
+name: Daily market archive
+
+on:
+  schedule:
+    # 美股大致收盘后 UTC 22:00；A 股另一次 UTC 10:00（北京 18:00）
+    - cron: "0 22 * * 1-5"
+    - cron: "0 10 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Autopilot (code)
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      - name: Checkout Autopilot-data
+        uses: actions/checkout@v4
+        with:
+          repository: sizhitu/Autopilot-data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data-repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          pip install -q pandas numpy requests pyarrow
+
+      - name: Prepare symbols file
+        run: |
+          if [ -f data-repo/symbols.txt ]; then
+            cp data-repo/symbols.txt /tmp/symbols.txt
+          else
+            cp app/scripts/archive/symbols.default.txt /tmp/symbols.txt
+          fi
+          echo "--- symbols ---"
+          cat /tmp/symbols.txt
+
+      - name: Fetch and write daily parquet
+        working-directory: app
+        run: |
+          PYTHONPATH=trading_tool python scripts/archive/fetch_and_archive.py \
+            --out ../data-repo/data \
+            --symbols-file /tmp/symbols.txt \
+            --days 8 \
+            --fetch-days 40
+
+      - name: Commit and push to data repo
+        working-directory: data-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/daily || true
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "data(daily): archive $(date -u +%Y-%m-%d)"
+            git push
+          fi
