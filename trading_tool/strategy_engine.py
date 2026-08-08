@@ -103,7 +103,7 @@ class FujimotoStrategy:
         (1.00, 1.00, "上涨100%清仓"),
     ]
 
-    MA_PERIODS = [5, 10, 20, 30, 50, 100, 150, 200, 250]
+    MA_PERIODS = [5, 10, 20, 30, 50, 100, 120, 150, 200, 250]
 
     def __init__(self, total_capital: float = 100000,
                  risk_per_trade: float = 0.02,
@@ -149,50 +149,135 @@ class FujimotoStrategy:
 
     def _judge_trend(self, mas: dict, vwma: Optional[float], close: float,
                      short_periods: list, long_periods: list) -> tuple:
-        """自适应判断趋势（根据可用均线周期）"""
-        short_mas = [mas.get(p) for p in short_periods]
-        long_mas = [mas.get(p) for p in long_periods]
+        """
+        均线趋势判断（权重核心）。
+        强多头参考：MA5>MA10>MA20>MA30 且明显位于 MA120 上方（>>）。
+        """
+        def _m(p):
+            v = mas.get(p)
+            return float(v) if v is not None else None
 
-        short_valid = len(short_mas) >= 2  # 至少需要2条短期均线判断排列
-        long_valid = len(long_mas) >= 2
+        m5, m10, m20, m30 = _m(5), _m(10), _m(20), _m(30)
+        m50, m100, m120, m200 = _m(50), _m(100), _m(120) or _m(100), _m(200)
 
-        # 检查均线是否纠缠（短期均线差异小）——短期均线不足3条时不判断纠缠
-        if short_valid and len(short_mas) >= 3:
-            short_vals = short_mas
-            spread = (max(short_vals) - min(short_vals)) / close
-            if spread < 0.01:  # 均线差异<1%，视为纠缠
+        # 纠缠：短均线挤在一起
+        short_chain = [x for x in (m5, m10, m20, m30) if x is not None]
+        if len(short_chain) >= 3 and close > 0:
+            spread = (max(short_chain) - min(short_chain)) / close
+            if spread < 0.01:
                 return TrendType.RANGE, "短期均线纠缠（差异<1%），趋势不明"
 
-        if short_valid:
-            short_bull = all(short_mas[i] > short_mas[i+1]
-                             for i in range(len(short_mas)-1))
-            short_bear = all(short_mas[i] < short_mas[i+1]
-                             for i in range(len(short_mas)-1))
-        else:
-            short_bull = short_bear = False
+        # 标准多头/空头排列：5>10>20>30 / 反向
+        stack_bull = (
+            m5 is not None and m10 is not None and m20 is not None and m30 is not None
+            and m5 > m10 > m20 > m30
+        )
+        stack_bear = (
+            m5 is not None and m10 is not None and m20 is not None and m30 is not None
+            and m5 < m10 < m20 < m30
+        )
+        # 退化：至少 5>10>20
+        soft_bull = (
+            m5 is not None and m10 is not None and m20 is not None
+            and m5 > m10 > m20 and not stack_bear
+        )
+        soft_bear = (
+            m5 is not None and m10 is not None and m20 is not None
+            and m5 < m10 < m20 and not stack_bull
+        )
 
-        long_up = False
-        long_down = False
-        if long_valid:
-            long_up = long_mas[0] is not None and long_mas[-1] is not None and \
-                       all(m is not None for m in long_mas) and \
-                       long_mas[0] > long_mas[-1]
-            long_down = long_mas[0] is not None and long_mas[-1] is not None and \
-                         all(m is not None for m in long_mas) and \
-                         long_mas[0] < long_mas[-1]
+        # >>120：短端整体显著高于/低于 120 日线（默认 ≥2%）
+        strong_above_120 = False
+        strong_below_120 = False
+        if m120 is not None and m30 is not None and m120 > 0:
+            gap = (m30 - m120) / m120
+            strong_above_120 = gap >= 0.02
+            strong_below_120 = gap <= -0.02
 
-        # VWMA 确认
         vwma_bull = vwma is not None and close > vwma
         vwma_bear = vwma is not None and close < vwma
+        price_above_30 = m30 is not None and close > m30
+        price_below_30 = m30 is not None and close < m30
 
-        if short_bull and (long_up or not long_valid) and vwma_bull:
-            note = "" if long_valid else "（长期数据不足）"
-            return TrendType.BULL, "短期多头排列+VWMA确认" + note
-        elif short_bear and (long_down or not long_valid) and vwma_bear:
-            note = "" if long_valid else "（长期数据不足）"
-            return TrendType.BEAR, "短期空头排列+VWMA确认" + note
-        else:
-            return TrendType.RANGE, "均线排列混乱，趋势不明"
+        # 强上涨：5>10>20>30 >> 120，价在短均线上方
+        if stack_bull and strong_above_120 and (vwma_bull or price_above_30):
+            gap_pct = (m30 - m120) / m120 * 100 if m120 else 0
+            return (
+                TrendType.BULL,
+                f"强多头排列 MA5>10>20>30 且 MA30 高于 MA120 约 {gap_pct:.1f}%（>>）"
+                + ("，VWMA 确认" if vwma_bull else ""),
+            )
+        if stack_bear and strong_below_120 and (vwma_bear or price_below_30):
+            gap_pct = (m120 - m30) / m120 * 100 if m120 else 0
+            return (
+                TrendType.BEAR,
+                f"强空头排列 MA5<10<20<30 且 MA30 低于 MA120 约 {gap_pct:.1f}%"
+                + ("，VWMA 确认" if vwma_bear else ""),
+            )
+
+        # 普通多头：完整或软排列 + 价/VWMA 配合
+        if stack_bull and (vwma_bull or price_above_30):
+            note = "（相对 120 日线未拉开）" if m120 and not strong_above_120 else ""
+            return TrendType.BULL, "多头排列 MA5>10>20>30" + note
+        if soft_bull and (vwma_bull or (m20 is not None and close > m20)):
+            return TrendType.BULL, "偏多排列 MA5>10>20（未齐 30）"
+        if stack_bear and (vwma_bear or price_below_30):
+            return TrendType.BEAR, "空头排列 MA5<10<20<30"
+        if soft_bear and (vwma_bear or (m20 is not None and close < m20)):
+            return TrendType.BEAR, "偏空排列 MA5<10<20"
+
+        return TrendType.RANGE, "均线未形成稳定多空排列"
+
+    def _system_layer_score(self, trend: TrendType, indicators: list) -> tuple:
+        """
+        系统层加权评分（非等权四票）。
+        MACD 动量 > RSI > VOL 量能 > ATR 波动（ATR 偏风控，权重最低）。
+        趋势市中：RSI 超买/超卖的逆向信号降权（强趋势里超买常见，不视为否决）。
+        """
+        weights = {"MACD": 0.40, "RSI": 0.30, "VOL": 0.20, "ATR": 0.10}
+        score = 0.0
+        parts = []
+        for ind in indicators:
+            w = weights.get(ind.name, 0.15)
+            sig = ind.signal
+            # 趋势跟随语境：多头里 RSI 超买、空头里 RSI 超卖 → 按中性处理（半权惩罚最多）
+            if ind.name == "RSI":
+                if trend == TrendType.BULL and sig == "看空":
+                    score -= w * 0.25
+                    parts.append(f"RSI超买降权")
+                    continue
+                if trend == TrendType.BEAR and sig == "看多":
+                    score += w * 0.25
+                    parts.append(f"RSI超卖降权")
+                    continue
+            # ATR 过高仅作轻量风险扣分，不对称否决趋势
+            if ind.name == "ATR" and sig == "看空":
+                score -= w * 0.5
+                parts.append(f"ATR波动偏高")
+                continue
+            if sig == "看多":
+                score += w
+                parts.append(f"{ind.name}多×{w:.2f}")
+            elif sig == "看空":
+                score -= w
+                parts.append(f"{ind.name}空×{w:.2f}")
+            else:
+                parts.append(f"{ind.name}中")
+
+        sys_bull = trend == TrendType.BULL and score >= 0.15
+        sys_bear = trend == TrendType.BEAR and score <= -0.15
+        detail = f"加权分={score:+.2f}（" + "，".join(parts) + "）"
+        return sys_bull, sys_bear, score, detail
+
+    def _system_pass(self, trend: TrendType, trend_detail: str, indicators: list) -> tuple:
+        """结合均线趋势与加权指标，返回 sys_bull, sys_bear, status_extra"""
+        sys_bull, sys_bear, score, wdetail = self._system_layer_score(trend, indicators)
+        # 强排列：均线已是主证据，允许指标接近中性
+        if trend == TrendType.BULL and "强多头" in (trend_detail or "") and score >= -0.15:
+            sys_bull = True
+        if trend == TrendType.BEAR and "强空头" in (trend_detail or "") and score <= 0.15:
+            sys_bear = True
+        return sys_bull, sys_bear, wdetail
 
     def _calc_rsi(self, df: pd.DataFrame, period: int = 14) -> IndicatorResult:
         """RSI 指标"""
@@ -565,14 +650,8 @@ class FujimotoStrategy:
             timing_status = "；".join(parts)
 
         # === 三层一致性检验 ===
-        # 系统层：趋势+指标
-        sys_signals = [i.signal for i in indicators]
-        sys_bull = trend == TrendType.BULL and \
-                   sys_signals.count("看多") >= 2 and \
-                   "看空" not in sys_signals
-        sys_bear = trend == TrendType.BEAR and \
-                   sys_signals.count("看空") >= 2 and \
-                   "看多" not in sys_signals
+        # 系统层：均线趋势为主 + 指标加权（非四票等权）
+        sys_bull, sys_bear, sys_wdetail = self._system_pass(trend, trend_detail, indicators)
 
         # 工具层：斐波那契反应确认
         tool_confirmed = fib_buy is not None and fib_buy.reacted
@@ -581,8 +660,7 @@ class FujimotoStrategy:
         layers = {
             "系统层（趋势+指标）": {
                 "通过": sys_bull or sys_bear,
-                "状态": f"趋势={trend.value}，{trend_detail}；" +
-                        "；".join([f"{i.name}={i.signal}" for i in indicators])
+                "状态": f"趋势={trend.value}，{trend_detail}；{sys_wdetail}"
             },
             "工具层（斐波那契反应）": {
                 "通过": tool_confirmed,
