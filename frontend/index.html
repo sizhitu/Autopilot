@@ -125,6 +125,52 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 /* 三层 */
 .layer-item { display:flex; align-items:flex-start; gap:6px; padding:6px; border-radius:6px; margin-bottom:4px; background:var(--bg); }
 .layer-pass { color:var(--green); font-size:16px; } .layer-fail { color:var(--red); font-size:16px; }
+.layer-name { font-size:12px; font-weight:600; display:inline-flex; align-items:center; gap:5px; }
+.layer-status { font-size:11px; color:var(--text-dim); margin-top:2px; line-height:1.45; }
+
+/* 小问号帮助（毛玻璃） */
+.help-q {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:16px; height:16px; border-radius:50%;
+  font-size:11px; font-weight:700; line-height:1;
+  color:var(--gold); border:1px solid rgba(241,196,15,0.45);
+  background:rgba(241,196,15,0.08); cursor:pointer;
+  vertical-align:middle; flex-shrink:0;
+  transition: background .15s, border-color .15s;
+  position:relative; user-select:none;
+}
+.help-q:hover, .help-q.open {
+  background:rgba(241,196,15,0.18); border-color:var(--gold);
+}
+.help-pop {
+  display:none; position:absolute; z-index:3000;
+  top:calc(100% + 8px); left:50%; transform:translateX(-50%);
+  width:min(320px, 86vw); max-height:min(360px, 60vh); overflow:auto;
+  padding:12px 14px; border-radius:10px;
+  background:rgba(18,22,32,0.82);
+  border:1px solid rgba(255,255,255,0.10);
+  box-shadow:0 12px 40px rgba(0,0,0,0.45);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  color:var(--text); font-size:11px; font-weight:400; line-height:1.65;
+  text-align:left; white-space:normal;
+}
+.help-q.open .help-pop { display:block; }
+.help-pop::before {
+  content:''; position:absolute; top:-5px; left:50%; margin-left:-5px;
+  width:10px; height:10px; background:rgba(18,22,32,0.82);
+  border-left:1px solid rgba(255,255,255,0.10);
+  border-top:1px solid rgba(255,255,255,0.10);
+  transform:rotate(45deg);
+}
+.help-pop b { color:var(--gold); font-weight:600; }
+.help-pop .hp-row { margin:6px 0; padding-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.06); }
+.help-pop .hp-row:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
+.help-pop .hp-k { color:var(--text-dim); font-size:10px; }
+.card-title .help-q { margin-left:6px; text-transform:none; letter-spacing:0; }
+@media (max-width: 520px) {
+  .help-pop { left:auto; right:0; transform:none; }
+  .help-pop::before { left:auto; right:10px; margin-left:0; }
+}
 .layer-name { font-weight:600; font-size:11px; } .layer-status { font-size:10px; color:var(--text-dim); margin-top:1px; line-height:1.3; }
 
 /* 指标 */
@@ -523,7 +569,15 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   <div class="right">
     <!-- 信号 -->
     <div class="card signal-card">
-      <div class="card-title">策略信号</div>
+      <div class="card-title">策略信号
+        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="说明">?
+          <span class="help-pop" onclick="event.stopPropagation()">
+            <div class="hp-row"><b>如何阅读</b><br>上方为趋势与主信号，下方为仓位/入场/止损/目标。三层一致性在下方卡片展开。</div>
+            <div class="hp-row"><b>买入更严</b><br>需系统层多头 + 工具层结构确认 + 时机层（九转买侧且量价不反向）。</div>
+            <div class="hp-row"><b>仓位</b><br>优先 ATR 风控；若已填建仓价，藤本茂阶梯仅作加减仓参考。</div>
+          </span>
+        </span>
+      </div>
       <div class="signal-trend" id="trendText">趋势: -</div>
       <div class="signal-main" id="signalText" style="color:var(--text-dim);">-</div>
       <div class="signal-action" id="actionText">输入股票代码或点击"模拟数据"开始</div>
@@ -539,15 +593,16 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 
     <!-- 神奇九转 详解 -->
     <div class="card" id="nineTurnDetailCard">
-      <div class="card-title">神奇九转 · 详解</div>
-      <div id="nineTurnUsageNote" style="font-size:11px;line-height:1.65;color:var(--text-dim);background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
-        <div style="color:var(--text);font-weight:600;margin-bottom:4px;">适用环境（优先）</div>
-        <div>震荡市、弱牛 / 弱熊：价格来回试探时，九转计数更容易对应阶段性转折。</div>
-        <div style="color:var(--text);font-weight:600;margin:8px 0 4px;">慎用环境</div>
-        <div>强趋势、尤其单边加速段：九转与背离都容易失效，可连续出现「第 9」而不反转，需以降权或观望处理。</div>
-        <div style="color:var(--gold);font-weight:600;margin:8px 0 4px;">最强信号组合（研究参考）</div>
-        <div><b style="color:var(--text);">日线九转完成</b> + <b style="color:var(--text);">周线 MACD 背离</b>（下跌九转配合周线底背离偏多观察；上涨九转配合周线顶背离偏空观察）。单一日线九转权重低于该组合。</div>
-        <div style="margin-top:6px;opacity:.85;">说明仅供研究框架，不构成投资建议；信号需结合趋势过滤与自身风控。</div>
+      <div class="card-title">神奇九转 · 详解
+        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="使用说明">?
+          <span class="help-pop" onclick="event.stopPropagation()">
+            <div class="hp-row"><b>适用环境</b><br><span class="hp-k">优先</span> 震荡市、弱牛/弱熊：价格来回试探时，九转更易对应阶段性转折。</div>
+            <div class="hp-row"><b>慎用环境</b><br>强趋势、单边加速段：可连续「第9」而不反转，应降权或观望。</div>
+            <div class="hp-row"><b>最强组合（研究）</b><br>日线九转完成 + 周线 MACD 背离。单一日线九转权重低于该组合。</div>
+            <div class="hp-row"><b>与时机层</b><br>本系统「时机层」要求九转到位并叠加量价，过滤假突破。</div>
+            <div style="opacity:.8;margin-top:4px;">仅供研究，不构成投资建议。</div>
+          </span>
+        </span>
       </div>
       <div id="nineTurnDetailBody" class="nt-block">
         <div style="color:var(--text-dim);text-align:center;padding:10px;">等待分析</div>
@@ -570,11 +625,21 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     </div>
 
     <div class="card">
-      <div class="card-title">三层一致性检验</div>
+      <div class="card-title">三层一致性检验
+        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="三层说明">?
+          <span class="help-pop" onclick="event.stopPropagation()">
+            <div class="hp-row"><b>系统层 · 趋势+指标</b><br><span class="hp-k">核心</span> 均线趋势与多指标方向一致才做单边。<br><span class="hp-k">场景</span> 全市场过滤逆势。<br><span class="hp-k">参考</span> 相对无过滤，期望减少明显逆势亏损约 15–25%（研究估计）。</div>
+            <div class="hp-row"><b>工具层 · 斐波那契反应</b><br><span class="hp-k">核心</span> 关键回撤位出现反应确认，避免半空接刀。<br><span class="hp-k">场景</span> 趋势中的回调买/反弹卖。<br><span class="hp-k">参考</span> 相对随意价位入场，胜率约 +5–10%（研究估计）。</div>
+            <div class="hp-row"><b>时机层 · 九转+量价</b><br><span class="hp-k">核心</span> 九转到位且量价不反向，确认窗口。<br><span class="hp-k">场景</span> 震荡与弱趋势转折；强单边需降权。<br><span class="hp-k">参考</span> 相对仅用趋势+结构，胜率约 +8–15%；在盈亏比≈2 时，期望值约从偏平抬升到每笔约 +0.1R～+0.3R（研究估计，非承诺）。</div>
+            <div class="hp-row"><b>藤本茂阶梯</b><br>仅作持仓后加减仓参考，<b>不参与</b>三层「通过」门槛。</div>
+            <div style="opacity:.8;">数字为方法论量级估计，因标的与周期而异；不构成投资建议。</div>
+          </span>
+        </span>
+      </div>
       <div id="layersContainer">
         <div class="layer-item"><div class="layer-fail">○</div><div><div class="layer-name">系统层</div><div class="layer-status">等待分析</div></div></div>
         <div class="layer-item"><div class="layer-fail">○</div><div><div class="layer-name">工具层</div><div class="layer-status">等待分析</div></div></div>
-        <div class="layer-item"><div class="layer-fail">○</div><div><div class="layer-name">心法层</div><div class="layer-status">等待分析</div></div></div>
+        <div class="layer-item"><div class="layer-fail">○</div><div><div class="layer-name">时机层</div><div class="layer-status">等待分析</div></div></div>
       </div>
     </div>
 
@@ -2449,7 +2514,8 @@ function updateResults(data, meta, nineTurn) {
   for (const [name, info] of Object.entries(data.layers)) {
     const icon = info['通过'] ? '✓' : '✗';
     const cls = info['通过'] ? 'layer-pass' : 'layer-fail';
-    lh += `<div class="layer-item"><div class="${cls}">${icon}</div><div style="flex:1;"><div class="layer-name">${name}</div><div class="layer-status">${info['状态']}</div></div></div>`;
+    const short = String(name).replace(/（.*?）/g, '').trim();
+    lh += `<div class="layer-item"><div class="${cls}">${icon}</div><div style="flex:1;"><div class="layer-name">${short}</div><div class="layer-status">${info['状态']}</div></div></div>`;
   }
   document.getElementById('layersContainer').innerHTML = lh;
 
@@ -3258,6 +3324,14 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
     }, 4000);
   }
 })();
+</script>
+
+
+<script>
+/* 点击空白关闭帮助气泡 */
+document.addEventListener('click', function() {
+  document.querySelectorAll('.help-q.open').forEach(function(el){ el.classList.remove('open'); });
+});
 </script>
 
 </body>

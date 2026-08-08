@@ -1,7 +1,8 @@
 """
 藤本茂交易哲学融合策略引擎
 =======================================
-三层一体：心法层(藤本茂阶梯) + 工具层(斐波那契) + 系统层(九转均线+多指标)
+三层一体：系统层(趋势+指标) + 工具层(斐波那契) + 时机层(九转+量价)
+藤本茂阶梯仅作仓位建议，不参与「通过/不通过」门槛。
 
 独立模块，不含 GUI，可被任何前端调用。
 """
@@ -11,6 +12,11 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
+
+try:
+    from nine_turn import calc_nine_turn
+except Exception:  # pragma: no cover
+    calc_nine_turn = None
 
 
 class SignalType(Enum):
@@ -353,7 +359,7 @@ class FujimotoStrategy:
         return None
 
     # ================================================================
-    #  心法层：藤本茂阶梯
+    #  仓位建议：藤本茂阶梯（不参与三层门槛）
     # ================================================================
 
     def _fujimoto_action(self, price_change: float, current_position: float = 0) -> tuple:
@@ -435,11 +441,51 @@ class FujimotoStrategy:
 
         fib_buy = self._find_fib_buy_point(fib_levels, close)
 
-        # === 心法层 ===
+        # === 藤本茂阶梯（仅仓位建议，不参与三层门槛）===
         price_change = 0
         if self.entry_price and self.entry_price > 0:
             price_change = (close - self.entry_price) / self.entry_price
         fujimoto_desc, position_delta = self._fujimoto_action(price_change, current_position_pct)
+
+        # === 时机层：九转确认 + 量价叠加 ===
+        nt = None
+        if calc_nine_turn is not None:
+            try:
+                nt = calc_nine_turn(df, unit="天")
+            except Exception:
+                nt = None
+
+        nine_buy = bool(nt and nt.direction == "down" and (nt.is_complete or nt.is_completing))
+        nine_sell = bool(nt and nt.direction == "up" and (nt.is_complete or nt.is_completing))
+        vol_bull = vol_res.signal == "看多"
+        vol_bear = vol_res.signal == "看空"
+        # 量价：买侧要求非放量下跌；卖侧要求非放量上涨（叠加九转）
+        vol_ok_buy = not vol_bear
+        vol_ok_sell = not vol_bull
+        timing_buy = nine_buy and vol_ok_buy
+        timing_sell = nine_sell and vol_ok_sell
+        timing_pass = timing_buy or timing_sell
+
+        if nt and nt.count > 0:
+            nine_txt = f"{'下跌' if nt.direction=='down' else '上涨' if nt.direction=='up' else ''}九转{nt.count}（{nt.status}）"
+        else:
+            nine_txt = "无有效九转计数"
+        vol_txt = vol_res.detail or vol_res.signal
+        if timing_buy:
+            timing_status = f"买侧确认：{nine_txt} + {vol_txt}"
+        elif timing_sell:
+            timing_status = f"卖侧确认：{nine_txt} + {vol_txt}"
+        else:
+            parts = []
+            if not (nine_buy or nine_sell):
+                parts.append(f"九转未到位（{nine_txt}）")
+            if nine_buy and not vol_ok_buy:
+                parts.append(f"量价不支持买（{vol_txt}）")
+            if nine_sell and not vol_ok_sell:
+                parts.append(f"量价不支持卖（{vol_txt}）")
+            if not parts:
+                parts.append(f"{nine_txt}；{vol_txt}")
+            timing_status = "；".join(parts)
 
         # === 三层一致性检验 ===
         # 系统层：趋势+指标
@@ -455,9 +501,6 @@ class FujimotoStrategy:
         tool_confirmed = fib_buy is not None and fib_buy.reacted
         tool_tested = fib_buy is not None and fib_buy.tested
 
-        # 心法层：藤本茂触发
-        mind_trigger = position_delta != 0
-
         layers = {
             "系统层（趋势+指标）": {
                 "通过": sys_bull or sys_bear,
@@ -471,31 +514,36 @@ class FujimotoStrategy:
                          if fib_buy else "无有效斐波那契买点") +
                         ("（已测试但未确认反应）" if tool_tested and not tool_confirmed else "")
             },
-            "心法层（藤本茂阶梯）": {
-                "通过": mind_trigger,
-                "状态": f"涨跌幅={price_change*100:+.1f}%，{fujimoto_desc}"
+            "时机层（九转+量价）": {
+                "通过": timing_pass,
+                "状态": timing_status
             },
         }
 
         # === 综合信号决策 ===
-        all_pass = sys_bull and tool_confirmed and mind_trigger and position_delta > 0
-        sell_trigger = position_delta < 0
+        all_pass = sys_bull and tool_confirmed and timing_buy
+        # 藤本茂减仓：有持仓且阶梯触发时仍可提示卖出（仓位管理，非三层门槛）
+        sell_trigger = position_delta < 0 and current_position_pct > 0
 
         if all_pass:
             signal = SignalType.BUY if current_position_pct == 0 else SignalType.ADD
-            action = f"三层一致 → {'初始建仓' if current_position_pct == 0 else '加仓'}：{fujimoto_desc}"
+            ladder_note = f"；仓位参考：{fujimoto_desc}" if position_delta > 0 else ""
+            action = f"三层一致 → {'初始建仓' if current_position_pct == 0 else '加仓'}（九转+量价确认）{ladder_note}"
+        elif timing_sell and (sys_bear or tool_confirmed):
+            signal = SignalType.SELL if current_position_pct > 0 else SignalType.WAIT
+            action = "时机层卖侧确认" + ("，建议减仓" if current_position_pct > 0 else "，空仓观望")
         elif sell_trigger:
             signal = SignalType.SELL
-            action = f"触发藤本茂减仓：{fujimoto_desc}"
-        elif sys_bull and tool_confirmed and not mind_trigger:
-            signal = SignalType.HOLD
-            action = "趋势+斐波那契确认，但未触发藤本茂阶梯，持有等待"
+            action = f"持仓阶梯减仓参考：{fujimoto_desc}"
+        elif sys_bull and tool_confirmed and not timing_buy:
+            signal = SignalType.HOLD if current_position_pct > 0 else SignalType.WAIT
+            action = "趋势+结构到位，等待九转与量价确认"
         elif sys_bear:
             signal = SignalType.SELL if current_position_pct > 0 else SignalType.WAIT
             action = "空头趋势，" + ("减仓避险" if current_position_pct > 0 else "观望")
         elif trend == TrendType.RANGE:
             signal = SignalType.WAIT
-            action = "震荡市，三层不一致，观望等待"
+            action = "震荡市，三层未齐，观望等待"
         else:
             signal = SignalType.WAIT
             action = "三层未完全一致，观望等待"
@@ -515,7 +563,9 @@ class FujimotoStrategy:
                 self.max_position - current_position_pct
             )
             position_pct = max(position_pct, 0)
-            position_pct = min(position_pct, position_delta if position_delta > 0 else position_pct)
+            # 若藤本茂给出加仓比例则取较小者；无建仓价/未触发阶梯时保留 ATR 仓位
+            if position_delta > 0:
+                position_pct = min(position_pct, position_delta)
 
             entry_price = close
             stop_loss = close - 1.5 * atr_val
