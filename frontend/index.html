@@ -49,7 +49,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .header-auth .btn { height:28px; line-height:1; padding:0 12px; display:inline-flex; align-items:center; justify-content:center; }
 .header-auth .btn-sm { height:28px; padding:0 10px; font-size:11px; }
 #userName {
-  height:28px; max-width:80px; padding:0 10px;
+  height:28px; max-width:140px; padding:0 10px;
   display:inline-flex; align-items:center;
   font-size:11px; color:var(--text); font-weight:500;
   background:var(--bg); border:1px solid var(--border); border-radius:4px;
@@ -58,7 +58,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   box-sizing:border-box;
 }
 #userNameText {
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px;
 }
 #userNameTip {
   display:none; position:absolute; right:0; top:calc(100% + 8px);
@@ -90,8 +90,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   .header-auth #authArea,
   .header-auth #userArea { gap:4px; }
   .header-auth .btn-sm { padding:0 8px; height:26px; font-size:11px; }
-  #userName { max-width:56px; height:26px; padding:0 6px; font-size:10px; }
-  #userNameText { max-width:44px; }
+  #userName { max-width:110px; height:26px; padding:0 8px; font-size:10px; }
+  #userNameText { max-width:94px; }
 }
 
 .container { display:flex; gap:10px; padding:10px; min-height:calc(100vh - 48px); }
@@ -1234,7 +1234,7 @@ function refreshAuthUI() {
     const el = document.getElementById('userName');
     const textEl = document.getElementById('userNameText');
     const tipEl = document.getElementById('userNameTip');
-    if (textEl) textEl.textContent = formatDisplayName(full, 6);
+    if (textEl) textEl.textContent = formatDisplayName(full, 10);
     if (tipEl) tipEl.textContent = full;
     if (el) { el.dataset.full = full; el.classList.remove('show-tip'); }
     bindUserNameTip();
