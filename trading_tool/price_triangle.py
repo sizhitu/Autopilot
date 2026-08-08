@@ -78,6 +78,8 @@ def detect_price_triangle(
         "apex_bars": None,
         "breakout": "none",
         "score": 0,
+        "upper_line": [],
+        "lower_line": [],
     }
 
     if df is None or len(df) < 20:
@@ -151,6 +153,13 @@ def detect_price_triangle(
         out["status"] = "收敛中"
         out["score"] = min(100, int(40 + shrink * 0.5 + max(0, 20 - ang)))
         out["label"] = "价格收敛三角形"
+        n_line = 40
+        raw_u = [a_u + b_u * ((n - n_line) + i) for i in range(n_line)]
+        raw_l = [a_l + b_l * ((n - n_line) + i) for i in range(n_line)]
+        mn, mx = min(min(raw_u), min(raw_l)), max(max(raw_u), max(raw_l))
+        span = max(mx - mn, 1e-9)
+        out["upper_line"] = [round((v - mn) / span * 0.75 + 0.12, 4) for v in raw_u]
+        out["lower_line"] = [round((v - mn) / span * 0.75 + 0.12, 4) for v in raw_l]
         out["detail"] = (
             f"高点连线下行、低点连线上行（上轨斜率 {b_u:.4f}，下轨 {b_l:.4f}），"
             f"波幅约收窄 {shrink:.0f}%，夹角约 {ang:.1f}°。"

@@ -143,34 +143,54 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   background:rgba(241,196,15,0.18); border-color:var(--gold);
 }
 .help-pop {
-  display:none; position:absolute; z-index:3000;
-  top:calc(100% + 8px); left:50%; transform:translateX(-50%);
-  width:min(320px, 86vw); max-height:min(360px, 60vh); overflow:auto;
-  padding:12px 14px; border-radius:10px;
-  background:rgba(18,22,32,0.82);
-  border:1px solid rgba(255,255,255,0.10);
-  box-shadow:0 12px 40px rgba(0,0,0,0.45);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  color:var(--text); font-size:11px; font-weight:400; line-height:1.65;
+  display:none; z-index:10050;
+  padding:14px 16px; border-radius:12px;
+  background:rgba(18,22,32,0.92);
+  border:1px solid rgba(255,255,255,0.12);
+  box-shadow:0 16px 48px rgba(0,0,0,0.55);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  color:var(--text); font-size:12px; font-weight:400; line-height:1.7;
   text-align:left; white-space:normal;
+  overflow-x:hidden; overflow-y:auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* 默认：相对问号居中下方（桌面宽屏） */
+  position:absolute; top:calc(100% + 10px); left:50%; transform:translateX(-50%);
+  width:min(320px, 86vw); max-height:min(360px, 55vh);
 }
 .help-q.open .help-pop { display:block; }
+/* 手机/窄屏：固定屏幕正中，保证完整可见可滚动 */
+@media (max-width: 820px) {
+  .help-pop {
+    position: fixed !important;
+    left: 50% !important;
+    top: 50% !important;
+    right: auto !important;
+    transform: translate(-50%, -50%) !important;
+    width: min(340px, calc(100vw - 28px)) !important;
+    max-height: min(70vh, 480px) !important;
+    margin: 0 !important;
+  }
+  .help-pop::before { display: none; }
+  body.help-open { overflow: hidden; touch-action: none; }
+}
 .help-pop::before {
   content:''; position:absolute; top:-5px; left:50%; margin-left:-5px;
-  width:10px; height:10px; background:rgba(18,22,32,0.82);
-  border-left:1px solid rgba(255,255,255,0.10);
-  border-top:1px solid rgba(255,255,255,0.10);
+  width:10px; height:10px; background:rgba(18,22,32,0.92);
+  border-left:1px solid rgba(255,255,255,0.12);
+  border-top:1px solid rgba(255,255,255,0.12);
   transform:rotate(45deg);
 }
+.help-backdrop {
+  display:none; position:fixed; inset:0; z-index:10040;
+  background:rgba(0,0,0,0.45);
+}
+.help-backdrop.show { display:block; }
 .help-pop b { color:var(--gold); font-weight:600; }
 .help-pop .hp-row { margin:6px 0; padding-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.06); }
 .help-pop .hp-row:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
 .help-pop .hp-k { color:var(--text-dim); font-size:10px; }
 .card-title .help-q { margin-left:6px; text-transform:none; letter-spacing:0; }
-@media (max-width: 520px) {
-  .help-pop { left:auto; right:0; transform:none; }
-  .help-pop::before { left:auto; right:10px; margin-left:0; }
-}
 .layer-name { font-weight:600; font-size:11px; } .layer-status { font-size:10px; color:var(--text-dim); margin-top:1px; line-height:1.3; }
 
 /* 指标 */
@@ -384,6 +404,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+<div id="helpBackdrop" class="help-backdrop" aria-hidden="true"></div>
+
 
 <div class="header">
   <div class="header-left">
@@ -570,7 +592,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <!-- 信号 -->
     <div class="card signal-card">
       <div class="card-title">策略信号
-        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="说明">?
+        <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>如何阅读</b><br>上方为趋势与主信号，下方为仓位/入场/止损/目标。三层一致性在下方卡片展开。</div>
             <div class="hp-row"><b>买入更严</b><br>需系统层多头 + 工具层结构确认 + 时机层（九转买侧且量价不反向）。</div>
@@ -594,7 +616,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <!-- 神奇九转 详解 -->
     <div class="card" id="nineTurnDetailCard">
       <div class="card-title">神奇九转 · 详解
-        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="使用说明">?
+        <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="使用说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>适用环境</b><br><span class="hp-k">优先</span> 震荡市、弱牛/弱熊：价格来回试探时，九转更易对应阶段性转折。</div>
             <div class="hp-row"><b>慎用环境</b><br>强趋势、单边加速段：可连续「第9」而不反转，应降权或观望。</div>
@@ -620,7 +642,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <!-- 成交量收敛三角形 日/周/月 -->
     <div class="card" id="priceTriCard" style="margin-top:8px;">
       <div class="card-title">价格收敛三角
-        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="说明">?
+        <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>形态</b><br>股价高点连线逐渐走低、低点连线逐渐走高，两线收拢，即经典对称/收敛三角形（Edwards &amp; Magee、Bulkowski 等图谱常见）。</div>
             <div class="hp-row"><b>含义</b><br>多空暂时平衡、波动压缩；<b>不单独定多空</b>。统计上突破后常跟随原趋势，但上下破都常见，需收盘确认。</div>
@@ -632,7 +654,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     </div>
     <div class="card" id="vpDivCard" style="margin-top:8px;">
       <div class="card-title">量价背离
-        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="说明">?
+        <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>底背离</b><br>价格更低低点，量能或 OBV 未同步新低 → 抛压衰竭，偏多观察。</div>
             <div class="hp-row"><b>顶背离</b><br>价格更高高点，量能或 OBV 未同步新高 → 上攻偏弱，偏空观察。</div>
@@ -645,7 +667,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     </div>
     <div class="card" id="volConvCard" style="margin-top:8px;">
       <div class="card-title">成交量收敛 · 周 / 月
-        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="说明">?
+        <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>是什么</b><br>对周/月成交量上下包络做收敛判断，描述量能是否在收束。</div>
             <div class="hp-row"><b>能否判底/顶？</b><br><b>不能单独判断</b>。收敛只说明「波动与量能在压缩」，方向要等突破（及是否回补）结合九转、趋势、位置确认。</div>
@@ -659,7 +681,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 
     <div class="card">
       <div class="card-title">三层一致性检验
-        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="三层说明">?
+        <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="三层说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>系统层 · 趋势+指标</b><br><span class="hp-k">核心</span> 均线趋势与多指标方向一致才做单边。<br><span class="hp-k">场景</span> 全市场过滤逆势。<br><span class="hp-k">参考</span> 相对无过滤，期望减少明显逆势亏损约 15–25%（研究估计）。</div>
             <div class="hp-row"><b>工具层 · 斐波那契反应</b><br><span class="hp-k">核心</span> 关键回撤位出现反应确认，避免半空接刀。<br><span class="hp-k">场景</span> 趋势中的回调买/反弹卖。<br><span class="hp-k">参考</span> 相对随意价位入场，胜率约 +5–10%（研究估计）。</div>
@@ -1594,19 +1616,22 @@ function updateVolumeConvergence(vc) {
     const headExtra = (k === 'weekly' && tape.label)
       ? `<span style="font-size:10px;color:var(--gold);margin-left:6px;">${tape.label}</span>`
       : '';
-    return `<div class="vol-conv-panel">
-      <div class="vc-head">
-        <span style="font-weight:600;color:var(--text);">${d.label || k}${headExtra}</span>
-        <span class="vc-status ${cls}">${st}</span>
-      </div>
-      ${svg}
-      <div class="vc-metrics">
+    const showChart = !!d.converging;
+    const metricsHtml = showChart ? `<div class="vc-metrics">
         <span>上沿斜率 <b>${fmtSlope(d.upper_slope)}</b></span>
         <span>下沿斜率 <b>${fmtSlope(d.lower_slope)}</b></span>
         <span>夹角 <b>${d.angle_deg != null ? d.angle_deg + '°' : '—'}</b></span>
         <span>振幅收缩 <b>${d.amplitude_shrink_pct != null ? d.amplitude_shrink_pct + '%' : '—'}</b></span>
         <span>评分 <b>${d.score != null ? d.score : '—'}</b></span>
+      </div>` : '';
+    const chartHtml = showChart ? svg : `<div style="font-size:12px;color:var(--text-dim);padding:10px 0 4px;">未收敛，不绘制示意图</div>`;
+    return `<div class="vol-conv-panel">
+      <div class="vc-head">
+        <span style="font-weight:600;color:var(--text);">${d.label || k}${headExtra}</span>
+        <span class="vc-status ${cls}">${st}</span>
       </div>
+      ${chartHtml}
+      ${metricsHtml}
       <div style="font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.5;">${d.summary || ''}</div>
     </div>`;
   }).join('');
@@ -1615,6 +1640,63 @@ function fmtSlope(v) {
   if (v == null || isNaN(v)) return '—';
   const n = Number(v);
   return (n >= 0 ? '+' : '') + n.toFixed(4);
+}
+function renderPriceTriangleSvg(d) {
+  const W = 320, H = 72, pad = 8;
+  let upper = d.upper_line || [];
+  let lower = d.lower_line || [];
+  // 无序列时用斜率生成示意收敛线
+  if ((!upper.length || !lower.length) && d.upper_slope != null && d.lower_slope != null) {
+    const n = 36;
+    upper = []; lower = [];
+    const bu = Number(d.upper_slope) || -0.01;
+    const bl = Number(d.lower_slope) || 0.01;
+    // 归一化示意：起点上高下低，随斜率收拢
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      upper.push(0.85 + bu * 40 * t);
+      lower.push(0.15 + bl * 40 * t);
+    }
+    // clamp 0-1 and ensure upper > lower
+    let maxU = Math.max(...upper), minL = Math.min(...lower);
+    const span = Math.max(0.2, maxU - minL);
+    upper = upper.map(v => (v - minL) / span * 0.7 + 0.15);
+    lower = lower.map(v => (v - minL) / span * 0.7 + 0.15);
+    for (let i = 0; i < n; i++) {
+      if (upper[i] < lower[i] + 0.04) {
+        const m = (upper[i] + lower[i]) / 2;
+        upper[i] = m + 0.02; lower[i] = m - 0.02;
+      }
+    }
+  }
+  const n = Math.max(upper.length, lower.length, 2);
+  const xAt = i => pad + (i / (n - 1)) * (W - 2 * pad);
+  const yAt = v => {
+    const vv = Math.max(0, Math.min(1, Number(v) || 0));
+    return H - pad - vv * (H - 2 * pad);
+  };
+  let area = '';
+  if (upper.length && lower.length) {
+    area = 'M' + xAt(0) + ' ' + yAt(upper[0]);
+    for (let i = 1; i < upper.length; i++) area += ' L' + xAt(i) + ' ' + yAt(upper[i]);
+    for (let i = lower.length - 1; i >= 0; i--) area += ' L' + xAt(i) + ' ' + yAt(lower[i]);
+    area += ' Z';
+  }
+  let polyU = '', polyL = '';
+  for (let i = 0; i < upper.length; i++) polyU += (i ? ' L' : 'M') + xAt(i) + ' ' + yAt(upper[i]);
+  for (let i = 0; i < lower.length; i++) polyL += (i ? ' L' : 'M') + xAt(i) + ' ' + yAt(lower[i]);
+  const gid = 'pt' + Math.random().toString(36).slice(2, 7);
+  return `<svg class="vc-tri" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:72px;display:block;">
+    <defs>
+      <linearGradient id="${gid}Fill" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#f0d78c" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="#d4af37" stop-opacity="0.08"/>
+      </linearGradient>
+    </defs>
+    ${area ? `<path d="${area}" fill="url(#${gid}Fill)" stroke="none"/>` : ''}
+    <path d="${polyU}" fill="none" stroke="#f0d78c" stroke-width="1.8"/>
+    <path d="${polyL}" fill="none" stroke="#d4af37" stroke-width="1.8"/>
+  </svg>`;
 }
 function renderVolTriangleSvg(d) {
   const W = 320, H = 72, pad = 6;
@@ -2578,9 +2660,22 @@ function updateResults(data, meta, nineTurn) {
       const color = forming ? 'var(--gold)' : 'var(--text-dim)';
       const brTxt = br === 'up' ? '偏上破' : br === 'down' ? '偏下破' : '未突破';
       const brColor = br === 'up' ? 'var(--green)' : br === 'down' ? 'var(--red)' : 'var(--text-dim)';
+      let chart = '';
+      if (forming) {
+        chart = renderPriceTriangleSvg(pt);
+        chart += `<div class="vc-metrics" style="margin-top:6px;">
+          <span>上沿斜率 <b>${fmtSlope(pt.upper_slope)}</b></span>
+          <span>下沿斜率 <b>${fmtSlope(pt.lower_slope)}</b></span>
+          <span>夹角 <b>${pt.angle_deg != null ? pt.angle_deg + '°' : '—'}</b></span>
+          <span>波幅收窄 <b>${pt.width_shrink_pct != null ? pt.width_shrink_pct + '%' : '—'}</b></span>
+          <span style="color:${brColor}">突破 <b>${brTxt}</b></span>
+        </div>`;
+      } else {
+        chart = `<div style="font-size:12px;color:var(--text-dim);padding:8px 0 4px;">未收敛，不绘制示意图</div>`;
+      }
       el.innerHTML = `<div style="color:${color};font-weight:700;margin-bottom:4px;">${pt.label || '未形成清晰收敛三角'} · ${pt.status || ''}</div>`
-        + `<div style="color:var(--text-dim);font-size:11px;">${pt.detail || ''}</div>`
-        + `<div style="margin-top:4px;font-size:10px;color:var(--text-dim);">波幅收窄 ${pt.width_shrink_pct != null ? pt.width_shrink_pct + '%' : '—'} · 夹角 ${pt.angle_deg != null ? pt.angle_deg + '°' : '—'} · <span style="color:${brColor}">${brTxt}</span></div>`;
+        + chart
+        + `<div style="color:var(--text-dim);font-size:11px;margin-top:6px;line-height:1.5;">${pt.detail || ''}</div>`;
     }
   } catch (e) {}
 
@@ -3394,8 +3489,30 @@ if (document.getElementById('pageTs')) document.getElementById('pageTs').textCon
 
 <script>
 /* 点击空白关闭帮助气泡 */
-document.addEventListener('click', function() {
+function closeAllHelp() {
   document.querySelectorAll('.help-q.open').forEach(function(el){ el.classList.remove('open'); });
+  var bd = document.getElementById('helpBackdrop');
+  if (bd) bd.classList.remove('show');
+  document.body.classList.remove('help-open');
+}
+function toggleHelp(btn) {
+  var wasOpen = btn.classList.contains('open');
+  closeAllHelp();
+  if (!wasOpen) {
+    btn.classList.add('open');
+    var bd = document.getElementById('helpBackdrop');
+    if (bd) bd.classList.add('show');
+    document.body.classList.add('help-open');
+  }
+}
+document.addEventListener('click', function(e) {
+  if (e.target.closest && e.target.closest('.help-q')) return;
+  if (e.target.closest && e.target.closest('.help-pop')) return;
+  closeAllHelp();
+});
+document.addEventListener('DOMContentLoaded', function() {
+  var bd = document.getElementById('helpBackdrop');
+  if (bd) bd.addEventListener('click', closeAllHelp);
 });
 </script>
 
