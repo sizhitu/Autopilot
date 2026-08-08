@@ -24,6 +24,11 @@ except Exception:  # pragma: no cover
     detect_volume_price_divergence = None
     volume_supports_side = None
 
+try:
+    from volume_convergence import compute_volume_convergence
+except Exception:  # pragma: no cover
+    compute_volume_convergence = None
+
 
 class SignalType(Enum):
     BUY = "买入"
@@ -482,7 +487,27 @@ class FujimotoStrategy:
             vol_ok_buy = not vol_bear
             vol_ok_sell = not vol_bull
 
-        # 九转到位 + 量价支持；若出现同向背离可略增强（仍需九转）
+        # 成交量收敛三角形（周线为主，辅助时机，不单独定方向）
+        conv_info = {"converging": False, "status": "未检测", "tape": "", "summary": ""}
+        if compute_volume_convergence is not None:
+            try:
+                vc = compute_volume_convergence(df)
+                w = vc.get("weekly") or {}
+                tape = vc.get("weekly_tape") or {}
+                conv_info = {
+                    "converging": bool(w.get("converging")),
+                    "status": w.get("status") or "—",
+                    "tape": tape.get("label") or "",
+                    "summary": (w.get("summary") or "")[:120],
+                    "score": w.get("score") or 0,
+                }
+            except Exception:
+                pass
+
+        # 九转到位 + 量价支持；收敛三角形为辅助加分（仍必须九转）
+        # 收敛本身不判多空：跌后收敛+九转买侧 → 更像抛压收束；涨后收敛+九转卖侧 → 更像动能收束
+        conv_boost_buy = conv_info["converging"] and nine_buy
+        conv_boost_sell = conv_info["converging"] and nine_sell
         timing_buy = nine_buy and vol_ok_buy
         timing_sell = nine_sell and vol_ok_sell
         timing_pass = timing_buy or timing_sell
@@ -493,10 +518,13 @@ class FujimotoStrategy:
             nine_txt = "无有效九转计数"
         vol_txt = vol_res.detail or vol_res.signal
         div_txt = vp_div.get("label") or "量价—"
+        conv_txt = f"周线量能{conv_info['status']}" + (f"·{conv_info['tape']}" if conv_info.get("tape") else "")
         if timing_buy:
-            timing_status = f"买侧确认：{nine_txt} + {vol_txt}；{div_txt}"
+            extra = "（收敛辅助）" if conv_boost_buy else ""
+            timing_status = f"买侧确认：{nine_txt} + {vol_txt}；{div_txt}；{conv_txt}{extra}"
         elif timing_sell:
-            timing_status = f"卖侧确认：{nine_txt} + {vol_txt}；{div_txt}"
+            extra = "（收敛辅助）" if conv_boost_sell else ""
+            timing_status = f"卖侧确认：{nine_txt} + {vol_txt}；{div_txt}；{conv_txt}{extra}"
         else:
             parts = []
             if not (nine_buy or nine_sell):
@@ -505,8 +533,10 @@ class FujimotoStrategy:
                 parts.append(f"量价不支持买（{vol_txt} / {div_txt}）")
             if nine_sell and not vol_ok_sell:
                 parts.append(f"量价不支持卖（{vol_txt} / {div_txt}）")
+            if conv_info["converging"]:
+                parts.append(f"{conv_txt}（收敛仅说明量能收束，需突破方向确认底/顶）")
             if not parts:
-                parts.append(f"{nine_txt}；{vol_txt}；{div_txt}")
+                parts.append(f"{nine_txt}；{vol_txt}；{div_txt}；{conv_txt}")
             timing_status = "；".join(parts)
 
         # === 三层一致性检验 ===
@@ -536,7 +566,7 @@ class FujimotoStrategy:
                          if fib_buy else "无有效斐波那契买点") +
                         ("（已测试但未确认反应）" if tool_tested and not tool_confirmed else "")
             },
-            "时机层（九转+量价背离）": {
+            "时机层（九转+量价+收敛）": {
                 "通过": timing_pass,
                 "状态": timing_status
             },
@@ -622,6 +652,7 @@ class FujimotoStrategy:
             "mas": {p: v for p, v in mas.items() if v is not None},
             "vwma": vwma,
             "volume_price_divergence": vp_div,
+            "volume_convergence_timing": conv_info,
         }
 
         return StrategyResult(

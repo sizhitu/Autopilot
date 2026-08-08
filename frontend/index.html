@@ -632,7 +632,15 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div id="vpDivBody" style="font-size:12px;line-height:1.55;color:var(--text-dim);">等待分析</div>
     </div>
     <div class="card" id="volConvCard" style="margin-top:8px;">
-      <div class="card-title">成交量收敛 · 周 / 月</div>
+      <div class="card-title">成交量收敛 · 周 / 月
+        <span class="help-q" onclick="event.stopPropagation();this.classList.toggle('open')" title="说明">?
+          <span class="help-pop" onclick="event.stopPropagation()">
+            <div class="hp-row"><b>是什么</b><br>对周/月成交量上下包络做收敛判断，描述量能是否在收束。</div>
+            <div class="hp-row"><b>能否判底/顶？</b><br><b>不能单独判断</b>。收敛只说明「波动与量能在压缩」，方向要等突破（及是否回补）结合九转、趋势、位置确认。</div>
+            <div class="hp-row"><b>与时机层</b><br>作为辅助：九转买侧+跌后收敛 → 抛压收束参考；九转卖侧+涨后收敛 → 动能收束参考。不替代九转门槛。</div>
+          </span>
+        </span>
+      </div>
       <div id="volConvOverall" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;line-height:1.5;">加载标的后显示周/月量能收敛（日线已省略）</div>
       <div id="volConvPanels" style="display:grid;grid-template-columns:1fr;gap:10px;"></div>
     </div>
@@ -643,7 +651,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>系统层 · 趋势+指标</b><br><span class="hp-k">核心</span> 均线趋势与多指标方向一致才做单边。<br><span class="hp-k">场景</span> 全市场过滤逆势。<br><span class="hp-k">参考</span> 相对无过滤，期望减少明显逆势亏损约 15–25%（研究估计）。</div>
             <div class="hp-row"><b>工具层 · 斐波那契反应</b><br><span class="hp-k">核心</span> 关键回撤位出现反应确认，避免半空接刀。<br><span class="hp-k">场景</span> 趋势中的回调买/反弹卖。<br><span class="hp-k">参考</span> 相对随意价位入场，胜率约 +5–10%（研究估计）。</div>
-            <div class="hp-row"><b>时机层 · 九转+量价背离</b><br><span class="hp-k">核心</span> 九转到位，且量价背离/量能结构不反向。<br><span class="hp-k">形态</span> 底背离（价低量缩/OBV不新低）、顶背离（价高量缩/OBV不新高）、价涨量缩、价跌量缩。<br><span class="hp-k">场景</span> 震荡与弱趋势转折；强单边需降权。<br><span class="hp-k">参考</span> 相对仅趋势+结构，胜率约 +8–15%；盈亏比≈2 时期望约 +0.1R～+0.3R/笔（研究估计）。</div>
+            <div class="hp-row"><b>时机层 · 九转+量价+收敛</b><br><span class="hp-k">核心</span> 九转到位，量价背离/量能不反向；周线成交量收敛三角形作辅助。<br><span class="hp-k">收敛三角</span> 表示量能收束、波动压缩，<b>不单独判底/判顶</b>。跌后收敛+九转买侧 → 抛压可能衰竭；涨后收敛+九转卖侧 → 上攻动能可能收束。方向看突破与是否回补。<br><span class="hp-k">场景</span> 震荡与弱趋势末端；强单边加速中收敛易失效。<br><span class="hp-k">参考</span> 相对仅趋势+结构，胜率约 +8–15%（研究估计）。</div>
             <div class="hp-row"><b>藤本茂阶梯</b><br>仅作持仓后加减仓参考，<b>不参与</b>三层「通过」门槛。</div>
             <div style="opacity:.8;">数字为方法论量级估计，因标的与周期而异；不构成投资建议。</div>
           </span>
