@@ -147,11 +147,40 @@ class FujimotoStrategy:
             return None
         return (subset['close'] * subset['volume']).sum() / subset['volume'].sum()
 
+    def _strong_gap_threshold(self, atr_pct: Optional[float]) -> float:
+        """
+        「>>」相对 MA120 的最小偏离，随标的波动自适应。
+        - 稳健低波（日 ATR% 较低）：约 3%~5%
+        - 波动抬升：阈值逐步上调
+        - 高波：至少约 20%，可再上浮
+        atr_pct: ATR/收盘价*100，例如 1.5 表示 1.5%。
+        """
+        if atr_pct is None or atr_pct <= 0:
+            return 0.05
+        a = float(atr_pct)
+        if a < 1.0:
+            thr = 0.03
+        elif a < 1.5:
+            # 1.0→3%, 1.5→5%
+            thr = 0.03 + (a - 1.0) * 0.04
+        elif a < 2.5:
+            # 1.5→5%, 2.5→12%
+            thr = 0.05 + (a - 1.5) * 0.07
+        elif a < 4.0:
+            # 2.5→12%, 4.0→20%
+            thr = 0.12 + (a - 2.5) * (0.08 / 1.5)
+        else:
+            # 高波：≥20%，随 ATR 再缓增，封顶 35%
+            thr = 0.20 + (a - 4.0) * 0.025
+        return float(min(0.35, max(0.03, thr)))
+
     def _judge_trend(self, mas: dict, vwma: Optional[float], close: float,
-                     short_periods: list, long_periods: list) -> tuple:
+                     short_periods: list, long_periods: list,
+                     atr_pct: Optional[float] = None) -> tuple:
         """
         均线趋势判断（权重核心）。
-        强多头参考：MA5>MA10>MA20>MA30 且明显位于 MA120 上方（>>）。
+        强多头参考：MA5>MA10>MA20>MA30 且相对 MA120「>>」
+        （偏离阈值随 ATR 波动自适应：稳 3%~5%，高波 ≥20%）。
         """
         def _m(p):
             v = mas.get(p)
@@ -186,13 +215,15 @@ class FujimotoStrategy:
             and m5 < m10 < m20 and not stack_bull
         )
 
-        # >>120：短端整体显著高于/低于 120 日线（默认 ≥2%）
+        # >>120：偏离阈值随波动自适应（稳约3%~5%，高波≥20%）
+        gap_thr = self._strong_gap_threshold(atr_pct)
         strong_above_120 = False
         strong_below_120 = False
+        gap = 0.0
         if m120 is not None and m30 is not None and m120 > 0:
             gap = (m30 - m120) / m120
-            strong_above_120 = gap >= 0.02
-            strong_below_120 = gap <= -0.02
+            strong_above_120 = gap >= gap_thr
+            strong_below_120 = gap <= -gap_thr
 
         vwma_bull = vwma is not None and close > vwma
         vwma_bear = vwma is not None and close < vwma
@@ -204,7 +235,8 @@ class FujimotoStrategy:
             gap_pct = (m30 - m120) / m120 * 100 if m120 else 0
             return (
                 TrendType.BULL,
-                f"强多头排列 MA5>10>20>30 且 MA30 高于 MA120 约 {gap_pct:.1f}%（>>）"
+                f"强多头排列 MA5>10>20>30 且 MA30 高于 MA120 约 {gap_pct:.1f}%"
+                f"（>>阈值 {gap_thr*100:.0f}%·ATR约{atr_pct if atr_pct is not None else '—'}%）"
                 + ("，VWMA 确认" if vwma_bull else ""),
             )
         if stack_bear and strong_below_120 and (vwma_bear or price_below_30):
@@ -212,6 +244,7 @@ class FujimotoStrategy:
             return (
                 TrendType.BEAR,
                 f"强空头排列 MA5<10<20<30 且 MA30 低于 MA120 约 {gap_pct:.1f}%"
+                f"（>>阈值 {gap_thr*100:.0f}%·ATR约{atr_pct if atr_pct is not None else '—'}%）"
                 + ("，VWMA 确认" if vwma_bear else ""),
             )
 
@@ -525,11 +558,16 @@ class FujimotoStrategy:
         long_periods = [p for p in self.MA_PERIODS if p >= 100 and len(df) >= p]
         mas = self._calc_ma(df, short_periods + long_periods)
         vwma = self._calc_vwma(df, period=20)
-        trend, trend_detail = self._judge_trend(mas, vwma, close, short_periods, long_periods)
+        atr_res = self._calc_atr(df)
+        atr_pct = None
+        if atr_res and atr_res.value and close:
+            atr_pct = float(atr_res.value) / float(close) * 100.0
+        trend, trend_detail = self._judge_trend(
+            mas, vwma, close, short_periods, long_periods, atr_pct=atr_pct
+        )
 
         rsi_res = self._calc_rsi(df)
         macd_res = self._calc_macd(df)
-        atr_res = self._calc_atr(df)
         vol_res = self._calc_volume_signal(df)
         indicators = [rsi_res, macd_res, atr_res, vol_res]
 
