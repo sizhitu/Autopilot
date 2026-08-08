@@ -189,15 +189,15 @@ class StockStatus:
     price: float = 0
     change_1d: float = 0          # 当日涨跌幅%（最近一根K线相对前一根）
     change_5d: float = 0          # 近5日涨跌幅%
-    signal: str = "观望"          # 兼容旧字段：建议动作（汇总用）
-    signal_color: str = "gray"    # 建议动作颜色
+    signal: str = "观望"          # 兼容旧字段：操盘动作（汇总用）
+    signal_color: str = "gray"    # 操盘动作颜色
     trend: str = ""
-    # 结构化三列：时机 / 趋势过滤 / 建议动作
+    # 结构化三列：时机 / 趋势过滤 / 操盘动作
     timing: str = "—"             # 九转时机
     timing_color: str = "gray"
     trend_filter: str = "—"       # 趋势过滤（系统层）
     trend_filter_color: str = "gray"
-    action: str = "观望"          # 建议动作（综合）
+    action: str = "观望"          # 操盘动作（综合）
     action_color: str = "gray"
     action_reason: str = ""       # 一句话理由
     nine_turn: str = "无"         # 九转状态（日级|月级 合并文本）
@@ -372,7 +372,7 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.trend_filter = "震荡整理"
             status.trend_filter_color = "gray"
 
-        # ---------- 3) 建议动作（时机 × 趋势 × 阶梯，冲突则降权）----------
+        # ---------- 3) 操盘动作（时机 × 趋势 × 阶梯，冲突则降权）----------
         timing_buy = status.timing_color == "orange" and "九转" in status.timing
         timing_sell = status.timing_color == "red" and "九转" in status.timing
         reasons = []

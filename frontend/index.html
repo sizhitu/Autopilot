@@ -233,11 +233,11 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 #watchlistTable td:nth-child(5) { text-align: center !important; }  /* 现价/日涨幅/近5日 */
 #watchlistTable td:nth-child(6),
 #watchlistTable td:nth-child(7),
-#watchlistTable td:nth-child(8),
-#watchlistTable td:nth-child(9) { text-align: left !important; }    /* 九转/趋势/建议/新高估值 */
+#watchlistTable td:nth-child(8) { text-align: center !important; }  /* 九转时机/趋势过滤/操盘动作 居中 */
+#watchlistTable td:nth-child(9) { text-align: left !important; }    /* 新高/估值 */
 #watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 15%; }  /* 九转时机 */
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }  /* 趋势过滤 */
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }  /* 建议动作 */
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }  /* 操盘动作 */
 #watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 19%; }  /* 新高/估值 */
 #watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:1px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
@@ -424,7 +424,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <div style="margin-top:8px; font-size:11px; color:var(--text-dim); display:flex; gap:16px; flex-wrap:wrap;">
       <span><span style="color:var(--orange);font-weight:700;">●</span> 九转时机：下跌九转买点 / 上涨九转卖点（更适震荡与弱趋势；强单边中易失效）</span>
       <span><span style="color:var(--green);font-weight:700;">●</span> 趋势过滤：多头 / 空头 / 震荡</span>
-      <span><span style="color:var(--gold);font-weight:700;">●</span> 建议动作：时机×趋势综合（冲突则降权为观察）</span>
+      <span><span style="color:var(--gold);font-weight:700;">●</span> 操盘动作：时机×趋势综合（冲突则降权为观察）</span>
       <span style="color:var(--text-dim);">汇总仍按「即将上涨 / 见顶 / 观望」统计</span>
       <span><span style="color:var(--green);font-weight:700;">●</span> 低估 / <span style="color:var(--red);font-weight:700;">●</span> 高估 / <span style="color:var(--text-dim);font-weight:700;">●</span> 合理</span>
       <span>估值按定位差异化：压舱石(MA250±8%) · 高赔率(MA250±35%) · 周期弹性(MA120±18%) · 卫星仓(区间分位80/20)</span>
@@ -442,7 +442,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <th style="padding:6px 2px;">近5日</th>
           <th style="padding:6px 2px;" title="TD Sequential 日/月九转时机">九转时机</th>
           <th style="padding:6px 2px;" title="均线系统趋势过滤">趋势过滤</th>
-          <th style="padding:6px 2px;" title="时机×趋势综合建议（非投资建议）">建议动作</th>
+          <th style="padding:6px 2px;" title="时机×趋势综合建议（非投资建议）">操盘动作</th>
           <th style="padding:6px 2px;">新高/估值</th>
         </tr>
       </thead>
@@ -453,7 +453,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div>加载中...</div>
     </div>
   </div>
-  <div class="footer-note">点击任意一行加载详细分析 · 九转时机 / 趋势过滤 / 建议动作分列 · 仅供研究不构成投资建议 <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
+  <div class="footer-note">点击任意一行加载详细分析 · 九转时机 / 趋势过滤 / 操盘动作分列 · 仅供研究不构成投资建议 <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
 </div>
 
 <!-- 分析模式视图 -->
