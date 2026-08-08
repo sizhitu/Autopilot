@@ -157,7 +157,13 @@ def result_to_dict(result) -> dict:
                 for fl in result.fib_levels
             ],
             "vwma": round(float(result.chart_data.get("vwma")), 2) if result.chart_data.get("vwma") else None,
-        }
+            "volume_price_divergence": _to_jsonable(
+                result.chart_data.get("volume_price_divergence") or {}
+            ),
+        },
+        "volume_price_divergence": _to_jsonable(
+            result.chart_data.get("volume_price_divergence") or {}
+        ),
     }
     return d
 
