@@ -160,9 +160,15 @@ def result_to_dict(result) -> dict:
             "volume_price_divergence": _to_jsonable(
                 result.chart_data.get("volume_price_divergence") or {}
             ),
+            "price_triangle": _to_jsonable(
+                result.chart_data.get("price_triangle") or {}
+            ),
         },
         "volume_price_divergence": _to_jsonable(
             result.chart_data.get("volume_price_divergence") or {}
+        ),
+        "price_triangle": _to_jsonable(
+            result.chart_data.get("price_triangle") or {}
         ),
     }
     return d

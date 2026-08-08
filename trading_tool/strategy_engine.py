@@ -29,6 +29,11 @@ try:
 except Exception:  # pragma: no cover
     compute_volume_convergence = None
 
+try:
+    from price_triangle import detect_price_triangle
+except Exception:  # pragma: no cover
+    detect_price_triangle = None
+
 
 class SignalType(Enum):
     BUY = "买入"
@@ -504,12 +509,25 @@ class FujimotoStrategy:
             except Exception:
                 pass
 
-        # 九转到位 + 量价支持；收敛三角形为辅助加分（仍必须九转）
-        # 收敛本身不判多空：跌后收敛+九转买侧 → 更像抛压收束；涨后收敛+九转卖侧 → 更像动能收束
-        conv_boost_buy = conv_info["converging"] and nine_buy
-        conv_boost_sell = conv_info["converging"] and nine_sell
+        # 价格收敛三角形（高点渐低 + 低点渐高）
+        price_tri = {"forming": False, "status": "未检测", "label": "—", "breakout": "none"}
+        if detect_price_triangle is not None:
+            try:
+                price_tri = detect_price_triangle(df)
+            except Exception:
+                pass
+
+        # 九转到位 + 量价支持；量能/价格收敛为辅助（仍必须九转）
+        # 收敛不判多空：整理末端 + 九转同向时作环境加分
+        conv_boost_buy = (conv_info["converging"] or price_tri.get("forming")) and nine_buy
+        conv_boost_sell = (conv_info["converging"] or price_tri.get("forming")) and nine_sell
         timing_buy = nine_buy and vol_ok_buy
         timing_sell = nine_sell and vol_ok_sell
+        # 价格三角已向上/下突破时，与九转同向可强化，但不取消九转门槛
+        if price_tri.get("breakout") == "up" and nine_buy and vol_ok_buy:
+            timing_buy = True
+        if price_tri.get("breakout") == "down" and nine_sell and vol_ok_sell:
+            timing_sell = True
         timing_pass = timing_buy or timing_sell
 
         if nt and nt.count > 0:
@@ -519,12 +537,17 @@ class FujimotoStrategy:
         vol_txt = vol_res.detail or vol_res.signal
         div_txt = vp_div.get("label") or "量价—"
         conv_txt = f"周线量能{conv_info['status']}" + (f"·{conv_info['tape']}" if conv_info.get("tape") else "")
+        pt_txt = price_tri.get("label") or "价格三角—"
+        if price_tri.get("forming"):
+            pt_txt += f"（{price_tri.get('status')}）"
+        if price_tri.get("breakout") in ("up", "down"):
+            pt_txt += f"·已偏{'上' if price_tri['breakout']=='up' else '下'}破"
         if timing_buy:
             extra = "（收敛辅助）" if conv_boost_buy else ""
-            timing_status = f"买侧确认：{nine_txt} + {vol_txt}；{div_txt}；{conv_txt}{extra}"
+            timing_status = f"买侧确认：{nine_txt} + {vol_txt}；{div_txt}；{conv_txt}；{pt_txt}{extra}"
         elif timing_sell:
             extra = "（收敛辅助）" if conv_boost_sell else ""
-            timing_status = f"卖侧确认：{nine_txt} + {vol_txt}；{div_txt}；{conv_txt}{extra}"
+            timing_status = f"卖侧确认：{nine_txt} + {vol_txt}；{div_txt}；{conv_txt}；{pt_txt}{extra}"
         else:
             parts = []
             if not (nine_buy or nine_sell):
@@ -534,9 +557,11 @@ class FujimotoStrategy:
             if nine_sell and not vol_ok_sell:
                 parts.append(f"量价不支持卖（{vol_txt} / {div_txt}）")
             if conv_info["converging"]:
-                parts.append(f"{conv_txt}（收敛仅说明量能收束，需突破方向确认底/顶）")
+                parts.append(f"{conv_txt}（量能收束，需突破确认）")
+            if price_tri.get("forming"):
+                parts.append(f"{pt_txt}（整理压缩，方向看收盘突破）")
             if not parts:
-                parts.append(f"{nine_txt}；{vol_txt}；{div_txt}；{conv_txt}")
+                parts.append(f"{nine_txt}；{vol_txt}；{div_txt}；{conv_txt}；{pt_txt}")
             timing_status = "；".join(parts)
 
         # === 三层一致性检验 ===
@@ -653,6 +678,7 @@ class FujimotoStrategy:
             "vwma": vwma,
             "volume_price_divergence": vp_div,
             "volume_convergence_timing": conv_info,
+            "price_triangle": price_tri,
         }
 
         return StrategyResult(
