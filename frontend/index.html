@@ -525,6 +525,11 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 
 <!-- 自选看板视图 -->
 <div id="watchlistView" style="padding:10px;">
+  <div id="demoDataBanner" style="display:none;margin:0 0 10px;padding:10px 12px;border-radius:8px;border:1px solid var(--gold);background:rgba(201,162,39,.12);font-size:12px;color:var(--text);line-height:1.5;">
+    <b style="color:var(--gold);">演示数据</b>：当前为免费体验，下表为模拟行情与信号，仅供了解产品形态。
+    <a href="javascript:void(0)" onclick="openUpgradeModal()" style="color:var(--gold);margin-left:8px;text-decoration:underline;">升级 Pro</a> 后可查看真实行情、自选分析与回测。
+  </div>
+
   <div class="card" style="margin-bottom:8px;">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
       <div class="card-title" style="margin:0;">自选股票状态看板</div>
@@ -2685,6 +2690,57 @@ let _wlPollCount = 0;
 let _wlPendingForce = false;
 const _WL_MAX_POLL = 12;  // 最多轮询次数，避免长时间空刷
 
+
+function isDemoMode() {
+  if (!currentUser) return true; // 未登录也展示演示数据，页面不空白
+  const plan = String((currentUser.plan || 'free')).toLowerCase();
+  if (plan === 'pro' || plan === 'plus' || plan === 'lifetime' || plan === 'basic') return false;
+  if (currentUser.is_admin) return false;
+  if (currentUser.entitled === true) return false;
+  // 门禁未开时 entitled 可能为 true；仅 free 且明确未授权才演示
+  if (currentUser.billing_required && currentUser.entitled === false) return true;
+  if (plan === 'free' && currentUser.entitled === false) return true;
+  // 已登录免费但未下发 entitled 字段：有 billing 则演示
+  if (plan === 'free' && currentUser.billing_required) return true;
+  return false;
+}
+
+function getDemoWatchlistRows() {
+  // 静态演示行：字段对齐 renderWatchlist，不请求行情接口
+  return [
+    { code: 'AAPL', name: '苹果 (演示)', market: '美股', price: 198.45, change_1d: 1.2, change_5d: 3.5,
+      signal: '持有', signal_color: 'green', timing: '九转未完', timing_color: 'gray',
+      trend_filter: '多头', trend_filter_color: 'green', action: '持有', action_color: 'green',
+      action_reason: '演示：趋势向上，仓位保持', nine_turn_daily: '日–', nine_turn_monthly: '月–',
+      high_low: '近高 -2%', analyst_target: 220, analyst_upside_pct: 10.8, pending: false, demo: true },
+    { code: 'TSLA', name: '特斯拉 (演示)', market: '美股', price: 248.10, change_1d: -2.4, change_5d: -5.1,
+      signal: '观望', signal_color: 'gray', timing: '卖九完成', timing_color: 'orange',
+      trend_filter: '震荡', trend_filter_color: 'gray', action: '减仓观察', action_color: 'orange',
+      action_reason: '演示：波动加大，降低仓位', nine_turn_daily: '日卖9', nine_turn_monthly: '月–',
+      high_low: '回撤 -12%', analyst_target: 260, analyst_upside_pct: 4.8, pending: false, demo: true },
+    { code: '600519', name: '贵州茅台 (演示)', market: 'A股', price: 1688.00, change_1d: 0.6, change_5d: 1.8,
+      signal: '持有', signal_color: 'green', timing: '买九进行中', timing_color: 'blue',
+      trend_filter: '多头', trend_filter_color: 'green', action: '分批承接', action_color: 'blue',
+      action_reason: '演示：回调买入区', nine_turn_daily: '日买6', nine_turn_monthly: '月–',
+      high_low: '中枢', analyst_target: 1850, analyst_upside_pct: 9.6, pending: false, demo: true },
+    { code: 'NVDA', name: '英伟达 (演示)', market: '美股', price: 112.30, change_1d: 2.8, change_5d: 6.2,
+      signal: '加仓', signal_color: 'green', timing: '突破确认', timing_color: 'green',
+      trend_filter: '强多', trend_filter_color: 'green', action: '顺势加仓', action_color: 'green',
+      action_reason: '演示：强趋势标的示意', nine_turn_daily: '日–', nine_turn_monthly: '月–',
+      high_low: '新高', analyst_target: 140, analyst_upside_pct: 24.7, pending: false, demo: true },
+    { code: 'BABA', name: '阿里巴巴 (演示)', market: '美股', price: 86.20, change_1d: -0.8, change_5d: 2.1,
+      signal: '观望', signal_color: 'gray', timing: '区间震荡', timing_color: 'gray',
+      trend_filter: '弱势', trend_filter_color: 'red', action: '轻仓等待', action_color: 'gray',
+      action_reason: '演示：等待趋势转强', nine_turn_daily: '日–', nine_turn_monthly: '月–',
+      high_low: '偏低', analyst_target: 95, analyst_upside_pct: 10.2, pending: false, demo: true },
+  ];
+}
+
+function setDemoBanner(show) {
+  const el = document.getElementById('demoDataBanner');
+  if (el) el.style.display = show ? 'block' : 'none';
+}
+
 async function loadWatchlist(forceRefresh = false) {
   if (_wlInflight) {
     if (forceRefresh) _wlPendingForce = true;
@@ -2724,6 +2780,20 @@ async function _loadWatchlistBody(forceRefresh) {
     loading.classList.remove('hidden');
   }
   try {
+    // 免费 / 未登录：展示模拟看板，避免页面空白、接口 402 后体验差
+    if (isDemoMode()) {
+      const stocks = getDemoWatchlistRows();
+      watchNotes = {};
+      _lastWatchRows = stocks;
+      _lastWatchSig = _watchRowsSig(stocks);
+      setDemoBanner(true);
+      renderWatchlist(stocks);
+      renderWatchlistSummary({ count: stocks.length, demo: true });
+      setWatchUpdatedLabel({ computing: false, updated_at: '演示数据', demo: true });
+      loading.classList.add('hidden');
+      return;
+    }
+    setDemoBanner(false);
     const res = await api('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''));
     const json = await res.json();
     if (!json.success) throw new Error('获取失败');

@@ -945,14 +945,14 @@ async def analyze_csv(
     request: Request = None,
     authorization: Optional[str] = Header(None),
 ):
-    """分析上传的 CSV 或模拟数据"""
-    _require_pro(authorization)
+    """分析上传的 CSV 或模拟数据。模拟数据对免费用户开放，真实分析需 Pro。"""
     _rate_check(authorization, request, "analyze", 10, 60)
     try:
         if use_sample or file is None:
             df = generate_sample_data(300)
             sym_label = "模拟数据"
         else:
+            _require_pro(authorization)
             content = await file.read()
             df = pd.read_csv(io.BytesIO(content))
 
