@@ -164,6 +164,28 @@ def _pct(v) -> str:
     return "—"
 
 
+def _analyst_line(a: dict) -> str:
+    """分析师均价 + 涨幅空间；无数据为 --。"""
+    tgt = a.get("analyst_target")
+    up = a.get("analyst_upside_pct")
+    if tgt is None or tgt == "" or tgt == "--":
+        return f"分析师均价 <span style='color:{C_DIM};'>--</span>"
+    try:
+        tgt_s = f"{float(tgt):.2f}"
+    except Exception:
+        return f"分析师均价 <span style='color:{C_DIM};'>--</span>"
+    up_html = ""
+    if isinstance(up, (int, float)):
+        col = C_GREEN if up >= 0 else C_RED
+        # 邮件里涨幅空间用红涨绿跌还是与看板一致：看板 A 股习惯红涨 — 用 C_RED for +
+        col = C_RED if up >= 0 else C_GREEN
+        up_html = (
+            f" <span style='color:{col};font-weight:700;'>"
+            f"{up:+.2f}%</span>"
+        )
+    return f"分析师均价 <strong>{tgt_s}</strong>{up_html}"
+
+
 def _color_for_action(a: dict) -> str:
     c = (a.get("action_color") or a.get("signal_color") or "gray").lower()
     return {
@@ -240,6 +262,7 @@ def _build_board_table(analyses: List[dict]) -> str:
             f"<br>九转 <span style='color:{_color_for_timing(a)};font-weight:700;'>{timing}</span>"
             f" · 趋势 <span style='color:{_color_for_trend(a)};font-weight:700;'>{trend}</span>"
             f"<br>动作 <span style='color:{_color_for_action(a)};font-weight:700;'>{action}</span>"
+            f"<br>{_analyst_line(a)}"
             f"</div></div>"
         )
 
@@ -270,6 +293,8 @@ def _focus_facts(a: dict) -> dict:
         "high_low": a.get("high_low"),
         "valuation": a.get("valuation"),
         "valuation_detail": a.get("valuation_detail"),
+        "analyst_target": a.get("analyst_target"),
+        "analyst_upside_pct": a.get("analyst_upside_pct"),
         "role": a.get("role"),
         "bucket": a.get("bucket"),
         "industry": a.get("industry") or "",
@@ -426,7 +451,8 @@ def _fallback_deep(a: dict) -> str:
         f"<span style='color:{_color_for_chg(a.get('change_5d'))};font-weight:700;'>{_pct(a.get('change_5d'))}</span>；"
         f"九转 <span style='color:{_color_for_timing(a)};font-weight:700;'>{timing}</span>，"
         f"趋势 <span style='color:{_color_for_trend(a)};font-weight:700;'>{trend}</span>，"
-        f"动作 <span style='color:{_color_for_action(a)};font-weight:700;'>{action}</span>。"
+        f"动作 <span style='color:{_color_for_action(a)};font-weight:700;'>{action}</span>；"
+        f"{_analyst_line(a)}。"
         f"同向则价格行为与结构叙事较一致；背离则优先降低单标签权重。</li>"
         f"<li style='margin:0;'><strong style='color:{C_DIM};'>证伪</strong>：若行业资本开支/政策或需求主线被公开数据证伪，"
         f"或价格跌破关键均线区且放量反向，原「瓶颈溢价」叙事需降权。</li>"
