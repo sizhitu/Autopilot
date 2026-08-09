@@ -44,7 +44,20 @@ import db
 import auth
 
 
+# 免费体验固定真实行情代码（与 /api/watchlist/free-preview 一致）
+FREE_PREVIEW_SYMBOLS = frozenset({"AAPL", "TSLA"})
+
+
+def _norm_sym(symbol: str) -> str:
+    return str(symbol or "").strip().upper().replace(".US", "").replace(".SS", "").replace(".SZ", "")
+
+
+def _is_free_preview_symbol(symbol: str) -> bool:
+    return _norm_sym(symbol) in FREE_PREVIEW_SYMBOLS
+
+
 def _require_pro(authorization: Optional[str] = None):
+
     """核心功能门禁：BILLING_REQUIRED 时必须登录且为 pro/lifetime/admin。"""
     try:
         auth.ensure_entitled_from_header(authorization)
@@ -653,7 +666,9 @@ async def get_quote(req: QuoteRequest, request: Request = None,
     数据分层：原始 K 线写入缓存层（不落业务库）；实时拉取失败时，
     优先回退行情缓存，再回退每日 K 线缓存，并标记 stale=True 告知前端数据可能延迟。
     """
-    _require_pro(authorization)
+    # 免费体验代码可免订阅拉真实行情；其余仍需 Pro
+    if not _is_free_preview_symbol(getattr(req, "symbol", "") or ""):
+        _require_pro(authorization)
     _rate_check(authorization, request, "quote", 20, 60)
     # 命中短时分析结果缓存：直接返回（同一标的重复打开详情页秒开）
     cached_hit = cache.get_quote_cache(req.symbol)
@@ -793,7 +808,6 @@ async def watchlist_free_preview(refresh: bool = False):
     items = [
         ("AAPL", "苹果"),
         ("TSLA", "特斯拉"),
-        ("600519", "贵州茅台"),
     ]
     # 进程内缓存 6 小时；refresh=1 强制重算
     global _FREE_PREVIEW_CACHE

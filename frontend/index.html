@@ -536,7 +536,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 <!-- 自选看板视图 -->
 <div id="watchlistView" style="padding:10px;">
   <div id="demoDataBanner" style="display:none;margin:0 0 10px;padding:10px 12px;border-radius:8px;border:1px solid var(--gold);background:rgba(201,162,39,.12);font-size:12px;color:var(--text);line-height:1.5;">
-    <b style="color:var(--gold);">免费体验</b>：固定 <b>AAPL / TSLA / 600519</b> 三只<strong>真实行情</strong>（服务端缓存）。点击可进入分析；添加或搜索其他代码请
+    <b style="color:var(--gold);">免费体验</b>：固定 <b>AAPL / TSLA</b> 两只<strong>真实行情</strong>（服务端缓存）。点击可进入分析；添加或搜索其他代码请
     <a href="javascript:void(0)" onclick="openUpgradeModal()" style="color:var(--gold);margin-left:4px;text-decoration:underline;">升级套餐</a>。
   </div>
 
@@ -2348,7 +2348,7 @@ function optimisticWatchInsert(code, name) {
 }
 
 async function addWatch() {
-  if (isFreeUser()) { openUpgradeModal(); showToast('免费版仅体验固定三只标的，升级后可添加自选', 'ok'); return; }
+  if (isFreeUser()) { openUpgradeModal(); showToast('免费版仅体验 AAPL / TSLA，升级后可添加自选', 'ok'); return; }
 
   const inp = document.getElementById('watchInput');
   const raw = inp.value.trim();
@@ -2374,7 +2374,7 @@ async function addWatch() {
 }
 // 从下拉直接点选后添加（无需再解析）
 async function addWatchResolved(code, name) {
-  if (isFreeUser()) { openUpgradeModal(); showToast('免费版仅体验固定三只标的，升级后可添加自选', 'ok'); return; }
+  if (isFreeUser()) { openUpgradeModal(); showToast('免费版仅体验 AAPL / TSLA，升级后可添加自选', 'ok'); return; }
   try {
     await apiJSON('/api/watchlist/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: code, name: name || '' }) });
     document.getElementById('watchInput').value = '';
@@ -2415,7 +2415,15 @@ document.getElementById('watchInput').addEventListener('input', () => {
 
 // === 获取行情 ===
 async function fetchQuote(symbol, name, market) {
-  if (isFreeUser() && arguments[0] && !["AAPL","TSLA","600519"].includes(String(arguments[0]).toUpperCase()) && String(arguments[0])!=="600519") { openUpgradeModal(); showToast("升级后可分析任意标的","ok"); return; }
+  if (isFreeUser() && !isFreeAllowedSymbol(symbol)) {
+    openUpgradeModal();
+    showToast('免费版可分析 AAPL / TSLA，升级后解锁全部标的', 'ok');
+    const meta = document.getElementById('chartMeta');
+    if (meta && (!meta.textContent || meta.textContent === '获取数据中...')) {
+      meta.textContent = '请选择免费体验标的或升级套餐';
+    }
+    return;
+  }
   document.getElementById('searchResults').style.display = 'none';
   document.getElementById('chartMeta').textContent = '获取数据中...';
   currentSymbol = symbol;
@@ -2565,6 +2573,12 @@ async function loadSample() {
 
 // 分析工具默认真实标的（无真实代码时：直接切 Tab / 模拟数据之后）
 const DEFAULT_ANALYSIS = { code: 'NVDA', name: '英伟达', market: '美股' };
+const FREE_FIXED_CODES = ['AAPL', 'TSLA'];
+const FREE_DEFAULT_ANALYSIS = { code: 'AAPL', name: '苹果', market: '美股' };
+function isFreeAllowedSymbol(sym) {
+  const s = String(sym || '').trim().toUpperCase();
+  return FREE_FIXED_CODES.indexOf(s) >= 0;
+}
 let _analysisLoading = false;
 let _analysisLoadGuard = null;
 let _analysisLoadStarted = 0;
@@ -2584,9 +2598,17 @@ async function ensureAnalysisSymbol() {
   clearTimeout(_analysisLoadGuard);
   _analysisLoadGuard = setTimeout(function () { _analysisLoading = false; }, 12000);
   try {
-    const code = currentSymbol || DEFAULT_ANALYSIS.code;
-    const name = currentSymbol ? (currentName || '') : DEFAULT_ANALYSIS.name;
-    const market = currentSymbol ? (currentMarket || '') : DEFAULT_ANALYSIS.market;
+    const freeDef = FREE_DEFAULT_ANALYSIS;
+    const paidDef = DEFAULT_ANALYSIS;
+    const def = isFreeUser() ? freeDef : paidDef;
+    let code = currentSymbol || def.code;
+    let name = currentSymbol ? (currentName || '') : def.name;
+    let market = currentSymbol ? (currentMarket || '') : def.market;
+    // 免费用户若当前代码不在白名单（例如旧会话残留 NVDA），强制回落到 AAPL
+    if (isFreeUser() && !isFreeAllowedSymbol(code)) {
+      code = freeDef.code; name = freeDef.name; market = freeDef.market;
+      currentSymbol = code; currentName = name; currentMarket = market;
+    }
     await fetchQuote(code, name, market);
   } catch (e) {
     const meta = document.getElementById('chartMeta');
@@ -2615,10 +2637,15 @@ function switchMainTab(tab) {
     try { loadWatchlist(false); } catch (e) {}
   }
   if (tab === 'analysis') {
-    // 用户主动点击时允许打断卡住的 loading
-    if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 3000) {
+    // 主动切 Tab：尽快解锁，避免上次请求卡住导致点不动
+    if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 1000) {
       _analysisLoading = false;
     }
+    setTimeout(function () {
+      if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 2000) {
+        _analysisLoading = false;
+      }
+    }, 2100);
     ensureAnalysisSymbol().catch(function () {});
   }
 }
@@ -2713,7 +2740,7 @@ function isFreeUser() {
 
 function isDemoMode() {
 
-  if (!currentUser) return true; // 未登录也展示免费体验·固定三只真实行情，页面不空白
+  if (!currentUser) return true; // 未登录也展示免费体验·固定两只真实行情，页面不空白
   const plan = String((currentUser.plan || 'free')).toLowerCase();
   if (plan === 'pro' || plan === 'plus' || plan === 'lifetime' || plan === 'basic') return false;
   if (currentUser.is_admin) return false;
@@ -2727,33 +2754,16 @@ function isDemoMode() {
 }
 
 function getDemoWatchlistRows() {
-  // 静态演示行：字段对齐 renderWatchlist，不请求行情接口
+  // 接口失败时的最小兜底（正常走 free-preview 真实行情）
   return [
-    { code: 'AAPL', name: '苹果 (演示)', market: '美股', price: 198.45, change_1d: 1.2, change_5d: 3.5,
-      signal: '持有', signal_color: 'green', timing: '九转未完', timing_color: 'gray',
-      trend_filter: '多头', trend_filter_color: 'green', action: '持有', action_color: 'green',
-      action_reason: '演示：趋势向上，仓位保持', nine_turn_daily: '日–', nine_turn_monthly: '月–',
-      high_low: '近高 -2%', analyst_target: 220, analyst_upside_pct: 10.8, pending: false, demo: true },
-    { code: 'TSLA', name: '特斯拉 (演示)', market: '美股', price: 248.10, change_1d: -2.4, change_5d: -5.1,
-      signal: '观望', signal_color: 'gray', timing: '卖九完成', timing_color: 'orange',
-      trend_filter: '震荡', trend_filter_color: 'gray', action: '减仓观察', action_color: 'orange',
-      action_reason: '演示：波动加大，降低仓位', nine_turn_daily: '日卖9', nine_turn_monthly: '月–',
-      high_low: '回撤 -12%', analyst_target: 260, analyst_upside_pct: 4.8, pending: false, demo: true },
-    { code: '600519', name: '贵州茅台 (演示)', market: 'A股', price: 1688.00, change_1d: 0.6, change_5d: 1.8,
-      signal: '持有', signal_color: 'green', timing: '买九进行中', timing_color: 'blue',
-      trend_filter: '多头', trend_filter_color: 'green', action: '分批承接', action_color: 'blue',
-      action_reason: '演示：回调买入区', nine_turn_daily: '日买6', nine_turn_monthly: '月–',
-      high_low: '中枢', analyst_target: 1850, analyst_upside_pct: 9.6, pending: false, demo: true },
-    { code: 'NVDA', name: '英伟达 (演示)', market: '美股', price: 112.30, change_1d: 2.8, change_5d: 6.2,
-      signal: '加仓', signal_color: 'green', timing: '突破确认', timing_color: 'green',
-      trend_filter: '强多', trend_filter_color: 'green', action: '顺势加仓', action_color: 'green',
-      action_reason: '演示：强趋势标的示意', nine_turn_daily: '日–', nine_turn_monthly: '月–',
-      high_low: '新高', analyst_target: 140, analyst_upside_pct: 24.7, pending: false, demo: true },
-    { code: 'BABA', name: '阿里巴巴 (演示)', market: '美股', price: 86.20, change_1d: -0.8, change_5d: 2.1,
-      signal: '观望', signal_color: 'gray', timing: '区间震荡', timing_color: 'gray',
-      trend_filter: '弱势', trend_filter_color: 'red', action: '轻仓等待', action_color: 'gray',
-      action_reason: '演示：等待趋势转强', nine_turn_daily: '日–', nine_turn_monthly: '月–',
-      high_low: '偏低', analyst_target: 95, analyst_upside_pct: 10.2, pending: false, demo: true },
+    { code: 'AAPL', name: '苹果', market: '美股', price: '-', change_1d: null, change_5d: null,
+      signal: '—', signal_color: 'gray', timing: '—', timing_color: 'gray',
+      trend_filter: '—', trend_filter_color: 'gray', action: '—', action_color: 'gray',
+      pending: false, free_fixed: true },
+    { code: 'TSLA', name: '特斯拉', market: '美股', price: '-', change_1d: null, change_5d: null,
+      signal: '—', signal_color: 'gray', timing: '—', timing_color: 'gray',
+      trend_filter: '—', trend_filter_color: 'gray', action: '—', action_color: 'gray',
+      pending: false, free_fixed: true },
   ];
 }
 
@@ -2801,7 +2811,7 @@ async function _loadWatchlistBody(forceRefresh) {
     loading.classList.remove('hidden');
   }
   try {
-    // 免费 / 未登录：固定三只真实行情（服务端缓存），可点进分析
+    // 免费 / 未登录：固定两只真实行情（服务端缓存），可点进分析
     if (isDemoMode()) {
       try {
         const res = await api('/api/watchlist/free-preview' + (forceRefresh ? '?refresh=1' : ''));
@@ -3028,7 +3038,10 @@ function renderWatchlist(stocks) {
       }
       analystHtml = `<span style="font-family:monospace;">${Number(s.analyst_target).toFixed(2)}</span>/<span style="font-family:monospace;">${upPart}</span>`;
     }
-    html += `<tr style="border-bottom:1px solid var(--border); cursor:pointer;" onclick="fetchQuote('${s.code}','${s.name}','${s.market}')">
+    const _nm = String(s.name || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const _mk = String(s.market || '').replace(/'/g, "\\'");
+    const _cd = String(s.code || '').replace(/'/g, "\\'");
+    html += `<tr style="border-bottom:1px solid var(--border); cursor:pointer;" onclick="fetchQuote('${_cd}','${_nm}','${_mk}')">
       <td style="padding:5px 6px;font-weight:600;color:var(--gold);white-space:nowrap;">${
         currentUser ? `<button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-right:4px;">✕</button>` : ''
       }<span onclick="event.stopPropagation();editNote('${s.code}')" title="${(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};border-bottom:${watchNotes[s.code]?'1px dotted var(--gold)':'none'};">${s.code}</span></td>
