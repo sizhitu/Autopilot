@@ -695,33 +695,57 @@ class FujimotoStrategy:
         tool_confirmed = fib_buy is not None and fib_buy.reacted
         tool_tested = fib_buy is not None and fib_buy.tested
 
+        # 震荡市：趋势不稳，时机层权重上调（九转/量价主导，趋势降权）
+        is_range = trend == TrendType.RANGE
+        # 工具层在震荡中可略放宽：已测试触及也算结构参考
+        tool_ok_range = tool_confirmed or tool_tested
+
         layers = {
             "系统层（趋势+指标）": {
                 "通过": sys_bull or sys_bear,
-                "状态": f"趋势={trend.value}，{trend_detail}；{sys_wdetail}"
+                "状态": (
+                    f"趋势={trend.value}，{trend_detail}；{sys_wdetail}"
+                    + ("；震荡市中趋势降权，以时机层为主" if is_range else "")
+                )
             },
             "工具层（斐波那契反应）": {
-                "通过": tool_confirmed,
+                "通过": tool_confirmed if not is_range else tool_ok_range,
                 "状态": f"买点确认={tool_confirmed}，" +
                         (f"0.{int(fib_buy.level*1000)}有反应({fib_buy.reaction_signal})"
                          if fib_buy else "无有效斐波那契买点") +
-                        ("（已测试但未确认反应）" if tool_tested and not tool_confirmed else "")
+                        ("（已测试但未确认反应）" if tool_tested and not tool_confirmed else "") +
+                        ("；震荡市结构放宽为「触及可参考」" if is_range and tool_tested and not tool_confirmed else "")
             },
             "时机层（九转+量价+收敛）": {
                 "通过": timing_pass,
-                "状态": timing_status
+                "状态": timing_status + ("；震荡市权重优先" if is_range and timing_pass else "")
             },
         }
 
         # === 综合信号决策 ===
         all_pass = sys_bull and tool_confirmed and timing_buy
+        # 震荡路径：时机买侧 + 结构参考（确认或已测试），不要求系统层多头
+        range_timing_buy = is_range and timing_buy and tool_ok_range
+        range_timing_sell = is_range and timing_sell
         # 藤本茂减仓：有持仓且阶梯触发时仍可提示卖出（仓位管理，非三层门槛）
         sell_trigger = position_delta < 0 and current_position_pct > 0
+        range_mode = False  # 标记是否震荡时机主导（仓位打折）
 
         if all_pass:
             signal = SignalType.BUY if current_position_pct == 0 else SignalType.ADD
             ladder_note = f"；仓位参考：{fujimoto_desc}" if position_delta > 0 else ""
             action = f"三层一致 → {'初始建仓' if current_position_pct == 0 else '加仓'}（九转+量价确认）{ladder_note}"
+        elif range_timing_buy:
+            range_mode = True
+            signal = SignalType.BUY if current_position_pct == 0 else SignalType.ADD
+            action = (
+                "震荡市·时机主导 → "
+                + ("轻仓试探" if current_position_pct == 0 else "轻仓加仓")
+                + "（九转+量价优先，趋势未稳，仓位折减）"
+            )
+        elif range_timing_sell and current_position_pct > 0:
+            signal = SignalType.SELL
+            action = "震荡市·时机卖侧确认，建议减仓/兑现"
         elif timing_sell and (sys_bear or tool_confirmed):
             signal = SignalType.SELL if current_position_pct > 0 else SignalType.WAIT
             action = "时机层卖侧确认" + ("，建议减仓" if current_position_pct > 0 else "，空仓观望")
@@ -734,9 +758,9 @@ class FujimotoStrategy:
         elif sys_bear:
             signal = SignalType.SELL if current_position_pct > 0 else SignalType.WAIT
             action = "空头趋势，" + ("减仓避险" if current_position_pct > 0 else "观望")
-        elif trend == TrendType.RANGE:
+        elif is_range:
             signal = SignalType.WAIT
-            action = "震荡市，三层未齐，观望等待"
+            action = "震荡市：趋势不稳，等待时机层（九转+量价）到位"
         else:
             signal = SignalType.WAIT
             action = "三层未完全一致，观望等待"
@@ -759,6 +783,10 @@ class FujimotoStrategy:
             # 若藤本茂给出加仓比例则取较小者；无建仓价/未触发阶梯时保留 ATR 仓位
             if position_delta > 0:
                 position_pct = min(position_pct, position_delta)
+            # 震荡市时机主导：趋势不稳，仓位折减约一半
+            if range_mode:
+                position_pct = position_pct * 0.5
+                risk_warning = (risk_warning + "；" if risk_warning else "") + "震荡市轻仓（时机主导，仓位×0.5）"
 
             entry_price = close
             stop_loss = close - 1.5 * atr_val
