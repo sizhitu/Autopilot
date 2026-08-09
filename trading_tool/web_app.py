@@ -801,7 +801,7 @@ async def get_daily(symbol: str, limit: int = Query(0, description="0=全部，>
 
 @app.get("/api/watchlist/free-preview")
 async def watchlist_free_preview(refresh: bool = False):
-    """免费用户固定三只真实行情（服务端缓存），避免静态假数据。"""
+    """免费用户固定两只真实行情（服务端缓存），避免静态假数据。"""
     import time as _time
     from watchlist import _status_dict_cached
 
