@@ -141,6 +141,12 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .btn-outline { background:transparent; border:1px solid var(--border); color:var(--text); }
 .btn-outline:hover { border-color:var(--blue); }
 .btn-sm { padding:3px 10px; font-size:11px; }
+#manageBtnCancel:disabled, #manageBtnRefund:disabled {
+  opacity: 0.45; cursor: not-allowed; pointer-events: none;
+  border-color: var(--border) !important; color: var(--text-dim) !important;
+  background: transparent !important;
+}
+
 
 /* 信号 */
 .signal-card { text-align:center; }
@@ -1441,6 +1447,9 @@ async function openManageSub() {
   if (plan === 'basic') plan = 'pro';
   let orderId = '';
   let canCancel = false;
+  let canRefund = false;
+  let complimentary = false;
+  let planSource = (currentUser && currentUser.plan_source) || '';
   let expires = (currentUser && currentUser.plan_expires_at) || '';
   try {
     const r = await apiJSON('/api/billing/portal');
@@ -1448,16 +1457,25 @@ async function openManageSub() {
       plan = (r.plan || plan || 'free').toLowerCase();
       if (plan === 'basic') plan = 'pro';
       orderId = r.order_id || '';
-      canCancel = !!r.can_cancel;
+      planSource = r.plan_source || planSource || '';
+      complimentary = !!r.complimentary || plan === 'lifetime' ||
+        ['grandfather','admin','manual','gift','lifetime','comp','complimentary'].indexOf(String(planSource).toLowerCase()) >= 0;
+      canCancel = !!r.can_cancel && !complimentary;
+      canRefund = !!(r.can_refund != null ? r.can_refund : r.can_cancel) && !complimentary;
       expires = r.plan_expires_at || expires || '';
       currentUser = Object.assign(currentUser || {}, {
         plan: r.plan, entitled: r.entitled, can_digest: r.can_digest,
         price_pro_usd: r.price_pro_usd, price_plus_usd: r.price_plus_usd,
-        plan_expires_at: r.plan_expires_at,
+        plan_expires_at: r.plan_expires_at, plan_source: planSource,
+        complimentary: complimentary,
       });
     }
   } catch (e) {
     console.warn('portal', e);
+    complimentary = plan === 'lifetime' ||
+      ['grandfather','admin','manual','gift','lifetime'].indexOf(String(planSource).toLowerCase()) >= 0;
+    canCancel = false;
+    canRefund = false;
   }
   const labelMap = { free: '免费', pro: 'Pro', plus: 'Plus', lifetime: '终身' };
   const label = labelMap[plan] || plan;
@@ -1484,12 +1502,36 @@ async function openManageSub() {
     else { btnUp.style.display = 'none'; }
   }
   if (btnCa) {
-    btnCa.style.display = (plan === 'pro' || plan === 'plus') ? 'block' : 'none';
-    btnCa.disabled = false;
+    const showCa = (plan === 'pro' || plan === 'plus') && !complimentary;
+    btnCa.style.display = showCa ? 'block' : 'none';
+    btnCa.disabled = !canCancel;
+    btnCa.title = canCancel ? '取消自动续费' : (complimentary ? '赠送/老用户权益不可取消' : '无可取消的付费订单');
     btnCa.dataset.canCancel = canCancel ? '1' : '0';
+    if (!canCancel && showCa) {
+      btnCa.style.display = 'block';
+      btnCa.disabled = true;
+    }
+    // 赠送用户：仍展示但置灰，避免误点
+    if (complimentary && (plan === 'pro' || plan === 'plus' || plan === 'lifetime')) {
+      btnCa.style.display = 'block';
+      btnCa.disabled = true;
+      btnCa.textContent = '取消自动续费（赠送权益不可用）';
+    } else if (showCa) {
+      btnCa.textContent = '取消自动续费';
+    }
   }
   if (btnRe) {
-    btnRe.style.display = (plan === 'pro' || plan === 'plus') ? 'block' : 'none';
+    const showRe = (plan === 'pro' || plan === 'plus') && !complimentary;
+    btnRe.style.display = showRe ? 'block' : 'none';
+    btnRe.disabled = !canRefund;
+    btnRe.title = canRefund ? '申请退费' : (complimentary ? '赠送/老用户权益不可退费' : '无可退费订单');
+    if (complimentary && (plan === 'pro' || plan === 'plus' || plan === 'lifetime')) {
+      btnRe.style.display = 'block';
+      btnRe.disabled = true;
+      btnRe.textContent = '申请退费（赠送权益不可用）';
+    } else if (showRe) {
+      btnRe.textContent = '申请退费';
+    }
   }
   m.style.display = 'flex';
 }
@@ -1500,6 +1542,12 @@ function closeManageSub() {
 }
 
 async function doCancelSubscription() {
+  if (currentUser && (currentUser.complimentary || currentUser.plan === 'lifetime' ||
+      ['grandfather','admin','gift','manual'].indexOf(String(currentUser.plan_source||'').toLowerCase()) >= 0)) {
+    showToast('赠送/老用户权益不支持取消续订', 'err');
+    return;
+  }
+
   const btn = document.getElementById('manageBtnCancel');
   if (btn && btn.dataset.canCancel === '0') {
     showToast('未找到可取消的订单号。若刚付款请稍后再试，或联系客服处理', 'err');
@@ -1517,6 +1565,12 @@ async function doCancelSubscription() {
 }
 
 async function doRequestRefund() {
+  if (currentUser && (currentUser.complimentary || currentUser.plan === 'lifetime' ||
+      ['grandfather','admin','gift','manual'].indexOf(String(currentUser.plan_source||'').toLowerCase()) >= 0)) {
+    showToast('赠送/老用户权益不支持退费', 'err');
+    return;
+  }
+
   const msg = '退费说明：\n\n1. 首次订阅 48 小时内且几乎未使用 → 可申请全额退\n2. 退款成功后会员权限立即失效\n3. 超过冷却期一般不退当月，建议改用「取消自动续费」\n\n确认向客服提交退费申请？（将打开邮件）';
   if (!confirm(msg)) return;
   const email = (currentUser && currentUser.email) || '';

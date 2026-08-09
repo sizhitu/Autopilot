@@ -1610,8 +1610,8 @@ async def billing_cancel(user: dict = Depends(auth.get_current_user)):
     profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
     plan = (profile.get("plan") or "").lower()
     source = (profile.get("plan_source") or "").lower()
-    if plan == "lifetime" or source == "grandfather":
-        return {"success": True, "message": "终身用户无需取消"}
+    if plan == "lifetime" or source in ("grandfather", "admin", "manual", "gift", "lifetime", "comp", "complimentary"):
+        raise HTTPException(status_code=400, detail="赠送/老用户权益不支持自助取消")
     if plan not in ("pro", "basic", "plus"):
         return {"success": True, "message": "当前不是付费订阅"}
     order_id = (profile.get("stripe_subscription_id") or "").strip()
@@ -1634,20 +1634,34 @@ async def billing_cancel(user: dict = Depends(auth.get_current_user)):
 
 @app.get("/api/billing/portal")
 async def billing_portal(user: dict = Depends(auth.get_current_user)):
-    """返回订阅管理信息（状态、订单号、是否可取消）。"""
+    """返回订阅管理信息（状态、订单号、是否可取消/退费）。
+
+    赠送/老用户（lifetime、grandfather、admin 等）不可自助取消或退费。
+    """
     profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
     ent = user_store.entitlement_from_profile(
         profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin"))
     )
+    raw_plan = (profile.get("plan") or "").strip().lower()
+    source = (profile.get("plan_source") or ent.get("plan_source") or "").strip().lower()
+    order_id = (profile.get("stripe_subscription_id") or "").strip()
+    # 赠送权益：老用户特殊处理、终身、管理员开通等
+    complimentary = (
+        raw_plan == "lifetime"
+        or (ent.get("plan") or "").lower() == "lifetime"
+        or source in ("grandfather", "admin", "manual", "gift", "lifetime", "comp", "complimentary")
+        or (ent.get("reason") or "") in ("grandfather", "admin")
+    )
+    paid_plan = raw_plan in ("pro", "basic", "plus") or (ent.get("plan") or "").lower() in ("pro", "plus")
+    can_manage = bool(paid_plan and order_id and not complimentary)
     return {
         "success": True,
         **ent,
-        "order_id": profile.get("stripe_subscription_id") or "",
-        "can_cancel": bool(
-            (profile.get("plan") or "").lower() in ("pro", "basic", "plus")
-            and (profile.get("plan_source") or "").lower() not in ("grandfather",)
-            and (profile.get("stripe_subscription_id") or "")
-        ),
+        "order_id": order_id,
+        "plan_source": source or ent.get("plan_source") or "",
+        "complimentary": complimentary,
+        "can_cancel": can_manage,
+        "can_refund": can_manage,
     }
 
 
