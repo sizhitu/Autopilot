@@ -401,7 +401,7 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.action_color = "orange"
             reasons.append("九转卖点与多头趋势背离，优先风控")
         elif timing_buy and trend == "多头趋势":
-            status.action = "关注买入"
+            status.action = "阶梯分批买入"
             status.action_color = "orange"
             reasons.append("九转买点与多头同向")
         elif timing_sell and trend == "空头趋势":
@@ -409,7 +409,7 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.action_color = "red"
             reasons.append("九转卖点与空头同向")
         elif timing_buy:
-            status.action = "关注买入"
+            status.action = "阶梯分批买入"
             status.action_color = "orange"
             reasons.append(status.timing)
         elif timing_sell:
@@ -435,7 +435,7 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
 
         status.action_reason = "；".join(reasons)
         # 兼容旧看板汇总字段
-        if status.action in ("关注买入", "阶梯抄底关注"):
+        if status.action in ("阶梯分批买入", "阶梯抄底关注"):
             status.signal = "即将上涨关注"
             status.signal_color = "orange"
         elif status.action in ("关注卖出", "阶梯止盈关注", "减仓观察"):
