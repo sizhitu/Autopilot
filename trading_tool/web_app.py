@@ -1323,14 +1323,14 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
             if origin:
                 success_url = origin + "/?billing=success"
         uid = user["id"]
-        want = (body.get("plan") or "basic").strip().lower()
-        if want in ("pro", "basic"):
-            want = "basic"
-        elif want not in ("basic", "plus"):
-            want = "basic"
+        want = (body.get("plan") or "pro").strip().lower()
+        if want in ("basic", "pro"):
+            want = "pro"
+        elif want != "plus":
+            want = "pro"
         product_id = os.getenv("WAFFO_PRODUCT_ID", "").strip()
-        price_basic = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
-        price_plus = float(os.getenv("PLUS_PRICE_USD", str(round(price_basic + 3, 1))) or (price_basic + 3))
+        price_pro = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
+        price_plus = float(os.getenv("PLUS_PRICE_USD", str(round(price_pro + 3, 1))) or (price_pro + 3))
         extra = {}
         if want == "plus":
             plus_pid = os.getenv("WAFFO_PRODUCT_ID_PLUS", "").strip()
@@ -1510,13 +1510,15 @@ async def billing_confirm(user: dict = Depends(auth.get_current_user)):
         pending = None
     if not pending:
         # 无 pending 时：若已是 basic/pro 直接返回；否则不擅自开通
-        if cur in ("basic", "pro"):
+        if cur in ("basic", "pro", "plus"):
             ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(profile.get("is_admin")))
             return {"success": True, "already": True, **ent}
         raise HTTPException(status_code=400, detail="未找到待确认的支付会话，请等待 webhook 同步或联系客服")
-    want = (pending.get("plan") or "basic").lower()
-    if want not in ("basic", "plus"):
-        want = "basic"
+    want = (pending.get("plan") or "pro").lower()
+    if want in ("basic", "pro"):
+        want = "pro"
+    elif want != "plus":
+        want = "pro"
     # 不可降级：已 plus 不写成 basic
     if cur == "plus":
         want = "plus"
@@ -1638,12 +1640,12 @@ async def billing_webhook(request: Request):
                 activate = False
         if activate and uid:
             meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
-            want = (meta.get("plan") or meta.get("user_plan") or "basic")
+            want = (meta.get("plan") or meta.get("user_plan") or "pro")
             want = str(want).lower()
-            if want in ("pro", "basic"):
-                want = "basic"
+            if want in ("basic", "pro"):
+                want = "pro"
             elif want != "plus":
-                want = "basic"
+                want = "pro"
             # 不覆盖 lifetime；plus 不被 basic 降级
             prev = {}
             try:
@@ -1651,7 +1653,7 @@ async def billing_webhook(request: Request):
                 prev_plan = (prev.get("plan") or "").lower()
                 if prev_plan == "lifetime" or (prev.get("plan_source") or "") == "grandfather":
                     want = "lifetime"
-                elif prev_plan == "plus" and want == "basic":
+                elif prev_plan == "plus" and want == "pro":
                     want = "plus"
             except Exception:
                 prev = {}

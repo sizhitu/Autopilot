@@ -446,10 +446,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
         <li>邮件订阅推送</li>
       </ul>
     </div>
-    <div id="planCardBasic" onclick="selectUpgradePlan('basic')" style="cursor:pointer;border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg,#0a1419);">
-      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px;">Basic</div>
+    <div id="planCardPro" onclick="selectUpgradePlan('pro')" style="cursor:pointer;border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg,#0a1419);">
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px;">Pro</div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">适合日常查看分析</div>
-      <div style="font-size:22px;font-weight:700;color:var(--text);">$<span id="priceBasicLabel">9.9</span><span style="font-size:12px;font-weight:400;color:var(--text-dim);"> /月</span></div>
+      <div style="font-size:22px;font-weight:700;color:var(--text);">$<span id="priceProLabel">9.9</span><span style="font-size:12px;font-weight:400;color:var(--text-dim);"> /月</span></div>
       <ul style="margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--text-dim);line-height:1.7;">
         <li>完整行情与策略分析</li>
         <li>自选看板与回测</li>
@@ -1373,7 +1373,7 @@ async function openManageSub() {
     const r = await apiJSON('/api/billing/portal');
     const plan = ((r && r.plan) || (currentUser && currentUser.plan) || 'free').toLowerCase();
     const canCancel = !!(r && r.can_cancel);
-    const label = plan === 'plus' ? 'Plus' : (plan === 'basic' || plan === 'pro' ? 'Basic' : plan);
+    const label = plan === 'plus' ? 'Plus' : (plan === 'basic' || plan === 'pro' ? 'Pro' : plan);
     if (plan === 'lifetime') { showToast('终身用户无需管理订阅', 'ok'); return; }
     if (!canCancel) {
       showToast(plan === 'free' ? '当前为免费用户' : ('当前为 ' + label + '，暂无可取消订单，请联系客服'), plan === 'free' ? 'err' : 'ok');
@@ -1391,10 +1391,10 @@ async function openManageSub() {
 
 function openUpgradeModal() {
   const m = document.getElementById('upgradeModal');
-  if (!m) { startCheckout('basic'); return; }
-  const pb = (currentUser && currentUser.price_basic_usd) || 9.9;
+  if (!m) { startCheckout('pro'); return; }
+  const pb = (currentUser && (currentUser.price_pro_usd || currentUser.price_basic_usd)) || 9.9;
   const pp = (currentUser && currentUser.price_plus_usd) || (Number(pb) + 3);
-  const elB = document.getElementById('priceBasicLabel');
+  const elB = document.getElementById('priceProLabel');
   const elP = document.getElementById('pricePlusLabel');
   if (elB) elB.textContent = Number(pb).toFixed(1).replace(/\.0$/, '');
   if (elP) elP.textContent = Number(pp).toFixed(1).replace(/\.0$/, '');
@@ -1409,11 +1409,11 @@ function closeUpgradeModal() {
 }
 function selectUpgradePlan(plan) {
   closeUpgradeModal();
-  startCheckout(plan === 'plus' ? 'plus' : 'basic');
+  startCheckout(plan === 'plus' ? 'plus' : 'pro');
 }
 
 async function startCheckout(plan) {
-  plan = plan || 'basic';
+  plan = plan || 'pro';
   try {
     const origin = location.origin + location.pathname;
     const r = await apiJSON('/api/billing/checkout', {
@@ -1457,8 +1457,8 @@ async function startCheckout(plan) {
       for (let i = 0; i < 10; i++) {
         const u = await refreshPlanFromServer();
         const pl = u && (u.plan || '').toLowerCase();
-        if (u && (pl === 'basic' || pl === 'plus' || pl === 'pro' || pl === 'lifetime' || u.entitled)) {
-          showToast(pl === 'plus' ? '已开通 Plus' : '已开通 Basic', 'ok');
+        if (u && (pl === 'pro' || pl === 'plus' || pl === 'basic' || pl === 'lifetime' || u.entitled)) {
+          showToast(pl === 'plus' ? '已开通 Plus' : '已开通 Pro', 'ok');
           return;
         }
         await new Promise(r => setTimeout(r, 1200));
@@ -1528,22 +1528,22 @@ function refreshAuthUI() {
     const bs = document.getElementById('btnSubscribe');
     const bm = document.getElementById('btnManageSub');
     let plan = (currentUser.plan || 'free').toLowerCase();
-    if (plan === 'pro') plan = 'basic';
-    const entitled = currentUser.entitled === true || plan === 'basic' || plan === 'plus' || plan === 'lifetime' || !!currentUser.is_admin;
+    if (plan === 'basic') plan = 'pro';
+    const entitled = currentUser.entitled === true || plan === 'pro' || plan === 'plus' || plan === 'lifetime' || !!currentUser.is_admin;
     if (pb) {
       if (plan === 'lifetime') { pb.style.display = 'inline'; pb.textContent = '终身'; pb.style.color = 'var(--gold)'; }
       else if (plan === 'plus') { pb.style.display = 'inline'; pb.textContent = 'Plus'; pb.style.color = 'var(--gold)'; }
-      else if (plan === 'basic') { pb.style.display = 'inline'; pb.textContent = 'Basic'; pb.style.color = 'var(--green)'; }
+      else if (plan === 'pro') { pb.style.display = 'inline'; pb.textContent = 'Pro'; pb.style.color = 'var(--green)'; }
       else { pb.style.display = 'none'; }
     }
     if (bs) {
       // 免费：升级；Basic：可升级到 Plus；Plus/终身：隐藏
       if (!entitled || plan === 'free') { bs.style.display = 'inline-flex'; bs.textContent = '升级'; }
-      else if (plan === 'basic') { bs.style.display = 'inline-flex'; bs.textContent = '升级 Plus'; }
+      else if (plan === 'pro') { bs.style.display = 'inline-flex'; bs.textContent = '升级 Plus'; }
       else { bs.style.display = 'none'; }
     }
     if (bm) {
-      bm.style.display = ((plan === 'basic' || plan === 'plus') && !currentUser.is_admin) ? 'inline-flex' : 'none';
+      bm.style.display = ((plan === 'pro' || plan === 'plus') && !currentUser.is_admin) ? 'inline-flex' : 'none';
     }
     // 邮件推送开关：无 can_digest 时禁用
     const digEn = document.getElementById('digestEnabled');

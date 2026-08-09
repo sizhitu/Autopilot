@@ -218,46 +218,49 @@ PRO_PRICE_USD = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
 
 def entitlement_from_profile(profile: dict = None, is_admin_user: bool = False) -> dict:
     """
-    计算用户权益。
-    plan: free | basic | plus | pro(兼容=basic) | lifetime
-    entitled: 是否可使用分析等核心功能
-    can_digest: 是否可开启邮件推送（plus / lifetime / admin）
+    plan: free | pro | plus | lifetime
+    - pro: 付费分析权益
+    - plus: 分析 + 邮件推送（含老用户 grandfather）
+    - lifetime: 与 plus 同权（展示「终身」）
+    entitled: 核心分析功能
+    can_digest: 邮件推送
     """
     p = profile or {}
     plan = (p.get("plan") or "free").strip().lower()
     source = (p.get("plan_source") or "default").strip().lower()
-    # 兼容旧 pro → 视为 basic
-    if plan == "pro":
-        plan = "basic"
-    price_basic = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
-    price_plus = float(os.getenv("PLUS_PRICE_USD", str(round(price_basic + 3, 1))) or (price_basic + 3))
-
+    # 兼容旧 basic → pro
+    if plan == "basic":
+        plan = "pro"
+    price_pro = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
+    price_plus = float(os.getenv("PLUS_PRICE_USD", str(round(price_pro + 3, 1))) or (price_pro + 3))
     base = {
         "billing_required": BILLING_REQUIRED,
-        "price_usd": price_basic,
-        "price_basic_usd": price_basic,
+        "price_usd": price_pro,
+        "price_pro_usd": price_pro,
+        "price_basic_usd": price_pro,  # 兼容前端旧字段
         "price_plus_usd": price_plus,
     }
 
     if is_admin_user or p.get("is_admin"):
         return {
             **base,
-            "plan": "lifetime" if plan == "lifetime" else (plan if plan in ("basic", "plus", "lifetime") else "plus"),
+            "plan": "lifetime" if plan == "lifetime" else (plan if plan in ("pro", "plus", "lifetime") else "plus"),
             "plan_source": source or "admin",
             "entitled": True,
             "can_digest": True,
             "reason": "admin",
         }
+    # 老用户 / 终身 → Plus 全功能（展示可用 lifetime）
     if plan == "lifetime" or source == "grandfather":
         return {
             **base,
-            "plan": "lifetime",
+            "plan": "lifetime" if plan == "lifetime" else "plus",
             "plan_source": source or "grandfather",
             "entitled": True,
             "can_digest": True,
             "reason": "grandfather",
         }
-    if plan in ("basic", "plus"):
+    if plan in ("pro", "plus"):
         exp = _parse_ts(p.get("plan_expires_at"))
         now = datetime.now(timezone.utc)
         if exp is None or exp > now:
@@ -279,7 +282,6 @@ def entitlement_from_profile(profile: dict = None, is_admin_user: bool = False) 
             "plan_expires_at": p.get("plan_expires_at"),
             "reason": "expired",
         }
-    # free
     return {
         **base,
         "plan": "free",
@@ -288,6 +290,7 @@ def entitlement_from_profile(profile: dict = None, is_admin_user: bool = False) 
         "can_digest": False,
         "reason": "free",
     }
+
 
 
 def is_entitled(profile: dict = None, is_admin_user: bool = False) -> bool:
