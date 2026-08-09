@@ -45,6 +45,7 @@ import auth
 import mailer
 import daily_store
 import user_store
+import waffo_client
 import ticket_store
 import settings_store
 import supabase_client
@@ -1124,16 +1125,34 @@ if __name__ == "__main__":
 # ========== 订阅 / Waffo Pancake（首选）+ Polar/Stripe 遗留；统一 $9.9/月；lifetime 不受影响 ==========
 
 def _billing_provider_configured() -> dict:
+    waffo = False
+    try:
+        waffo = waffo_client.configured()
+    except Exception:
+        waffo = bool(
+            os.getenv("WAFFO_MERCHANT_ID", "").strip()
+            and os.getenv("WAFFO_PRIVATE_KEY", "").strip()
+            and os.getenv("WAFFO_PRODUCT_ID", "").strip()
+        )
     polar = bool(os.getenv("POLAR_ACCESS_TOKEN", "").strip() and os.getenv("POLAR_PRODUCT_ID", "").strip())
     polar_link = bool(os.getenv("POLAR_CHECKOUT_LINK", "").strip())
     stripe = bool(os.getenv("STRIPE_SECRET_KEY", "").strip() and os.getenv("STRIPE_PRICE_ID", "").strip())
+    if waffo:
+        provider = "waffo"
+    elif polar or polar_link:
+        provider = "polar"
+    elif stripe:
+        provider = "stripe"
+    else:
+        provider = None
     return {
+        "waffo": waffo,
         "polar": polar or polar_link,
         "polar_api": polar,
         "polar_link": polar_link,
         "stripe": stripe,
-        "any": polar or polar_link or stripe,
-        "provider": "polar" if (polar or polar_link) else ("stripe" if stripe else None),
+        "any": bool(provider),
+        "provider": provider,
     }
 
 
@@ -1226,8 +1245,9 @@ async def billing_status(user: dict = Depends(auth.get_current_user)):
         "success": True,
         **ent,
         "provider": cfg.get("provider"),
-        "polar_configured": cfg["polar"],
-        "stripe_configured": cfg["stripe"],
+        "waffo_configured": bool(cfg.get("waffo")),
+        "polar_configured": bool(cfg.get("polar")),
+        "stripe_configured": bool(cfg.get("stripe")),
     }
 
 
@@ -1259,23 +1279,17 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
 
     # ---- Waffo Pancake（首选）----
     if cfg.get("waffo"):
-        body = {}
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        success_url = (body.get("success_url") or os.getenv("BILLING_SUCCESS_URL") or "").strip()
         if not success_url:
-            # 尽量回前端域名
             origin = (request.headers.get("origin") or "").rstrip("/")
             if origin:
                 success_url = origin + "/?billing=success"
+        uid = user["id"]
         try:
             session = waffo_client.create_checkout_session(
-                buyer_email=(user.get("email") or "").strip().lower(),
-                success_url=success_url,
+                buyer_email=(user.get("email") or "").strip().lower() or None,
+                success_url=success_url or None,
                 order_merchant_external_id=str(uid),
-                metadata={"userId": str(uid), "plan": "pro"},
+                metadata={"userId": str(uid), "user_id": str(uid), "plan": "pro"},
             )
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Waffo 创建结账失败: {e}")
@@ -1392,21 +1406,40 @@ async def billing_webhook(request: Request):
 
     # ---------- Waffo Pancake ----------
     waffo_sig = request.headers.get("X-Waffo-Signature") or request.headers.get("x-waffo-signature")
-    if waffo_sig and waffo_client.load_webhook_public_key_pem():
+    try:
+        _probe = json.loads(body.decode("utf-8") or "{}")
+    except Exception:
+        _probe = {}
+    _etype_probe = (_probe.get("eventType") or _probe.get("type") or _probe.get("event") or "").strip()
+    looks_waffo = bool(waffo_sig) or _etype_probe.startswith(("order.", "subscription.", "refund."))
+    if looks_waffo and (waffo_sig or os.getenv("WAFFO_MERCHANT_ID", "").strip()):
         raw_text = body.decode("utf-8", errors="replace")
-        if not waffo_client.verify_webhook_signature(raw_text, waffo_sig):
-            raise HTTPException(status_code=401, detail="Waffo webhook 签名校验失败")
+        pub = waffo_client.load_webhook_public_key_pem()
+        if pub and waffo_sig:
+            if not waffo_client.verify_webhook_signature(raw_text, waffo_sig):
+                raise HTTPException(status_code=401, detail="Waffo webhook 签名校验失败")
         try:
             event = json.loads(raw_text)
         except Exception:
             raise HTTPException(status_code=400, detail="无效 JSON")
-        etype = (event.get("eventType") or event.get("type") or "").strip()
+        etype = (event.get("eventType") or event.get("type") or event.get("event") or "").strip()
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         uid = waffo_client.extract_uid_from_event(event)
+        if not uid:
+            email = (data.get("buyerEmail") or data.get("buyer_email") or data.get("email") or "").strip().lower()
+            if email and supabase_client.using_supabase():
+                try:
+                    rows = (supabase_client.get_service_client()
+                            .table("profiles").select("id")
+                            .eq("email", email).limit(1).execute())
+                    if rows.data:
+                        uid = rows.data[0]["id"]
+                except Exception:
+                    pass
         order_id = data.get("orderId") or data.get("id") or event.get("id")
         exp = data.get("currentPeriodEnd") or data.get("current_period_end")
         if isinstance(exp, (int, float)):
-            exp = None  # 仅接受 ISO 字符串写入
+            exp = None
 
         activate = etype in (
             "subscription.activated",
@@ -1415,7 +1448,6 @@ async def billing_webhook(request: Request):
             "order.completed",
             "subscription.payment_succeeded",
         )
-        # subscription.updated：仅 active 才升 pro
         if etype == "subscription.updated":
             st = (data.get("orderStatus") or data.get("status") or "").lower()
             if st and st not in ("active", "trialing"):
@@ -1435,7 +1467,6 @@ async def billing_webhook(request: Request):
                     if (prof.get("plan") or "") == "lifetime" or (prof.get("plan_source") or "") == "grandfather":
                         pass
                     elif etype == "subscription.past_due":
-                        # 宽限期：不立即降级，可按需调整
                         pass
                     else:
                         user_store.set_plan(
