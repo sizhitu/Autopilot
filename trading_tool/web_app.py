@@ -42,6 +42,17 @@ from watchlist import (
 from nine_turn import calc_nine_turn_display
 import db
 import auth
+
+
+def _require_pro(authorization: Optional[str] = None):
+    """核心功能门禁：BILLING_REQUIRED 时必须登录且为 pro/lifetime/admin。"""
+    try:
+        auth.ensure_entitled_from_header(authorization)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=402, detail="需要订阅后使用此功能") from e
+
 import mailer
 import daily_store
 import user_store
@@ -609,6 +620,7 @@ async def search_stocks(q: str = Query(..., description="股票代码或名称�
                         request: Request = None,
                         authorization: Optional[str] = Header(None)):
     """搜索股票代码"""
+    _require_pro(authorization)
     _rate_check(authorization, request, "search", 60, 60)
     results = fetcher.search(q)
     return {"success": True, "results": results, "count": len(results)}
@@ -627,6 +639,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
     数据分层：原始 K 线写入缓存层（不落业务库）；实时拉取失败时，
     优先回退行情缓存，再回退每日 K 线缓存，并标记 stale=True 告知前端数据可能延迟。
     """
+    _require_pro(authorization)
     _rate_check(authorization, request, "quote", 20, 60)
     # 命中短时分析结果缓存：直接返回（同一标的重复打开详情页秒开）
     cached_hit = cache.get_quote_cache(req.symbol)
@@ -919,6 +932,7 @@ async def analyze_csv(
     authorization: Optional[str] = Header(None),
 ):
     """分析上传的 CSV 或模拟数据"""
+    _require_pro(authorization)
     _rate_check(authorization, request, "analyze", 10, 60)
     try:
         if use_sample or file is None:
@@ -1009,8 +1023,9 @@ class LadderRequest(BaseModel):
 
 
 @app.post("/api/ladder")
-async def calc_ladder(req: LadderRequest):
+async def calc_ladder(req: LadderRequest, authorization: Optional[str] = Header(None)):
     """藤本茂阶梯仓位计算器"""
+    _require_pro(authorization)
     strategy = FujimotoStrategy()
     change = req.price_change / 100.0
     desc, delta = strategy._fujimoto_action(change, req.current_position)
@@ -1031,8 +1046,9 @@ async def calc_ladder(req: LadderRequest):
 
 
 @app.get("/api/ladder_table")
-async def ladder_table():
+async def ladder_table(authorization: Optional[str] = Header(None)):
     """返回藤本茂完整阶梯表"""
+    _require_pro(authorization)
     return {
         "buy_ladder": [
             {"trigger": "-5%", "action": "不操作", "desc": "噪音区间，不动如山"},
@@ -1066,6 +1082,7 @@ class BacktestRequest(BaseModel):
 async def run_backtest(req: BacktestRequest, request: Request = None,
                        authorization: Optional[str] = Header(None)):
     """执行策略回测"""
+    _require_pro(authorization)
     _rate_check(authorization, request, "backtest", 10, 60)
     try:
         if req.symbol:
@@ -1392,6 +1409,54 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
         status_code=503,
         detail="未配置收款：请设置 POLAR_ACCESS_TOKEN + POLAR_PRODUCT_ID（或 POLAR_CHECKOUT_LINK）",
     )
+
+
+
+@app.post("/api/billing/cancel")
+async def billing_cancel(user: dict = Depends(auth.get_current_user)):
+    """取消订阅（Waffo：到期后失效；lifetime 不可取消）。"""
+    profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
+    plan = (profile.get("plan") or "").lower()
+    source = (profile.get("plan_source") or "").lower()
+    if plan == "lifetime" or source == "grandfather":
+        return {"success": True, "message": "终身用户无需取消"}
+    if plan != "pro":
+        return {"success": True, "message": "当前不是付费订阅"}
+    order_id = (profile.get("stripe_subscription_id") or "").strip()
+    if not order_id:
+        raise HTTPException(status_code=400, detail="未找到订阅订单号，请联系客服处理")
+    if source == "waffo" or order_id.startswith("ORD_"):
+        try:
+            import waffo_client
+            res = waffo_client.api_call(
+                "POST",
+                "/v1/actions/subscription-order/cancel-order",
+                {"orderId": order_id},
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"取消订阅失败: {e}")
+        # 周期结束才降级；本地标记 canceling 仍保持 pro 直到 webhook canceled
+        return {"success": True, "status": "canceling", "raw": res, "message": "已提交取消，权益保留至当前账期结束"}
+    raise HTTPException(status_code=400, detail="当前订阅渠道暂不支持自助取消")
+
+
+@app.get("/api/billing/portal")
+async def billing_portal(user: dict = Depends(auth.get_current_user)):
+    """返回订阅管理信息（状态、订单号、是否可取消）。"""
+    profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
+    ent = user_store.entitlement_from_profile(
+        profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin"))
+    )
+    return {
+        "success": True,
+        **ent,
+        "order_id": profile.get("stripe_subscription_id") or "",
+        "can_cancel": bool(
+            (profile.get("plan") or "").lower() == "pro"
+            and (profile.get("plan_source") or "").lower() not in ("grandfather",)
+            and (profile.get("stripe_subscription_id") or "")
+        ),
+    }
 
 
 @app.post("/api/billing/webhook/waffo")

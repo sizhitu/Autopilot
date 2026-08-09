@@ -177,3 +177,15 @@ def require_entitled(user: dict = None):
             },
         )
     return user
+
+
+def ensure_entitled_from_header(authorization: Optional[str] = None) -> dict:
+    """
+    核心功能门禁：BILLING_REQUIRED 开启时要求登录且 entitled。
+    返回 user dict；未开启门禁时返回空 dict。
+    """
+    import user_store
+    if not user_store.BILLING_REQUIRED:
+        return {}
+    user = get_current_user(authorization)
+    return require_entitled(user)

@@ -422,6 +422,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <span id="userName"><span id="userNameText"></span><span id="userNameTip"></span></span>
       <span id="planBadge" style="display:none;font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);color:var(--text-dim);"></span>
       <button id="btnSubscribe" class="btn btn-sm" style="display:none;background:var(--gold);color:#111;" onclick="startCheckout()">订阅 $9.9/月</button>
+      <button id="btnManageSub" class="btn btn-outline btn-sm" style="display:none;" onclick="openManageSub()">管理订阅</button>
       <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
     </div>
   </div>
@@ -879,6 +880,14 @@ async function apiJSON(path, opts = {}, _retried = false) {
       showToast(detail + '，请重新登录后再试');
       throw new Error(detail);
     }
+    if (res.status === 402) {
+      const detail = (json && json.detail) || {};
+      const msg = (typeof detail === 'object' && detail.message) ? detail.message : (typeof detail === 'string' ? detail : '需要订阅 Pro 后使用此功能');
+      showToast(msg, 'err');
+      const bs = document.getElementById('btnSubscribe');
+      if (bs) bs.style.display = 'inline-flex';
+      throw new Error(msg);
+    }
     if (res.status === 429) {
       showToast('请求过于频繁，请稍后再试');
       throw new Error('请求过于频繁（限流）');
@@ -1315,6 +1324,41 @@ async function finishSession(session, opts = {}) {
   if (!opts.silent) loadWatchlist();
 }
 
+async function refreshPlanFromServer() {
+  try {
+    const res = await api('/api/auth/me');
+    if (!res.ok) return null;
+    const j = await res.json();
+    if (j && j.user) {
+      currentUser = Object.assign(currentUser || {}, j.user);
+      localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
+      refreshAuthUI();
+      return currentUser;
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function openManageSub() {
+  try {
+    const r = await apiJSON('/api/billing/portal');
+    const plan = (r && r.plan) || (currentUser && currentUser.plan) || 'free';
+    const canCancel = !!(r && r.can_cancel);
+    const msg = plan === 'pro'
+      ? (canCancel
+          ? '当前为 Pro 订阅。取消后将在本账期结束后降为免费用户，是否确认取消自动续费？'
+          : '当前为 Pro，但未找到可自助取消的订单号，请联系客服。')
+      : '当前计划：' + plan;
+    if (!canCancel) { showToast(msg, plan === 'pro' ? 'ok' : 'err'); return; }
+    if (!confirm(msg)) return;
+    const c = await apiJSON('/api/billing/cancel', { method: 'POST', body: '{}' });
+    showToast((c && c.message) || '已提交取消', 'ok');
+    await refreshPlanFromServer();
+  } catch (e) {
+    showToast((e && e.message) || '无法管理订阅', 'err');
+  }
+}
+
 async function startCheckout() {
   try {
     const origin = location.origin + location.pathname;
@@ -1325,13 +1369,45 @@ async function startCheckout() {
         cancel_url: origin + '?billing=cancel',
       }),
     });
-    if (r && r.already_entitled) { showToast('已是会员，无需重复订阅', 'ok'); return; }
+    if (r && r.already_entitled) {
+      showToast('已是会员，无需重复订阅', 'ok');
+      await refreshPlanFromServer();
+      return;
+    }
     if (r && r.url) { location.href = r.url; return; }
-    showToast((r && r.detail) || '无法创建支付会话', 'err');
+    showToast((r && (r.detail || r.message)) || '无法创建支付会话', 'err');
   } catch (e) {
     showToast((e && e.message) || '订阅入口暂不可用', 'err');
   }
 }
+
+// 支付成功回跳：轮询 /me 直到 plan=pro（webhook 可能略延迟）
+(function handleBillingReturn() {
+  try {
+    const q = new URLSearchParams(location.search);
+    const billing = q.get('billing');
+    if (billing !== 'success' && billing !== 'cancel') return;
+    q.delete('billing'); q.delete('checkout_id');
+    const clean = location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash;
+    history.replaceState(null, '', clean);
+    if (billing === 'cancel') {
+      setTimeout(() => showToast('已取消支付', 'err'), 300);
+      return;
+    }
+    setTimeout(async () => {
+      showToast('支付成功，正在同步会员状态…', 'ok');
+      for (let i = 0; i < 8; i++) {
+        const u = await refreshPlanFromServer();
+        if (u && (u.plan === 'pro' || u.plan === 'lifetime' || u.entitled)) {
+          showToast('已开通 Pro', 'ok');
+          return;
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      showToast('支付已完成，若仍显示订阅请稍后刷新页面', 'ok');
+    }, 400);
+  } catch (e) {}
+})();
 
 function doLogout() {
   if (sb) sb.auth.signOut().catch(() => {});
@@ -1388,18 +1464,24 @@ function refreshAuthUI() {
     if (tipEl) tipEl.textContent = full;
     if (el) { el.dataset.full = full; el.classList.remove('show-tip'); }
     bindUserNameTip();
-    // 订阅角标：lifetime/pro 提示；仅 billing_required 且未授权时显示订阅按钮
+    // 订阅角标 / 按钮：pro·lifetime 显示徽章；未授权显示订阅；pro 显示管理
     const pb = document.getElementById('planBadge');
     const bs = document.getElementById('btnSubscribe');
+    const bm = document.getElementById('btnManageSub');
     const plan = (currentUser.plan || 'free').toLowerCase();
+    const entitled = currentUser.entitled === true || plan === 'pro' || plan === 'lifetime' || !!currentUser.is_admin;
     if (pb) {
       if (plan === 'lifetime') { pb.style.display = 'inline'; pb.textContent = '终身'; pb.style.color = 'var(--gold)'; }
-      else if (plan === 'pro') { pb.style.display = 'inline'; pb.textContent = 'Pro'; pb.style.color = 'var(--green)'; }
+      else if (plan === 'pro' || (entitled && plan !== 'free')) { pb.style.display = 'inline'; pb.textContent = 'Pro'; pb.style.color = 'var(--green)'; }
       else { pb.style.display = 'none'; }
     }
     if (bs) {
-      const needPay = !!(currentUser.billing_required && currentUser.entitled === false);
+      // 已登录且未授权 → 显示订阅（门禁开启后 free 用户）
+      const needPay = !entitled;
       bs.style.display = needPay ? 'inline-flex' : 'none';
+    }
+    if (bm) {
+      bm.style.display = (plan === 'pro' && !currentUser.is_admin) ? 'inline-flex' : 'none';
     }
     document.getElementById('addWatchRow').style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';

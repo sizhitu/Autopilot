@@ -201,8 +201,18 @@ def list_digest_subscribers() -> list:
 # ---------- 订阅权益（统一 $9.9/月；已注册 grandfather = lifetime）----------
 import os
 
-# 打开后：未授权用户访问受保护接口返回 402
-BILLING_REQUIRED = os.getenv("BILLING_REQUIRED", "").strip().lower() in ("1", "true", "yes", "on")
+# 订阅门禁：显式 0/false 关闭；1/true 开启；未设置时若已配置 Waffo 则自动开启
+_br = os.getenv("BILLING_REQUIRED", "").strip().lower()
+if _br in ("0", "false", "no", "off"):
+    BILLING_REQUIRED = False
+elif _br in ("1", "true", "yes", "on"):
+    BILLING_REQUIRED = True
+else:
+    BILLING_REQUIRED = bool(
+        os.getenv("WAFFO_MERCHANT_ID", "").strip()
+        and os.getenv("WAFFO_PRIVATE_KEY", "").strip()
+        and os.getenv("WAFFO_PRODUCT_ID", "").strip()
+    )
 PRO_PRICE_USD = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
 
 
