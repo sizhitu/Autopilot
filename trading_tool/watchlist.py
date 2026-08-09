@@ -360,14 +360,25 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.timing = "无明确九转"
             status.timing_color = "gray"
 
-        # ---------- 2) 趋势过滤（系统层）----------
+        # ---------- 2) 趋势过滤（均线趋势标签；≠ 系统层是否通过）----------
         trend = status.trend or "震荡"
+        sys_layer = (result.layers_consistent or {}).get("系统层（趋势+指标）") or {}
+        sys_ok = bool(sys_layer.get("通过"))
         if trend == "多头趋势":
-            status.trend_filter = "多头趋势"
-            status.trend_filter_color = "green"
+            if sys_ok:
+                status.trend_filter = "多头趋势"
+                status.trend_filter_color = "green"
+            else:
+                # 均线偏多但加权指标未过 → 与详情页系统层红叉一致
+                status.trend_filter = "多头·指标未齐"
+                status.trend_filter_color = "orange"
         elif trend == "空头趋势":
-            status.trend_filter = "空头趋势"
-            status.trend_filter_color = "red"
+            if sys_ok:
+                status.trend_filter = "空头趋势"
+                status.trend_filter_color = "red"
+            else:
+                status.trend_filter = "空头·指标未齐"
+                status.trend_filter_color = "orange"
         else:
             status.trend_filter = "震荡整理"
             status.trend_filter_color = "gray"

@@ -700,13 +700,29 @@ class FujimotoStrategy:
         # 工具层在震荡中可略放宽：已测试触及也算结构参考
         tool_ok_range = tool_confirmed or tool_tested
 
+        # 系统层状态：区分「仅均线多头」与「系统层通过」
+        if sys_bull or sys_bear:
+            sys_status = f"趋势={trend.value}，{trend_detail}；{sys_wdetail}"
+        elif trend == TrendType.BULL:
+            sys_status = (
+                f"均线已偏多（{trend_detail}），但加权指标未达阈值，系统层未通过；{sys_wdetail}"
+                "。看板「趋势过滤」只反映均线方向，不等于系统层打勾。"
+            )
+        elif trend == TrendType.BEAR:
+            sys_status = (
+                f"均线已偏空（{trend_detail}），但加权指标未达阈值，系统层未通过；{sys_wdetail}"
+                "。看板「趋势过滤」只反映均线方向，不等于系统层打勾。"
+            )
+        else:
+            sys_status = (
+                f"趋势={trend.value}，{trend_detail}；{sys_wdetail}"
+                + ("；震荡市中趋势降权，以时机层为主" if is_range else "")
+            )
+
         layers = {
             "系统层（趋势+指标）": {
                 "通过": sys_bull or sys_bear,
-                "状态": (
-                    f"趋势={trend.value}，{trend_detail}；{sys_wdetail}"
-                    + ("；震荡市中趋势降权，以时机层为主" if is_range else "")
-                )
+                "状态": sys_status
             },
             "工具层（斐波那契反应）": {
                 "通过": tool_confirmed if not is_range else tool_ok_range,
