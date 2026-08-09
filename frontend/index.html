@@ -48,14 +48,20 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .header-auth #userArea.hidden { display:none !important; }
 .header-auth .btn { height:28px; line-height:1; padding:0 12px; display:inline-flex; align-items:center; justify-content:center; }
 .header-auth .btn-sm { height:28px; padding:0 10px; font-size:11px; }
-#userName {
-  height:28px; max-width:140px; padding:0 10px;
+#userName, .user-pill {
+  height:28px; max-width:168px; padding:0 10px; gap:6px;
   display:inline-flex; align-items:center;
   font-size:11px; color:var(--text); font-weight:500;
-  background:var(--bg); border:1px solid var(--border); border-radius:4px;
+  background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.12));
+  border:1px solid var(--border); border-radius:999px;
   overflow:hidden; white-space:nowrap; cursor:pointer;
   position:relative; user-select:none; -webkit-tap-highlight-color:transparent;
-  box-sizing:border-box;
+  box-sizing:border-box; font-family:inherit;
+}
+#userName:hover, .user-pill:hover { border-color:var(--gold); color:var(--gold); }
+#userName .plan-chip, #planBadge.plan-chip {
+  font-size:9px; font-weight:700; padding:1px 6px; border-radius:999px;
+  border:1px solid currentColor; letter-spacing:.3px; flex-shrink:0;
 }
 #userNameText {
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px;
@@ -419,10 +425,14 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <button class="btn btn-sm" onclick="openRegister()">注册</button>
     </div>
     <div id="userArea" class="hidden">
-      <span id="userName"><span id="userNameText"></span><span id="userNameTip"></span></span>
-      <span id="planBadge" role="button" title="查看订阅" style="display:none;font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);color:var(--text-dim);cursor:pointer;" onclick="openManageSub()"></span>
-      <button id="btnSubscribe" class="btn btn-sm" style="display:none;background:var(--gold);color:#111;" onclick="openUpgradeModal()">升级</button>
-      <button id="btnManageSub" class="btn btn-outline btn-sm" style="display:none;" onclick="openManageSub()">订阅</button>
+      <button type="button" id="userName" class="user-pill" title="订阅与账号" onclick="openManageSub()">
+        <span id="userNameText"></span>
+        <span id="planBadge" class="plan-chip" style="display:none;"></span>
+        <span id="userNameTip"></span>
+      </button>
+      <!-- 保留隐藏节点兼容旧脚本 -->
+      <button id="btnSubscribe" type="button" style="display:none !important;" aria-hidden="true"></button>
+      <button id="btnManageSub" type="button" style="display:none !important;" aria-hidden="true"></button>
       <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
     </div>
   </div>
@@ -526,8 +536,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 <!-- 自选看板视图 -->
 <div id="watchlistView" style="padding:10px;">
   <div id="demoDataBanner" style="display:none;margin:0 0 10px;padding:10px 12px;border-radius:8px;border:1px solid var(--gold);background:rgba(201,162,39,.12);font-size:12px;color:var(--text);line-height:1.5;">
-    <b style="color:var(--gold);">演示数据</b>：当前为免费体验，下表为模拟行情与信号，仅供了解产品形态。
-    <a href="javascript:void(0)" onclick="openUpgradeModal()" style="color:var(--gold);margin-left:8px;text-decoration:underline;">升级 Pro</a> 后可查看真实行情、自选分析与回测。
+    <b style="color:var(--gold);">免费体验</b>：固定 <b>AAPL / TSLA / 600519</b> 三只<strong>真实行情</strong>（服务端缓存）。点击可进入分析；添加或搜索其他代码请
+    <a href="javascript:void(0)" onclick="openUpgradeModal()" style="color:var(--gold);margin-left:4px;text-decoration:underline;">升级套餐</a>。
   </div>
 
   <div class="card" style="margin-bottom:8px;">
@@ -1626,8 +1636,7 @@ function bindUserNameTip() {
   el.addEventListener('mouseleave', hide);
   el.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!el.dataset.full) return;
-    el.classList.toggle('show-tip');
+    try { openManageSub(); } catch (_) {}
   });
   // 点页面其它地方关闭（移动端）
   document.addEventListener('click', (e) => {
@@ -1658,22 +1667,14 @@ function refreshAuthUI() {
     if (plan === 'basic') plan = 'pro';
     const entitled = currentUser.entitled === true || plan === 'pro' || plan === 'plus' || plan === 'lifetime' || !!currentUser.is_admin;
     if (pb) {
-      if (plan === 'lifetime') { pb.style.display = 'inline'; pb.textContent = '终身'; pb.style.color = 'var(--gold)'; }
-      else if (plan === 'plus') { pb.style.display = 'inline'; pb.textContent = 'Plus'; pb.style.color = 'var(--gold)'; }
-      else if (plan === 'pro') { pb.style.display = 'inline'; pb.textContent = 'Pro'; pb.style.color = 'var(--green)'; }
-      else { pb.style.display = 'none'; }
+      if (plan === 'lifetime') { pb.style.display = 'inline'; pb.textContent = '终身'; pb.style.color = 'var(--gold)'; pb.style.borderColor = 'var(--gold)'; }
+      else if (plan === 'plus') { pb.style.display = 'inline'; pb.textContent = 'Plus'; pb.style.color = 'var(--gold)'; pb.style.borderColor = 'var(--gold)'; }
+      else if (plan === 'pro' || plan === 'basic') { pb.style.display = 'inline'; pb.textContent = 'Pro'; pb.style.color = 'var(--green)'; pb.style.borderColor = 'var(--green)'; }
+      else { pb.style.display = 'inline'; pb.textContent = '免费'; pb.style.color = 'var(--text-dim)'; pb.style.borderColor = 'var(--border)'; }
     }
-    if (bs) {
-      // 免费：升级；Basic：可升级到 Plus；Plus/终身：隐藏
-      if (!entitled || plan === 'free') { bs.style.display = 'inline-flex'; bs.textContent = '升级'; }
-      else if (plan === 'pro') { bs.style.display = 'inline-flex'; bs.textContent = '升级 Plus'; }
-      else { bs.style.display = 'none'; }
-    }
-    if (bm) {
-      // 登录用户始终可进「订阅」面板（免费可升级，付费可取消/退费）
-      bm.style.display = 'inline-flex';
-      bm.textContent = (plan === 'free' || !entitled) ? '订阅' : '订阅管理';
-    }
+    // 订阅入口已合并到用户名圆角按钮，不再单独展示升级/订阅按钮
+    if (bs) bs.style.display = 'none';
+    if (bm) bm.style.display = 'none';
     // 邮件推送开关：无 can_digest 时禁用
     const digEn = document.getElementById('digestEnabled');
     if (digEn) {
@@ -2246,6 +2247,12 @@ async function submitContact() {
 function isCodeLike(s) { return /^[A-Za-z0-9.\-^]+$/.test(s); }
 
 async function searchStock(opts = {}) {
+  // 免费用户：搜索即引导升级（live 联想可继续，点结果前再拦）
+  if (isFreeUser() && !opts.live) {
+    openUpgradeModal();
+    showToast('升级后可搜索并分析任意标的', 'ok');
+    return;
+  }
   const live = !!opts.live;                       // live=true 时（边打字边搜）不做自动跳转
   const q = document.getElementById('searchInput').value.trim();
   const box = document.getElementById('searchResults');
@@ -2341,6 +2348,8 @@ function optimisticWatchInsert(code, name) {
 }
 
 async function addWatch() {
+  if (isFreeUser()) { openUpgradeModal(); showToast('免费版仅体验固定三只标的，升级后可添加自选', 'ok'); return; }
+
   const inp = document.getElementById('watchInput');
   const raw = inp.value.trim();
   if (!raw) { showToast('请输入股票代码或名称'); return; }
@@ -2365,6 +2374,7 @@ async function addWatch() {
 }
 // 从下拉直接点选后添加（无需再解析）
 async function addWatchResolved(code, name) {
+  if (isFreeUser()) { openUpgradeModal(); showToast('免费版仅体验固定三只标的，升级后可添加自选', 'ok'); return; }
   try {
     await apiJSON('/api/watchlist/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: code, name: name || '' }) });
     document.getElementById('watchInput').value = '';
@@ -2405,6 +2415,7 @@ document.getElementById('watchInput').addEventListener('input', () => {
 
 // === 获取行情 ===
 async function fetchQuote(symbol, name, market) {
+  if (isFreeUser() && arguments[0] && !["AAPL","TSLA","600519"].includes(String(arguments[0]).toUpperCase()) && String(arguments[0])!=="600519") { openUpgradeModal(); showToast("升级后可分析任意标的","ok"); return; }
   document.getElementById('searchResults').style.display = 'none';
   document.getElementById('chartMeta').textContent = '获取数据中...';
   currentSymbol = symbol;
@@ -2691,8 +2702,18 @@ let _wlPendingForce = false;
 const _WL_MAX_POLL = 12;  // 最多轮询次数，避免长时间空刷
 
 
+function isFreeUser() {
+  if (!currentUser) return true;
+  if (currentUser.is_admin) return false;
+  const plan = String((currentUser.plan || 'free')).toLowerCase();
+  if (plan === 'pro' || plan === 'plus' || plan === 'lifetime' || plan === 'basic') return false;
+  if (currentUser.entitled === true) return false;
+  return true;
+}
+
 function isDemoMode() {
-  if (!currentUser) return true; // 未登录也展示演示数据，页面不空白
+
+  if (!currentUser) return true; // 未登录也展示免费体验·固定三只真实行情，页面不空白
   const plan = String((currentUser.plan || 'free')).toLowerCase();
   if (plan === 'pro' || plan === 'plus' || plan === 'lifetime' || plan === 'basic') return false;
   if (currentUser.is_admin) return false;
@@ -2780,18 +2801,31 @@ async function _loadWatchlistBody(forceRefresh) {
     loading.classList.remove('hidden');
   }
   try {
-    // 免费 / 未登录：展示模拟看板，避免页面空白、接口 402 后体验差
+    // 免费 / 未登录：固定三只真实行情（服务端缓存），可点进分析
     if (isDemoMode()) {
-      const stocks = getDemoWatchlistRows();
-      watchNotes = {};
-      _lastWatchRows = stocks;
-      _lastWatchSig = _watchRowsSig(stocks);
-      setDemoBanner(true);
-      renderWatchlist(stocks);
-      renderWatchlistSummary({ count: stocks.length, demo: true });
-      setWatchUpdatedLabel({ computing: false, updated_at: '演示数据', demo: true });
-      loading.classList.add('hidden');
-      return;
+      try {
+        const res = await api('/api/watchlist/free-preview' + (forceRefresh ? '?refresh=1' : ''));
+        const json = await res.json();
+        let stocks = (json && json.stocks) ? json.stocks : [];
+        if (!stocks.length) stocks = getDemoWatchlistRows(); // 极端失败时兜底
+        watchNotes = {};
+        _lastWatchRows = stocks;
+        _lastWatchSig = _watchRowsSig(stocks);
+        setDemoBanner(true);
+        renderWatchlist(stocks);
+        renderWatchlistSummary(json.summary || { count: stocks.length, free_preview: true });
+        setWatchUpdatedLabel({ computing: false, updated_at: (json && json.updated_at) || '免费体验·真实行情', demo: true });
+        loading.classList.add('hidden');
+        return;
+      } catch (e) {
+        const stocks = getDemoWatchlistRows();
+        watchNotes = {};
+        _lastWatchRows = stocks;
+        setDemoBanner(true);
+        renderWatchlist(stocks);
+        loading.classList.add('hidden');
+        return;
+      }
     }
     setDemoBanner(false);
     const res = await api('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''));

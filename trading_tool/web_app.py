@@ -783,6 +783,63 @@ async def get_daily(symbol: str, limit: int = Query(0, description="0=全部，>
 # ================================================================
 #  自选看板 API（按用户）
 # ================================================================
+
+@app.get("/api/watchlist/free-preview")
+async def watchlist_free_preview(refresh: bool = False):
+    """免费用户固定三只真实行情（服务端缓存），避免静态假数据。"""
+    import time as _time
+    from watchlist import _status_dict_cached
+
+    items = [
+        ("AAPL", "苹果"),
+        ("TSLA", "特斯拉"),
+        ("600519", "贵州茅台"),
+    ]
+    # 进程内缓存 6 小时；refresh=1 强制重算
+    global _FREE_PREVIEW_CACHE
+    try:
+        _FREE_PREVIEW_CACHE
+    except NameError:
+        _FREE_PREVIEW_CACHE = {"ts": 0, "data": None}
+
+    now = _time.time()
+    if (not refresh) and _FREE_PREVIEW_CACHE.get("data") and (now - float(_FREE_PREVIEW_CACHE.get("ts") or 0) < 6 * 3600):
+        payload = dict(_FREE_PREVIEW_CACHE["data"])
+        payload["cached"] = True
+        return JSONResponse(content=_to_jsonable(payload),
+                            headers={"Cache-Control": "public, max-age=300"})
+
+    stocks = []
+    for code, name in items:
+        try:
+            row = _status_dict_cached(code, name, 160)
+            if isinstance(row, dict):
+                row = dict(row)
+                row["pending"] = False
+                row["demo"] = False
+                row["free_fixed"] = True
+                stocks.append(row)
+        except Exception as e:
+            stocks.append({
+                "code": code, "name": name, "market": "美股" if not str(code).isdigit() else "A股",
+                "price": "-", "error": str(e)[:40], "pending": False, "free_fixed": True,
+            })
+    data = {
+        "success": True,
+        "stocks": stocks,
+        "count": len(stocks),
+        "total": len(stocks),
+        "computing": False,
+        "free_preview": True,
+        "updated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+        "notes": {},
+        "summary": {"count": len(stocks), "free_preview": True},
+    }
+    _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
+    return JSONResponse(content=_to_jsonable(data),
+                        headers={"Cache-Control": "public, max-age=300"})
+
+
 @app.get("/api/watchlist")
 async def get_watchlist(refresh: bool = False, user: Optional[dict] = Depends(_optional_user),
                         authorization: Optional[str] = Header(None)):
