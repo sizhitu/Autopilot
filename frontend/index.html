@@ -513,6 +513,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <th style="padding:6px 2px;" title="均线趋势方向；「指标未齐」表示系统层加权未过，与详情红叉一致">趋势过滤</th>
           <th style="padding:6px 2px;" title="时机×趋势综合建议（非投资建议）">操盘动作</th>
           <th style="padding:6px 2px;">新高/估值</th>
+          <th style="padding:6px 2px;" title="分析师目标价均值及相对现价涨幅空间%；无数据为 --">分析师均价</th>
         </tr>
       </thead>
       <tbody id="watchlistBody"></tbody>
@@ -2602,7 +2603,7 @@ function renderWatchlist(stocks) {
       if (up != null && up !== '' && !isNaN(Number(up))) {
         const upn = Number(up);
         const uc = upn >= 0 ? 'var(--red)' : 'var(--green)';
-        upPart = ` <span style="color:${uc};font-weight:600;">${upn >= 0 ? '+' : ''}${upn.toFixed(1)}%</span>`;
+        upPart = ` <span style="color:${uc};font-weight:600;">${upn >= 0 ? '+' : ''}${upn.toFixed(2)}%</span>`;
       }
       analystHtml = `<span style="font-family:monospace;">${Number(s.analyst_target).toFixed(2)}</span>${upPart}`;
     }

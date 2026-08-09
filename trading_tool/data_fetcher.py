@@ -978,70 +978,224 @@ class DataFetcher:
             return f"{code}.SS"
         return s.upper().replace('.', '-')
 
-    def _fetch_yahoo_target_mean(self, ysym: str):
-        """Yahoo financialData.targetMeanPrice。"""
-        if _yahoo_in_cooldown():
+    def _parse_yahoo_price_field(self, obj):
+        """Yahoo 字段可能是数字或 {raw, fmt}。"""
+        if obj is None:
             return None
+        if isinstance(obj, dict):
+            obj = obj.get("raw", obj.get("fmt"))
         try:
-            r = self.session.get(
-                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ysym}",
-                params={"modules": "financialData"},
-                timeout=10,
-            )
-            if r.status_code == 429:
-                _trigger_yahoo_cooldown()
+            if obj is None or obj == "N/A":
                 return None
-            if r.status_code != 200:
-                return None
-            result = (r.json().get("quoteSummary") or {}).get("result")
-            if not result:
-                return None
-            fd = result[0].get("financialData") or {}
-            tm = fd.get("targetMeanPrice")
-            if isinstance(tm, dict):
-                tm = tm.get("raw")
-            if tm is None:
-                return None
-            v = float(tm)
+            v = float(str(obj).replace(",", "").replace("%", "").strip())
             return v if v > 0 else None
         except Exception:
             return None
 
+    def _fetch_yahoo_target_mean(self, ysym: str):
+        """Yahoo 目标均价：多域名 + 多 module 兜底。"""
+        if _yahoo_in_cooldown():
+            return None
+        domains = [
+            "query2.finance.yahoo.com",
+            "query1.finance.yahoo.com",
+        ]
+        module_sets = [
+            "financialData",
+            "financialData,defaultKeyStatistics",
+            "upgradeDowngradeHistory,financialData",
+        ]
+        headers = {
+            "User-Agent": _rotate_ua() if "_rotate_ua" in dir() else self.session.headers.get("User-Agent", "Mozilla/5.0"),
+            "Accept": "application/json",
+        }
+        try:
+            headers["User-Agent"] = _rotate_ua()
+        except Exception:
+            pass
+
+        for domain in domains:
+            for modules in module_sets:
+                try:
+                    r = self.session.get(
+                        f"https://{domain}/v10/finance/quoteSummary/{ysym}",
+                        params={"modules": modules, "corsDomain": "finance.yahoo.com"},
+                        headers=headers,
+                        timeout=12,
+                    )
+                    if r.status_code == 429:
+                        _trigger_yahoo_cooldown()
+                        return None
+                    if r.status_code != 200:
+                        continue
+                    payload = r.json()
+                    result = (payload.get("quoteSummary") or {}).get("result")
+                    if not result:
+                        # 有的错误写在 quoteSummary.error
+                        continue
+                    row = result[0] or {}
+                    fd = row.get("financialData") or {}
+                    for key in ("targetMeanPrice", "targetMedianPrice", "targetHighPrice"):
+                        v = self._parse_yahoo_price_field(fd.get(key))
+                        if v is not None:
+                            return v
+                    # defaultKeyStatistics 偶发字段
+                    dks = row.get("defaultKeyStatistics") or {}
+                    for key in ("targetMeanPrice", "targetMedianPrice"):
+                        v = self._parse_yahoo_price_field(dks.get(key))
+                        if v is not None:
+                            return v
+                except Exception:
+                    continue
+        return None
+
     def _fetch_em_target_mean(self, symbol: str):
-        """东方财富一致预期目标价（A股），失败返回 None。"""
+        """东方财富一致预期目标价（A股），多报表名兜底。"""
         try:
             s = symbol.strip()
             code = s
             if not s.isdigit():
                 ns = self._normalize_cn_symbol(s)
-                code = ns[2:] if len(ns) > 2 else ns
-            if not (code.isdigit() and len(code) == 6):
+                code = ns[2:] if len(ns) > 2 and ns[:2] in ("sh", "sz", "bj") else ns
+            if not (str(code).isdigit() and len(str(code)) == 6):
                 return None
+            code = str(code)
             url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-            params = {
-                "reportName": "RPT_WEB_RESPREDICT",
-                "columns": "SECURITY_CODE,TARGET_PRICE_AVG,RATING_ORG_NUM",
-                "filter": f'(SECURITY_CODE="{code}")',
-                "pageNumber": "1",
-                "pageSize": "1",
-                "source": "WEB",
-                "client": "WEB",
+            report_names = [
+                "RPT_WEB_RESPREDICT",
+                "RPT_RES_ORGTARGETPRICE",
+                "RPT_ORG_TARGETPRICE",
+            ]
+            col_candidates = [
+                "ALL",
+                "SECURITY_CODE,DEC_AIMPRICEMAX,DEC_AIMPRICEMIN,RATING_ORG_NUM",
+                "SECURITY_CODE,TARGET_PRICE_AVG,RATING_ORG_NUM",
+            ]
+            headers = {
+                "Referer": "https://data.eastmoney.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             }
+            for report in report_names:
+                for columns in col_candidates:
+                    try:
+                        r = self.session.get(
+                            url,
+                            params={
+                                "reportName": report,
+                                "columns": columns,
+                                "filter": f'(SECURITY_CODE="{code}")',
+                                "pageNumber": "1",
+                                "pageSize": "5",
+                                "source": "WEB",
+                                "client": "WEB",
+                            },
+                            headers=headers,
+                            timeout=12,
+                        )
+                        if r.status_code != 200:
+                            continue
+                        js = r.json()
+                        data = (js.get("result") or {}).get("data") or []
+                        if not data:
+                            continue
+                        row = data[0]
+                        # 东财一致预期常用：目标价区间中值
+                        mx, mn = row.get("DEC_AIMPRICEMAX"), row.get("DEC_AIMPRICEMIN")
+                        try:
+                            if mx is not None and mn is not None:
+                                v = (float(mx) + float(mn)) / 2.0
+                                if v > 0:
+                                    return v
+                        except Exception:
+                            pass
+                        for k in (
+                            "TARGET_PRICE_AVG",
+                            "AVG_TARGET_PRICE",
+                            "TARGET_PRICE",
+                            "PRICE_AVG",
+                            "AVGPRICE",
+                            "DEC_AIMPRICEMAX",
+                            "DEC_AIMPRICEMIN",
+                        ):
+                            if row.get(k) is None:
+                                continue
+                            try:
+                                v = float(row[k])
+                                if v > 0:
+                                    return v
+                            except Exception:
+                                continue
+                    except Exception:
+                        continue
+            # F10 研报页接口兜底
+            try:
+                ns = self._normalize_cn_symbol(symbol)
+                em_code = ("SH" + ns[2:]) if ns.startswith("sh") else ("SZ" + ns[2:]) if ns.startswith("sz") else None
+                if em_code:
+                    r2 = self.session.get(
+                        "https://emweb.securities.eastmoney.com/PC_HSF10/ResearchReport/PageAjax",
+                        params={"code": em_code},
+                        headers=headers,
+                        timeout=12,
+                    )
+                    if r2.status_code == 200:
+                        js2 = r2.json()
+                        # 常见字段：yjyg / zxzb 等，尽量解析均价
+                        for block_name in ("yjyg", "zxzb", "jgyc", "data"):
+                            block = js2.get(block_name)
+                            if not block:
+                                continue
+                            rows = block if isinstance(block, list) else [block]
+                            vals = []
+                            for it in rows[:20]:
+                                if not isinstance(it, dict):
+                                    continue
+                                for k, v in it.items():
+                                    kl = str(k).lower()
+                                    if "target" in kl or "mbj" in kl or "目标" in str(k):
+                                        try:
+                                            fv = float(v)
+                                            if fv > 0:
+                                                vals.append(fv)
+                                        except Exception:
+                                            pass
+                            if vals:
+                                return sum(vals) / len(vals)
+            except Exception:
+                pass
+            return None
+        except Exception:
+            return None
+
+    def _fetch_nasdaq_target_mean(self, symbol: str):
+        """Nasdaq 分析师一致目标价（美股较稳）。"""
+        try:
+            sym = symbol.strip().upper().replace('.', '-')
+            if not sym or sym.startswith('^'):
+                return None
             r = self.session.get(
-                url,
-                params=params,
-                timeout=10,
-                headers={"Referer": "https://data.eastmoney.com/"},
+                f"https://api.nasdaq.com/api/analyst/{sym}/targetprice",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "application/json, text/plain, */*",
+                    "Origin": "https://www.nasdaq.com",
+                    "Referer": f"https://www.nasdaq.com/market-activity/stocks/{sym.lower()}/analyst-target-price",
+                },
+                timeout=12,
             )
             if r.status_code != 200:
                 return None
-            data = (r.json().get("result") or {}).get("data") or []
-            if not data:
+            data = (r.json() or {}).get("data") or {}
+            overview = data.get("consensusOverview") or {}
+            pt = overview.get("priceTarget")
+            if pt is None:
+                # 历史共识最新点
+                hist = data.get("historicalConsensus") or []
+                if hist:
+                    pt = (hist[-1].get("y") if isinstance(hist[-1], dict) else None)
+            if pt is None:
                 return None
-            avg = data[0].get("TARGET_PRICE_AVG")
-            if avg is None:
-                return None
-            v = float(avg)
+            v = float(pt)
             return v if v > 0 else None
         except Exception:
             return None
@@ -1049,7 +1203,8 @@ class DataFetcher:
     def fetch_analyst_mean_target(self, symbol: str):
         """
         分析师目标价均值。无数据返回 None。
-        美股/部分标的：Yahoo targetMeanPrice；A股优先东财一致预期，再试 Yahoo。
+        A股：东财多源 → Yahoo；美股：Yahoo 多域名。
+        成功缓存 6h；失败短缓存 20min，避免空结果长期占坑。
         """
         global _ANALYST_CACHE
         sym = (symbol or "").strip()
@@ -1058,16 +1213,25 @@ class DataFetcher:
         key = sym.upper()
         now = time.time()
         hit = _ANALYST_CACHE.get(key)
-        if hit and now - hit[0] < _ANALYST_CACHE_TTL:
-            return hit[1]
+        if hit:
+            ts, val = hit[0], hit[1]
+            ttl = _ANALYST_CACHE_TTL if val is not None else 20 * 60
+            if now - ts < ttl:
+                return val
 
         mean = None
         try:
             if self._is_cn_stock(sym):
                 mean = self._fetch_em_target_mean(sym)
-            if mean is None:
-                ysym = self._yahoo_symbol(sym)
-                mean = self._fetch_yahoo_target_mean(ysym)
+                if mean is None:
+                    ysym = self._yahoo_symbol(sym)
+                    mean = self._fetch_yahoo_target_mean(ysym)
+            else:
+                # 美股：Nasdaq 优先（无需 Yahoo crumb），再 Yahoo
+                mean = self._fetch_nasdaq_target_mean(sym)
+                if mean is None:
+                    ysym = self._yahoo_symbol(sym)
+                    mean = self._fetch_yahoo_target_mean(ysym)
         except Exception:
             mean = None
 

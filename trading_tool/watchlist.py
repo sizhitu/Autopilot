@@ -477,7 +477,7 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             tgt = fetcher.fetch_analyst_mean_target(code)
             if tgt and last_close and last_close > 0:
                 status.analyst_target = round(float(tgt), 2)
-                status.analyst_upside_pct = round((float(tgt) / float(last_close) - 1.0) * 100.0, 1)
+                status.analyst_upside_pct = round((float(tgt) / float(last_close) - 1.0) * 100.0, 2)
             else:
                 status.analyst_target = None
                 status.analyst_upside_pct = None
