@@ -420,6 +420,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     </div>
     <div id="userArea" class="hidden">
       <span id="userName"><span id="userNameText"></span><span id="userNameTip"></span></span>
+      <span id="planBadge" style="display:none;font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);color:var(--text-dim);"></span>
+      <button id="btnSubscribe" class="btn btn-sm" style="display:none;background:var(--gold);color:#111;" onclick="startCheckout()">订阅 $9.9/月</button>
       <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
     </div>
   </div>
@@ -1313,6 +1315,24 @@ async function finishSession(session, opts = {}) {
   if (!opts.silent) loadWatchlist();
 }
 
+async function startCheckout() {
+  try {
+    const origin = location.origin + location.pathname;
+    const r = await apiJSON('/api/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify({
+        success_url: origin + '?billing=success',
+        cancel_url: origin + '?billing=cancel',
+      }),
+    });
+    if (r && r.already_entitled) { showToast('已是会员，无需重复订阅', 'ok'); return; }
+    if (r && r.url) { location.href = r.url; return; }
+    showToast((r && r.detail) || '无法创建支付会话', 'err');
+  } catch (e) {
+    showToast((e && e.message) || '订阅入口暂不可用', 'err');
+  }
+}
+
 function doLogout() {
   if (sb) sb.auth.signOut().catch(() => {});
   teardownRealtime();
@@ -1368,6 +1388,19 @@ function refreshAuthUI() {
     if (tipEl) tipEl.textContent = full;
     if (el) { el.dataset.full = full; el.classList.remove('show-tip'); }
     bindUserNameTip();
+    // 订阅角标：lifetime/pro 提示；仅 billing_required 且未授权时显示订阅按钮
+    const pb = document.getElementById('planBadge');
+    const bs = document.getElementById('btnSubscribe');
+    const plan = (currentUser.plan || 'free').toLowerCase();
+    if (pb) {
+      if (plan === 'lifetime') { pb.style.display = 'inline'; pb.textContent = '终身'; pb.style.color = 'var(--gold)'; }
+      else if (plan === 'pro') { pb.style.display = 'inline'; pb.textContent = 'Pro'; pb.style.color = 'var(--green)'; }
+      else { pb.style.display = 'none'; }
+    }
+    if (bs) {
+      const needPay = !!(currentUser.billing_required && currentUser.entitled === false);
+      bs.style.display = needPay ? 'inline-flex' : 'none';
+    }
     document.getElementById('addWatchRow').style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';
     const dw = document.getElementById('digestToggleWrap');

@@ -363,6 +363,8 @@ async def api_me(request: Request, user: dict = Depends(auth.get_current_user)):
     except Exception:
         pass
     digest = user_store.get_digest_prefs(user["id"])
+    is_adm = bool(profile.get("is_admin") or user.get("is_admin"))
+    ent = user_store.entitlement_from_profile(profile, is_admin_user=is_adm)
     return {
         "success": True,
         "user": {
@@ -370,13 +372,19 @@ async def api_me(request: Request, user: dict = Depends(auth.get_current_user)):
             "email": user.get("email", ""),
             "display_name": profile.get("display_name") or (user.get("email", "").split("@")[0]),
             "verified": True,
-            "is_admin": bool(profile.get("is_admin") or user.get("is_admin")),
+            "is_admin": is_adm,
             "digest_enabled": digest.get("enabled", False),
             "digest_freq": digest.get("freq", "weekly"),
             "last_login_at": profile.get("last_login_at"),
             "last_seen_at": profile.get("last_seen_at"),
             "last_login_country": profile.get("last_login_country"),
             "login_count": int(profile.get("login_count") or 0),
+            "plan": ent.get("plan"),
+            "plan_source": ent.get("plan_source"),
+            "entitled": ent.get("entitled"),
+            "billing_required": ent.get("billing_required"),
+            "price_usd": ent.get("price_usd"),
+            "plan_expires_at": ent.get("plan_expires_at"),
         },
     }
 
@@ -1111,3 +1119,139 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(app, host=host, port=port)
+
+
+# ========== 订阅 / Stripe（统一 $9.9/月；已注册用户 lifetime 不受影响）==========
+@app.get("/api/billing/status")
+async def billing_status(user: dict = Depends(auth.get_current_user)):
+    profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
+    ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin")))
+    return {"success": True, **ent, "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY"))}
+
+
+@app.post("/api/billing/checkout")
+async def billing_checkout(request: Request, user: dict = Depends(auth.get_current_user)):
+    """创建 Stripe Checkout Session（需配置 STRIPE_SECRET_KEY + STRIPE_PRICE_ID）。"""
+    secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    price_id = os.getenv("STRIPE_PRICE_ID", "").strip()
+    if not secret or not price_id:
+        raise HTTPException(status_code=503, detail="服务端未配置 Stripe（STRIPE_SECRET_KEY / STRIPE_PRICE_ID）")
+    try:
+        import stripe
+        stripe.api_key = secret
+    except ImportError:
+        raise HTTPException(status_code=503, detail="未安装 stripe 包，请 pip install stripe")
+
+    profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
+    # 已终身/管理员无需再买
+    ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin")))
+    if ent.get("plan") in ("lifetime", "pro") and ent.get("entitled"):
+        return {"success": True, "already_entitled": True, "plan": ent.get("plan")}
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    success_url = (body.get("success_url") or os.getenv("BILLING_SUCCESS_URL") or "https://example.com/?billing=success").strip()
+    cancel_url = (body.get("cancel_url") or os.getenv("BILLING_CANCEL_URL") or "https://example.com/?billing=cancel").strip()
+
+    customer_id = profile.get("stripe_customer_id")
+    kwargs = {
+        "mode": "subscription",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "client_reference_id": user["id"],
+        "metadata": {"user_id": user["id"], "email": user.get("email") or ""},
+    }
+    if customer_id:
+        kwargs["customer"] = customer_id
+    else:
+        kwargs["customer_email"] = user.get("email") or None
+
+    session = stripe.checkout.Session.create(**{k: v for k, v in kwargs.items() if v is not None})
+    return {"success": True, "url": session.url, "session_id": session.id}
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request):
+    """Stripe Webhook：checkout.session.completed / subscription 变更 → 更新 plan。"""
+    secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    wh_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Stripe 未配置")
+    try:
+        import stripe
+        stripe.api_key = secret
+    except ImportError:
+        raise HTTPException(status_code=503, detail="未安装 stripe")
+
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    if wh_secret:
+        try:
+            event = stripe.Webhook.construct_event(payload, sig, wh_secret)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Webhook 签名校验失败: {e}")
+    else:
+        import json
+        event = stripe.Event.construct_from(json.loads(payload), secret)
+
+    etype = event.get("type") if isinstance(event, dict) else event["type"]
+    data = event.get("data", {}).get("object", {}) if isinstance(event, dict) else event["data"]["object"]
+
+    def _uid_from(obj):
+        return (obj.get("client_reference_id")
+                or (obj.get("metadata") or {}).get("user_id")
+                or "")
+
+    if etype == "checkout.session.completed":
+        uid = _uid_from(data)
+        sub_id = data.get("subscription")
+        cust = data.get("customer")
+        if uid:
+            user_store.set_plan(
+                uid, plan="pro", plan_source="stripe",
+                stripe_customer_id=cust, stripe_subscription_id=sub_id,
+            )
+    elif etype in ("customer.subscription.updated", "customer.subscription.deleted"):
+        status = data.get("status")
+        cust = data.get("customer")
+        sub_id = data.get("id")
+        uid = (data.get("metadata") or {}).get("user_id") or ""
+        # 无 metadata 时按 customer 反查
+        if not uid and cust and supabase_client.using_supabase():
+            try:
+                rows = (supabase_client.get_service_client()
+                        .table("profiles").select("id")
+                        .eq("stripe_customer_id", cust).limit(1).execute())
+                if rows.data:
+                    uid = rows.data[0]["id"]
+            except Exception:
+                pass
+        if uid:
+            if status in ("active", "trialing"):
+                exp = None
+                try:
+                    period_end = data.get("current_period_end")
+                    if period_end:
+                        from datetime import datetime, timezone
+                        exp = datetime.fromtimestamp(int(period_end), tz=timezone.utc).isoformat()
+                except Exception:
+                    exp = None
+                user_store.set_plan(uid, plan="pro", plan_source="stripe",
+                                   stripe_customer_id=cust, stripe_subscription_id=sub_id,
+                                   plan_expires_at=exp)
+            else:
+                # 取消/过期：lifetime 不降级
+                try:
+                    prof = user_store.get_or_create_profile(uid)
+                    if (prof.get("plan") or "") == "lifetime" or (prof.get("plan_source") or "") == "grandfather":
+                        pass
+                    else:
+                        user_store.set_plan(uid, plan="free", plan_source="stripe",
+                                           stripe_customer_id=cust, stripe_subscription_id=sub_id)
+                except Exception:
+                    user_store.set_plan(uid, plan="free", plan_source="stripe")
+    return {"received": True}

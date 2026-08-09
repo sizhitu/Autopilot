@@ -196,3 +196,101 @@ def list_digest_subscribers() -> list:
             "last_sent": prefs.get("last_sent"),
         })
     return out
+
+
+# ---------- 订阅权益（统一 $9.9/月；已注册 grandfather = lifetime）----------
+import os
+
+# 打开后：未授权用户访问受保护接口返回 402
+BILLING_REQUIRED = os.getenv("BILLING_REQUIRED", "").strip().lower() in ("1", "true", "yes", "on")
+PRO_PRICE_USD = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
+
+
+def entitlement_from_profile(profile: dict = None, is_admin_user: bool = False) -> dict:
+    """
+    计算用户权益。
+    plan: free | pro | lifetime
+    entitled: 是否可使用完整功能
+    """
+    p = profile or {}
+    plan = (p.get("plan") or "free").strip().lower()
+    source = (p.get("plan_source") or "default").strip().lower()
+    if is_admin_user or p.get("is_admin"):
+        return {
+            "plan": "lifetime" if plan == "lifetime" else plan or "pro",
+            "plan_source": source or "admin",
+            "entitled": True,
+            "billing_required": BILLING_REQUIRED,
+            "price_usd": PRO_PRICE_USD,
+            "reason": "admin",
+        }
+    if plan == "lifetime" or source == "grandfather":
+        return {
+            "plan": "lifetime",
+            "plan_source": source or "grandfather",
+            "entitled": True,
+            "billing_required": BILLING_REQUIRED,
+            "price_usd": PRO_PRICE_USD,
+            "reason": "grandfather",
+        }
+    if plan == "pro":
+        exp = _parse_ts(p.get("plan_expires_at"))
+        now = datetime.now(timezone.utc)
+        if exp is None or exp > now:
+            return {
+                "plan": "pro",
+                "plan_source": source or "stripe",
+                "entitled": True,
+                "billing_required": BILLING_REQUIRED,
+                "price_usd": PRO_PRICE_USD,
+                "plan_expires_at": p.get("plan_expires_at"),
+                "reason": "subscription",
+            }
+        # 已过期
+        return {
+            "plan": "free",
+            "plan_source": source,
+            "entitled": not BILLING_REQUIRED,
+            "billing_required": BILLING_REQUIRED,
+            "price_usd": PRO_PRICE_USD,
+            "plan_expires_at": p.get("plan_expires_at"),
+            "reason": "expired",
+        }
+    # free：收费未开启时仍可用；开启后需订阅
+    return {
+        "plan": "free",
+        "plan_source": source,
+        "entitled": not BILLING_REQUIRED,
+        "billing_required": BILLING_REQUIRED,
+        "price_usd": PRO_PRICE_USD,
+        "reason": "free",
+    }
+
+
+def is_entitled(profile: dict = None, is_admin_user: bool = False) -> bool:
+    return bool(entitlement_from_profile(profile, is_admin_user).get("entitled"))
+
+
+def set_plan(uid: str, plan: str, plan_source: str = "admin",
+             stripe_customer_id: str = None, stripe_subscription_id: str = None,
+             plan_expires_at: str = None) -> dict:
+    """更新订阅字段（service role）。列不存在时静默失败。"""
+    if not uid or not supabase_client.using_supabase():
+        return {}
+    try:
+        client = supabase_client.get_service_client()
+        updates = {
+            "plan": plan,
+            "plan_source": plan_source,
+        }
+        if stripe_customer_id is not None:
+            updates["stripe_customer_id"] = stripe_customer_id
+        if stripe_subscription_id is not None:
+            updates["stripe_subscription_id"] = stripe_subscription_id
+        if plan_expires_at is not None:
+            updates["plan_expires_at"] = plan_expires_at
+        client.table("profiles").update(updates).eq("id", uid).execute()
+        row = client.table("profiles").select("*").eq("id", uid).limit(1).execute()
+        return (row.data or [{}])[0]
+    except Exception:
+        return {}

@@ -146,3 +146,34 @@ def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[d
         return _dev_user(token)
     except Exception:
         return None
+
+
+# ---------- 订阅门禁 ----------
+def require_entitled(user: dict = None):
+    """
+    在 BILLING_REQUIRED=1 时，未订阅且非 grandfather/admin 的用户抛 402。
+    用法：在依赖里先 require_user，再 require_entitled(user)。
+    """
+    import user_store
+    if user is None:
+        raise HTTPException(status_code=401, detail="未登录")
+    if not user_store.BILLING_REQUIRED:
+        return user
+    if user.get("is_admin"):
+        return user
+    try:
+        profile = user_store.get_or_create_profile(user["id"], user.get("email") or "")
+    except Exception:
+        profile = {}
+    ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(user.get("is_admin")))
+    if not ent.get("entitled"):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "subscription_required",
+                "message": "需要订阅 Pro（$9.9/月）后继续使用",
+                "price_usd": ent.get("price_usd", 9.9),
+                "plan": ent.get("plan", "free"),
+            },
+        )
+    return user

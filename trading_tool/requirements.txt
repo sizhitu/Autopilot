@@ -17,3 +17,6 @@ PyJWT>=2.8
 # 纯 Web 部署可忽略：
 # matplotlib>=3.7
 
+
+# 订阅（可选）
+stripe>=10.0
