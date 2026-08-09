@@ -1121,30 +1121,123 @@ if __name__ == "__main__":
     uvicorn.run(app, host=host, port=port)
 
 
-# ========== 订阅 / Stripe（统一 $9.9/月；已注册用户 lifetime 不受影响）==========
+# ========== 订阅 / Polar（首选）+ Stripe 可选；统一 $9.9/月；已注册 lifetime 不受影响 ==========
+
+def _billing_provider_configured() -> dict:
+    polar = bool(os.getenv("POLAR_ACCESS_TOKEN", "").strip() and os.getenv("POLAR_PRODUCT_ID", "").strip())
+    polar_link = bool(os.getenv("POLAR_CHECKOUT_LINK", "").strip())
+    stripe = bool(os.getenv("STRIPE_SECRET_KEY", "").strip() and os.getenv("STRIPE_PRICE_ID", "").strip())
+    return {
+        "polar": polar or polar_link,
+        "polar_api": polar,
+        "polar_link": polar_link,
+        "stripe": stripe,
+        "any": polar or polar_link or stripe,
+        "provider": "polar" if (polar or polar_link) else ("stripe" if stripe else None),
+    }
+
+
+def _client_ip(request: Request) -> str:
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if xff:
+        return xff
+    return (request.headers.get("cf-connecting-ip")
+            or request.headers.get("true-client-ip")
+            or (request.client.host if request.client else "")
+            or "")
+
+
+def _verify_polar_webhook(body: bytes, headers, secret: str) -> bool:
+    """Standard Webhooks (Polar): webhook-id / webhook-timestamp / webhook-signature."""
+    import base64
+    import hashlib
+    import hmac
+    import time
+
+    if not secret:
+        return False
+    msg_id = headers.get("webhook-id") or headers.get("Webhook-Id")
+    ts = headers.get("webhook-timestamp") or headers.get("Webhook-Timestamp")
+    sig_header = headers.get("webhook-signature") or headers.get("Webhook-Signature")
+    if not msg_id or not ts or not sig_header:
+        return False
+    try:
+        if abs(time.time() - int(ts)) > 300:
+            return False
+    except Exception:
+        return False
+
+    # secret 可能是 polar_whs_xxx / whsec_xxx / 原始串
+    raw = secret
+    for prefix in ("polar_whs_", "whsec_"):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    key_candidates = []
+    try:
+        key_candidates.append(base64.b64decode(raw))
+    except Exception:
+        pass
+    key_candidates.append(raw.encode("utf-8"))
+
+    signed = f"{msg_id}.{ts}.".encode("utf-8") + body
+    expected_set = set()
+    for key in key_candidates:
+        dig = hmac.new(key, signed, hashlib.sha256).digest()
+        expected_set.add(base64.b64encode(dig).decode("ascii"))
+
+    for part in sig_header.split(" "):
+        part = part.strip()
+        if not part:
+            continue
+        # v1,<base64>
+        sig = part.split(",", 1)[-1] if "," in part else part
+        if sig in expected_set:
+            return True
+    return False
+
+
+def _uid_from_polar_data(data: dict) -> str:
+    if not isinstance(data, dict):
+        return ""
+    # checkout / order / subscription 常见挂载点
+    meta = data.get("metadata") or {}
+    if isinstance(meta, dict):
+        uid = meta.get("user_id") or meta.get("external_customer_id") or ""
+        if uid:
+            return str(uid)
+    cust = data.get("customer") or {}
+    if isinstance(cust, dict):
+        uid = cust.get("external_id") or ""
+        if uid:
+            return str(uid)
+    uid = data.get("external_customer_id") or ""
+    return str(uid) if uid else ""
+
+
 @app.get("/api/billing/status")
 async def billing_status(user: dict = Depends(auth.get_current_user)):
     profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
-    ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin")))
-    return {"success": True, **ent, "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY"))}
+    ent = user_store.entitlement_from_profile(
+        profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin"))
+    )
+    cfg = _billing_provider_configured()
+    return {
+        "success": True,
+        **ent,
+        "provider": cfg.get("provider"),
+        "polar_configured": cfg["polar"],
+        "stripe_configured": cfg["stripe"],
+    }
 
 
 @app.post("/api/billing/checkout")
 async def billing_checkout(request: Request, user: dict = Depends(auth.get_current_user)):
-    """创建 Stripe Checkout Session（需配置 STRIPE_SECRET_KEY + STRIPE_PRICE_ID）。"""
-    secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
-    price_id = os.getenv("STRIPE_PRICE_ID", "").strip()
-    if not secret or not price_id:
-        raise HTTPException(status_code=503, detail="服务端未配置 Stripe（STRIPE_SECRET_KEY / STRIPE_PRICE_ID）")
-    try:
-        import stripe
-        stripe.api_key = secret
-    except ImportError:
-        raise HTTPException(status_code=503, detail="未安装 stripe 包，请 pip install stripe")
-
+    """创建结账会话：优先 Polar，其次静态 Checkout Link，最后 Stripe。"""
     profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
-    # 已终身/管理员无需再买
-    ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin")))
+    ent = user_store.entitlement_from_profile(
+        profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin"))
+    )
     if ent.get("plan") in ("lifetime", "pro") and ent.get("entitled"):
         return {"success": True, "already_entitled": True, "plan": ent.get("plan")}
 
@@ -1153,105 +1246,252 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
         body = await request.json()
     except Exception:
         body = {}
-    success_url = (body.get("success_url") or os.getenv("BILLING_SUCCESS_URL") or "https://example.com/?billing=success").strip()
-    cancel_url = (body.get("cancel_url") or os.getenv("BILLING_CANCEL_URL") or "https://example.com/?billing=cancel").strip()
+    success_url = (body.get("success_url") or os.getenv("BILLING_SUCCESS_URL") or "").strip()
+    if not success_url:
+        success_url = "https://timebricks.bid/?billing=success"
 
-    customer_id = profile.get("stripe_customer_id")
-    kwargs = {
-        "mode": "subscription",
-        "line_items": [{"price": price_id, "quantity": 1}],
-        "success_url": success_url,
-        "cancel_url": cancel_url,
-        "client_reference_id": user["id"],
-        "metadata": {"user_id": user["id"], "email": user.get("email") or ""},
-    }
-    if customer_id:
-        kwargs["customer"] = customer_id
-    else:
-        kwargs["customer_email"] = user.get("email") or None
+    cfg = _billing_provider_configured()
 
-    session = stripe.checkout.Session.create(**{k: v for k, v in kwargs.items() if v is not None})
-    return {"success": True, "url": session.url, "session_id": session.id}
+    # ---- Polar API Checkout ----
+    polar_token = os.getenv("POLAR_ACCESS_TOKEN", "").strip()
+    polar_product = os.getenv("POLAR_PRODUCT_ID", "").strip()
+    if polar_token and polar_product:
+        import urllib.request
+        import urllib.error
 
+        payload = {
+            "products": [polar_product],
+            "success_url": success_url if "{CHECKOUT_ID}" in success_url else (
+                success_url + ("&" if "?" in success_url else "?") + "checkout_id={CHECKOUT_ID}"
+            ),
+            "external_customer_id": user["id"],
+            "customer_email": (user.get("email") or "") or None,
+            "metadata": {
+                "user_id": user["id"],
+                "email": user.get("email") or "",
+            },
+        }
+        ip = _client_ip(request)
+        if ip:
+            payload["customer_ip_address"] = ip
+        # 去掉 None
+        payload = {k: v for k, v in payload.items() if v is not None}
 
-@app.post("/api/billing/webhook")
-async def billing_webhook(request: Request):
-    """Stripe Webhook：checkout.session.completed / subscription 变更 → 更新 plan。"""
-    secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
-    wh_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-    if not secret:
-        raise HTTPException(status_code=503, detail="Stripe 未配置")
-    try:
-        import stripe
-        stripe.api_key = secret
-    except ImportError:
-        raise HTTPException(status_code=503, detail="未安装 stripe")
-
-    payload = await request.body()
-    sig = request.headers.get("stripe-signature", "")
-    if wh_secret:
+        api_base = os.getenv("POLAR_API_BASE", "https://api.polar.sh").rstrip("/")
+        req = urllib.request.Request(
+            f"{api_base}/v1/checkouts/",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {polar_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
         try:
-            event = stripe.Webhook.construct_event(payload, sig, wh_secret)
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")[:500]
+            raise HTTPException(status_code=502, detail=f"Polar 创建结账失败: {e.code} {err_body}")
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Webhook 签名校验失败: {e}")
-    else:
-        import json
-        event = stripe.Event.construct_from(json.loads(payload), secret)
+            raise HTTPException(status_code=502, detail=f"Polar 请求失败: {e}")
 
-    etype = event.get("type") if isinstance(event, dict) else event["type"]
-    data = event.get("data", {}).get("object", {}) if isinstance(event, dict) else event["data"]["object"]
+        url = data.get("url")
+        if not url:
+            raise HTTPException(status_code=502, detail="Polar 未返回 checkout url")
+        return {"success": True, "url": url, "provider": "polar", "session_id": data.get("id")}
 
-    def _uid_from(obj):
-        return (obj.get("client_reference_id")
-                or (obj.get("metadata") or {}).get("user_id")
-                or "")
+    # ---- Polar 静态 Checkout Link（后台配置好的固定链接）----
+    polar_link = os.getenv("POLAR_CHECKOUT_LINK", "").strip()
+    if polar_link:
+        import urllib.parse
+        sep = "&" if "?" in polar_link else "?"
+        q = f"customer_email={urllib.parse.quote(user.get('email') or '')}"
+        q += f"&external_customer_id={urllib.parse.quote(user['id'])}"
+        return {
+            "success": True,
+            "url": f"{polar_link}{sep}{q}",
+            "provider": "polar_link",
+        }
 
-    if etype == "checkout.session.completed":
-        uid = _uid_from(data)
-        sub_id = data.get("subscription")
+    # ---- Stripe 回退 ----
+    secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    price_id = os.getenv("STRIPE_PRICE_ID", "").strip()
+    if secret and price_id:
+        try:
+            import stripe
+            stripe.api_key = secret
+        except ImportError:
+            raise HTTPException(status_code=503, detail="未安装 stripe 包")
+        cancel_url = (body.get("cancel_url") or os.getenv("BILLING_CANCEL_URL") or success_url).strip()
+        kwargs = {
+            "mode": "subscription",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "client_reference_id": user["id"],
+            "metadata": {"user_id": user["id"], "email": user.get("email") or ""},
+            "customer_email": user.get("email") or None,
+        }
+        session = stripe.checkout.Session.create(**{k: v for k, v in kwargs.items() if v is not None})
+        return {"success": True, "url": session.url, "provider": "stripe", "session_id": session.id}
+
+    raise HTTPException(
+        status_code=503,
+        detail="未配置收款：请设置 POLAR_ACCESS_TOKEN + POLAR_PRODUCT_ID（或 POLAR_CHECKOUT_LINK）",
+    )
+
+
+@app.post("/api/billing/webhook/polar")
+@app.post("/api/billing/webhook")  # 兼容旧路径；优先按 Polar 解析，失败再试 Stripe
+async def billing_webhook(request: Request):
+    """Polar / Stripe Webhook → 更新 plan。lifetime / grandfather 永不降级。"""
+    body = await request.body()
+    polar_secret = os.getenv("POLAR_WEBHOOK_SECRET", "").strip()
+    stripe_wh = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+    stripe_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+
+    # ---------- Polar ----------
+    if polar_secret and (
+        request.headers.get("webhook-id") or request.headers.get("Webhook-Id")
+    ):
+        if not _verify_polar_webhook(body, request.headers, polar_secret):
+            raise HTTPException(status_code=400, detail="Polar webhook 签名校验失败")
+        try:
+            event = json.loads(body.decode("utf-8"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="无效 JSON")
+        etype = event.get("type") or ""
+        data = event.get("data") or {}
+        uid = _uid_from_polar_data(data)
+        sub_id = data.get("id") if etype.startswith("subscription.") else (data.get("subscription_id") or data.get("subscription"))
+        if isinstance(sub_id, dict):
+            sub_id = sub_id.get("id")
         cust = data.get("customer")
-        if uid:
-            user_store.set_plan(
-                uid, plan="pro", plan_source="stripe",
-                stripe_customer_id=cust, stripe_subscription_id=sub_id,
-            )
-    elif etype in ("customer.subscription.updated", "customer.subscription.deleted"):
-        status = data.get("status")
-        cust = data.get("customer")
-        sub_id = data.get("id")
-        uid = (data.get("metadata") or {}).get("user_id") or ""
-        # 无 metadata 时按 customer 反查
-        if not uid and cust and supabase_client.using_supabase():
-            try:
-                rows = (supabase_client.get_service_client()
-                        .table("profiles").select("id")
-                        .eq("stripe_customer_id", cust).limit(1).execute())
-                if rows.data:
-                    uid = rows.data[0]["id"]
-            except Exception:
+        cust_id = cust.get("id") if isinstance(cust, dict) else cust
+
+        if etype in (
+            "subscription.created",
+            "subscription.active",
+            "subscription.updated",
+            "subscription.uncanceled",
+            "order.paid",
+            "checkout.updated",
+        ):
+            # checkout.updated 仅 status=confirmed/succeeded 时放行
+            if etype == "checkout.updated":
+                st = (data.get("status") or "").lower()
+                if st not in ("confirmed", "succeeded", "complete", "completed"):
+                    return {"received": True, "ignored": True}
+            if not uid:
+                # order.paid 可能只有 customer.external_id
                 pass
-        if uid:
-            if status in ("active", "trialing"):
-                exp = None
-                try:
-                    period_end = data.get("current_period_end")
-                    if period_end:
-                        from datetime import datetime, timezone
-                        exp = datetime.fromtimestamp(int(period_end), tz=timezone.utc).isoformat()
-                except Exception:
+            if uid:
+                status = (data.get("status") or "").lower()
+                # 取消态不升 pro
+                if status in ("canceled", "revoked", "incomplete_expired", "unpaid"):
+                    pass
+                else:
                     exp = None
-                user_store.set_plan(uid, plan="pro", plan_source="stripe",
-                                   stripe_customer_id=cust, stripe_subscription_id=sub_id,
-                                   plan_expires_at=exp)
-            else:
-                # 取消/过期：lifetime 不降级
+                    for k in ("current_period_end", "ends_at", "cancel_at"):
+                        v = data.get(k)
+                        if v:
+                            exp = v if isinstance(v, str) else None
+                            break
+                    user_store.set_plan(
+                        uid,
+                        plan="pro",
+                        plan_source="polar",
+                        stripe_customer_id=str(cust_id) if cust_id else None,
+                        stripe_subscription_id=str(sub_id) if sub_id else None,
+                        plan_expires_at=exp,
+                    )
+        elif etype in ("subscription.canceled", "subscription.revoked"):
+            if uid:
                 try:
                     prof = user_store.get_or_create_profile(uid)
                     if (prof.get("plan") or "") == "lifetime" or (prof.get("plan_source") or "") == "grandfather":
                         pass
                     else:
-                        user_store.set_plan(uid, plan="free", plan_source="stripe",
-                                           stripe_customer_id=cust, stripe_subscription_id=sub_id)
+                        user_store.set_plan(
+                            uid, plan="free", plan_source="polar",
+                            stripe_customer_id=str(cust_id) if cust_id else None,
+                            stripe_subscription_id=str(sub_id) if sub_id else None,
+                        )
                 except Exception:
-                    user_store.set_plan(uid, plan="free", plan_source="stripe")
-    return {"received": True}
+                    user_store.set_plan(uid, plan="free", plan_source="polar")
+        return {"received": True, "provider": "polar", "type": etype}
+
+    # ---------- Stripe ----------
+    if stripe_key:
+        try:
+            import stripe
+            stripe.api_key = stripe_key
+        except ImportError:
+            raise HTTPException(status_code=503, detail="未安装 stripe")
+        if stripe_wh:
+            try:
+                event = stripe.Webhook.construct_event(
+                    body, request.headers.get("stripe-signature", ""), stripe_wh
+                )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Stripe webhook 签名失败: {e}")
+        else:
+            event = stripe.Event.construct_from(json.loads(body), stripe_key)
+
+        etype = event["type"] if not isinstance(event, dict) else event.get("type")
+        data = event["data"]["object"] if not isinstance(event, dict) else event.get("data", {}).get("object", {})
+
+        if etype == "checkout.session.completed":
+            uid = data.get("client_reference_id") or (data.get("metadata") or {}).get("user_id") or ""
+            if uid:
+                user_store.set_plan(
+                    uid, plan="pro", plan_source="stripe",
+                    stripe_customer_id=data.get("customer"),
+                    stripe_subscription_id=data.get("subscription"),
+                )
+        elif etype in ("customer.subscription.updated", "customer.subscription.deleted"):
+            status = data.get("status")
+            cust = data.get("customer")
+            sub_id = data.get("id")
+            uid = (data.get("metadata") or {}).get("user_id") or ""
+            if not uid and cust and supabase_client.using_supabase():
+                try:
+                    rows = (supabase_client.get_service_client()
+                            .table("profiles").select("id")
+                            .eq("stripe_customer_id", cust).limit(1).execute())
+                    if rows.data:
+                        uid = rows.data[0]["id"]
+                except Exception:
+                    pass
+            if uid:
+                if status in ("active", "trialing"):
+                    exp = None
+                    try:
+                        period_end = data.get("current_period_end")
+                        if period_end:
+                            from datetime import datetime, timezone
+                            exp = datetime.fromtimestamp(int(period_end), tz=timezone.utc).isoformat()
+                    except Exception:
+                        exp = None
+                    user_store.set_plan(
+                        uid, plan="pro", plan_source="stripe",
+                        stripe_customer_id=cust, stripe_subscription_id=sub_id,
+                        plan_expires_at=exp,
+                    )
+                else:
+                    try:
+                        prof = user_store.get_or_create_profile(uid)
+                        if (prof.get("plan") or "") == "lifetime" or (prof.get("plan_source") or "") == "grandfather":
+                            pass
+                        else:
+                            user_store.set_plan(
+                                uid, plan="free", plan_source="stripe",
+                                stripe_customer_id=cust, stripe_subscription_id=sub_id,
+                            )
+                    except Exception:
+                        user_store.set_plan(uid, plan="free", plan_source="stripe")
+        return {"received": True, "provider": "stripe", "type": etype}
+
+    raise HTTPException(status_code=503, detail="未配置 Polar 或 Stripe Webhook")
