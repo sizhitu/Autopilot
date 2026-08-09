@@ -305,7 +305,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }  /* 趋势过滤 */
 #watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }  /* 操盘动作 */
 #watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 14%; }  /* 新高/估值 */
-#watchlistTable th:nth-child(10), #watchlistTable td:nth-child(10) { width: 10%; text-align: center !important; }  /* 分析师均价 */
+#watchlistTable th:nth-child(10), #watchlistTable td:nth-child(10) { width: 11%; text-align: center !important; }  /* 参考价/涨幅 */
 #watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:1px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
 /* 详情页：新高/新低/估值 卡片 */
@@ -513,7 +513,12 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <th style="padding:6px 2px;" title="均线趋势方向；「指标未齐」表示系统层加权未过，与详情红叉一致">趋势过滤</th>
           <th style="padding:6px 2px;" title="时机×趋势综合建议（非投资建议）">操盘动作</th>
           <th style="padding:6px 2px;">新高/估值</th>
-          <th style="padding:6px 2px;" title="分析师目标价均值及相对现价涨幅空间%；无数据为 --">分析师均价</th>
+          <th style="padding:6px 2px;white-space:nowrap;">参考价/涨幅<span class="help-q" style="margin-left:2px;vertical-align:middle;" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?<span class="help-pop" onclick="event.stopPropagation()" style="min-width:220px;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
+            <div class="hp-row"><b>参考价</b><br>公开渠道汇总的分析师目标价均值（一致预期），非本系统定价。</div>
+            <div class="hp-row"><b>涨幅</b><br>相对当前现价测算的空间：<code>(参考价/现价-1)×100%</code>，保留两位小数。</div>
+            <div class="hp-row"><b>格式</b><br>展示为 <code>参考价/涨幅</code>，例如 <code>333.18/+8.50%</code>；无数据为 <code>--</code>。</div>
+            <div class="hp-row"><b>说明</b><br>仅供研究参考，不构成投资建议；ETF 等常无覆盖。</div>
+          </span></span></th>
         </tr>
       </thead>
       <tbody id="watchlistBody"></tbody>
@@ -2603,9 +2608,12 @@ function renderWatchlist(stocks) {
       if (up != null && up !== '' && !isNaN(Number(up))) {
         const upn = Number(up);
         const uc = upn >= 0 ? 'var(--red)' : 'var(--green)';
-        upPart = ` <span style="color:${uc};font-weight:600;">${upn >= 0 ? '+' : ''}${upn.toFixed(2)}%</span>`;
+        const sign = upn >= 0 ? '+' : '';
+        upPart = `<span style="color:${uc};font-weight:600;">${sign}${upn.toFixed(2)}%</span>`;
+      } else {
+        upPart = '<span style="color:var(--text-dim);">--</span>';
       }
-      analystHtml = `<span style="font-family:monospace;">${Number(s.analyst_target).toFixed(2)}</span>${upPart}`;
+      analystHtml = `<span style="font-family:monospace;">${Number(s.analyst_target).toFixed(2)}</span>/<span style="font-family:monospace;">${upPart}</span>`;
     }
     html += `<tr style="border-bottom:1px solid var(--border); cursor:pointer;" onclick="fetchQuote('${s.code}','${s.name}','${s.market}')">
       <td style="padding:5px 6px;font-weight:600;color:var(--gold);white-space:nowrap;">${

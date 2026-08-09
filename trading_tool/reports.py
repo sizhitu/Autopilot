@@ -165,25 +165,21 @@ def _pct(v) -> str:
 
 
 def _analyst_line(a: dict) -> str:
-    """分析师均价 + 涨幅空间；无数据为 --。"""
+    """参考价/涨幅；无数据为 --。"""
     tgt = a.get("analyst_target")
     up = a.get("analyst_upside_pct")
     if tgt is None or tgt == "" or tgt == "--":
-        return f"分析师均价 <span style='color:{C_DIM};'>--</span>"
+        return f"参考价/涨幅 <span style='color:{C_DIM};'>--</span>"
     try:
         tgt_s = f"{float(tgt):.2f}"
     except Exception:
-        return f"分析师均价 <span style='color:{C_DIM};'>--</span>"
-    up_html = ""
+        return f"参考价/涨幅 <span style='color:{C_DIM};'>--</span>"
     if isinstance(up, (int, float)):
-        col = C_GREEN if up >= 0 else C_RED
-        # 邮件里涨幅空间用红涨绿跌还是与看板一致：看板 A 股习惯红涨 — 用 C_RED for +
         col = C_RED if up >= 0 else C_GREEN
-        up_html = (
-            f" <span style='color:{col};font-weight:700;'>"
-            f"{up:+.2f}%</span>"
-        )
-    return f"分析师均价 <strong>{tgt_s}</strong>{up_html}"
+        up_s = f"<span style='color:{col};font-weight:700;'>{up:+.2f}%</span>"
+    else:
+        up_s = f"<span style='color:{C_DIM};'>--</span>"
+    return f"参考价/涨幅 <strong>{tgt_s}</strong>/{up_s}"
 
 
 def _color_for_action(a: dict) -> str:
