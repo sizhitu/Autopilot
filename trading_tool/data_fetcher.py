@@ -277,6 +277,21 @@ class DataFetcher:
     def _is_us_index(self, symbol: str) -> bool:
         return symbol.strip().upper().startswith('^')
 
+    def _is_cn_index(self, symbol: str) -> bool:
+        """上证/沪深300 等宽基指数（无分析师目标价，也不应套用基金净值）。"""
+        s = (symbol or "").strip().lower()
+        if s in self.CN_INDEX_CODES or s in self.CN_INDICES:
+            return True
+        if s.startswith(("sh000", "sz399")):
+            return True
+        meta = STOCK_META.get((symbol or "").strip().upper()) or STOCK_META.get((symbol or "").strip()) or {}
+        if "指数" in str(meta.get("industry") or "") and "ETF" not in str(meta.get("industry") or ""):
+            return True
+        return False
+
+    def _is_index(self, symbol: str) -> bool:
+        return self._is_us_index(symbol) or self._is_cn_index(symbol)
+
     def fetch_us_stock(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
         通过 Yahoo Finance v8 API 获取美股/指数数据
@@ -1229,12 +1244,15 @@ class DataFetcher:
         s = (symbol or "").strip()
         if not s:
             return False
+        if self._is_index(s):
+            return False
         su = s.upper()
-        # 人工元数据里带 ETF/基金
         meta = STOCK_META.get(su) or STOCK_META.get(s) or {}
         ind = str(meta.get("industry") or "")
         desc = str(meta.get("desc") or "")
-        if any(k in ind or k in desc for k in ("ETF", "基金", "FOF", "LOF", "QDII")):
+        if "指数" in ind and "ETF" not in ind:
+            return False
+        if any(k in ind or k in desc for k in ("ETF", "基金", "FOF", "LOF", "QDII", "封闭式", "CEF", "创投")):
             return True
         # A 股场内基金常见代码段
         if s.isdigit() and len(s) == 6:
@@ -1245,7 +1263,7 @@ class DataFetcher:
         us_etf_hints = {
             "SPY", "QQQ", "IWM", "DIA", "GLD", "SLV", "USO", "UNG", "TLT", "HYG",
             "EEM", "EFA", "VTI", "VOO", "VEA", "VWO", "SMH", "XLF", "XLE", "XLK",
-            "ARKK", "TQQQ", "SQQQ", "JEPI", "VGT", "SPCX",
+            "ARKK", "TQQQ", "SQQQ", "JEPI", "VGT",
         }
         if su in us_etf_hints:
             return True
@@ -1383,11 +1401,55 @@ class DataFetcher:
         _FUND_NAV_CACHE[key] = (now, nav)
         return nav
 
+    def fetch_listing_price(self, symbol: str):
+        """新上市/无分析师覆盖时的兜底参考价：取可查到的首根日 K 收盘价（近似上市定价）。"""
+        sym = (symbol or "").strip()
+        if not sym or self._is_index(sym):
+            return None
+        try:
+            ysym = self._yahoo_symbol(sym) if hasattr(self, "_yahoo_symbol") else sym
+            if not self._is_cn_stock(sym) and not _yahoo_in_cooldown():
+                headers = {"User-Agent": _rotate_ua(), "Accept": "application/json"}
+                for domain in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+                    try:
+                        r = self.session.get(
+                            f"https://{domain}/v8/finance/chart/{ysym}",
+                            params={"range": "max", "interval": "1d"},
+                            headers=headers,
+                            timeout=12,
+                        )
+                        if r.status_code == 429:
+                            _trigger_yahoo_cooldown()
+                            break
+                        if r.status_code != 200:
+                            continue
+                        result = (r.json().get("chart") or {}).get("result") or []
+                        if not result:
+                            continue
+                        res = result[0]
+                        closes = ((res.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+                        for c in closes:
+                            if c is not None:
+                                v = float(c)
+                                if v > 0:
+                                    return v
+                    except Exception:
+                        continue
+            df = self.fetch(sym, days=400)
+            if df is not None and len(df) > 0:
+                v = float(df.iloc[0]["close"])
+                if v > 0:
+                    return v
+        except Exception:
+            return None
+        return None
+
     def fetch_analyst_mean_target(self, symbol: str):
 
         """
-        个股：分析师目标价均值（有多条时去掉一个最高、一个最低再平均）。
-        基金/ETF：无分析师覆盖时改用最新 NAV/IOPV 作为合理价。
+        指数：不计算参考价（返回 None）。
+        个股：分析师目标价均值（多条时去最高/最低再平均）；无覆盖时用上市首日价兜底。
+        基金/ETF：最新 NAV/IOPV；仍无则用上市首日价兜底。
         成功缓存 6h；失败短缓存 20min。
         """
         global _ANALYST_CACHE
@@ -1405,25 +1467,32 @@ class DataFetcher:
 
         mean = None
         try:
-            # 基金/ETF：优先净值作为合理价（被动产品几乎无分析师目标价）
-            if self._is_fund_like(sym):
+            # 指数：无「分析师合理价」概念，避免 000001 被误当成个股取 ~14 元目标价
+            if self._is_index(sym):
+                mean = None
+            elif self._is_fund_like(sym):
+                # 基金/ETF：优先 NAV；取不到时用上市首日价兜底（部分封闭式/私募份额）
                 mean = self.fetch_fund_nav(sym)
-            if mean is None:
+                if mean is None:
+                    mean = self.fetch_listing_price(sym)
+            else:
                 if self._is_cn_stock(sym):
                     mean = self._fetch_em_target_mean(sym)
                     if mean is None:
                         ysym = self._yahoo_symbol(sym)
                         mean = self._fetch_yahoo_target_mean(ysym)
                 else:
-                    # 美股：Nasdaq 优先（无需 Yahoo crumb），再 Yahoo
                     mean = self._fetch_nasdaq_target_mean(sym)
                     if mean is None:
                         ysym = self._yahoo_symbol(sym)
                         mean = self._fetch_yahoo_target_mean(ysym)
-                # 非识别为基金但分析师为空时，再尝试净值（覆盖漏检的场内基金）
-                if mean is None and (self._is_cn_stock(sym) or (sym.isdigit() and len(sym) == 6)):
-                    if str(sym).isdigit() and str(sym).startswith(("15", "16", "18", "50", "51", "52", "56", "58")):
-                        mean = self.fetch_fund_nav(sym)
+                if mean is None and str(sym).isdigit() and str(sym).startswith(
+                    ("15", "16", "18", "50", "51", "52", "56", "58")
+                ):
+                    mean = self.fetch_fund_nav(sym)
+                # 新上市/无覆盖：上市首日收盘价（如 SPCX）
+                if mean is None:
+                    mean = self.fetch_listing_price(sym)
         except Exception:
             mean = None
 
