@@ -20,3 +20,6 @@ PyJWT>=2.8
 
 # 订阅（可选）
 stripe>=10.0
+
+# Waffo Pancake 签名 / Webhook 验签
+cryptography>=42.0

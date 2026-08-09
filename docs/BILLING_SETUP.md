@@ -1,92 +1,86 @@
-# 订阅落地（Polar · 个人卖家 · $9.9/月）
+# 订阅落地（Waffo Pancake · $9.9/月）
 
-适合：**未注册公司**、只有新加坡 OCBC / Wise 等个人账户的情况。
+收款已切换为 **Waffo Pancake**（Merchant of Record）。后端为 Python，按官方文档实现 RSA 签名调用，等价于 `@waffo/pancake-ts`。
 
-## 资金链路（推荐）
-
-```
-用户信用卡
-  → Polar（Merchant of Record，代收税与卡支付）
-  → 结算到 Wise
-  → 需要时转到 OCBC
-```
-
-不要：让用户直接转账到 N26 / Fiat24 / 个人卡。
-
-## 一步步开通
-
-### 1. Polar 账号
-
-1. 打开 https://polar.sh 用个人邮箱注册  
-2. 按提示完成 KYC（个人 / Individual）  
-3. 税务表单按提示填写（非美国居民常见为 W-8BEN）  
-4. **Payout**：绑定 **Wise**（优先）或你能稳定收 USD/EUR 的账户  
-
-### 2. 创建产品
-
-1. Dashboard → Products → 新建  
-2. 名称例如：`Autopilot Pro`  
-3. 类型：Subscription，周期 **Monthly**，价格 **$9.90 USD**  
-4. 保存后，点产品右侧菜单 → **Copy Product ID** → 记到 `POLAR_PRODUCT_ID`
-
-### 3. Access Token
-
-1. 组织设置里创建 **Organization Access Token**（或 Personal Access Token，需含 checkouts 权限）  
-2. 记到环境变量 `POLAR_ACCESS_TOKEN`
-
-### 4. Webhook
-
-1. Polar → Settings → Webhooks → Add endpoint  
-2. URL：`https://你的后端域名/api/billing/webhook/polar`  
-   （也兼容 `/api/billing/webhook`）  
-3. 至少勾选：  
-   - `order.paid`  
-   - `subscription.created`  
-   - `subscription.active`  
-   - `subscription.updated`  
-   - `subscription.canceled`  
-   - `subscription.revoked`  
-4. 复制 Signing secret → `POLAR_WEBHOOK_SECRET`
-
-### 5. 数据库（老用户终身免费）
-
-在 Supabase SQL Editor 执行：
-
-`supabase/migrations/0003_subscription.sql`
-
-执行后，**当时已存在的用户**会被标为 `plan=lifetime`，之后新注册默认为 `free`。
-
-### 6. 后端环境变量（Render 等）
+## 环境变量
 
 ```text
-POLAR_ACCESS_TOKEN=polar_oat_...
-POLAR_PRODUCT_ID=...
-POLAR_WEBHOOK_SECRET=polar_whs_...
+WAFFO_MERCHANT_ID=MER_5qdPIwFKQZhBpJIDHfhcQ0
+WAFFO_STORE_ID=STO_0toK3tfU8gSlzc3zcuK401
+WAFFO_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----
+# 或 CI 推荐：
+# WAFFO_PRIVATE_KEY_BASE64=<整段 PEM 的 base64>
+
+WAFFO_PRODUCT_ID=PROD_你的订阅产品ID
+WAFFO_PRODUCT_TYPE=subscription
+WAFFO_CURRENCY=USD
+
+# Dashboard → 店铺 → Settings → Webhooks → Webhook Public Key
+WAFFO_WEBHOOK_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----
+
 BILLING_SUCCESS_URL=https://你的前端域名/?billing=success
 BILLING_REQUIRED=0
 ```
 
-先保持 `BILLING_REQUIRED=0`，自测支付成功后用户变为 `pro`，再改为 `1` 打开门禁。
+`Environment: test` 时请使用 **Test** 环境的私钥与公钥；上线再换 Production 密钥与产品。
 
-### 7. 自测
+> 私钥不要提交到 Git。本仓库只保留变量名说明。
 
-1. 用一个**新注册**测试号登录  
-2. 点「订阅 $9.9/月」→ 跳转 Polar 结账（可用 Polar 沙盒）  
-3. 支付成功后刷新，`/api/auth/me` 应显示 `plan: pro`  
-4. 老账号应仍为 `lifetime`，无需付费  
+## 一步步开通
 
-## 可选：只用不需 Token 的固定链接
+### 1. 商户与店铺
 
-若暂时拿不到 API Token，可在 Polar 后台生成 **Checkout Link**，填：
+你已有：
 
-```text
-POLAR_CHECKOUT_LINK=https://buy.polar.sh/polar_cl_xxx
-```
+- Merchant ID：`MER_5qdPIwFKQZhBpJIDHfhcQ0`
+- Store ID：`STO_0toK3tfU8gSlzc3zcuK401`
 
-仍需配置 Webhook，才能把付款用户写成 `pro`。有 Token 后建议改用 API（能绑定 `external_customer_id`，对账更准）。
+在 [Pancake Dashboard](https://pancake.waffo.ai/merchant/dashboard) → API & Development 下载 **Private Key**（只显示一次）。
+
+### 2. 创建订阅产品
+
+Dashboard → 产品 → 新建 **Subscription**：
+
+- 名称例如：`Autopilot Pro`
+- 周期：Monthly
+- 价格：`9.90` USD
+- 复制 **Product ID** → `WAFFO_PRODUCT_ID`
+
+### 3. Webhook
+
+店铺 Settings → Webhooks → Add：
+
+- URL：`https://你的后端域名/api/billing/webhook/waffo`  
+  （也兼容 `/api/billing/webhook`）
+- 至少订阅：
+  - `subscription.activated`
+  - `subscription.updated`
+  - `subscription.canceled`
+  - `subscription.uncanceled`
+  - `order.completed`
+- 复制 **Webhook Public Key** → `WAFFO_WEBHOOK_PUBLIC_KEY`
+
+### 4. 自测
+
+1. 配置环境变量后重启后端  
+2. 新用户登录 → 点「订阅 $9.9/月」→ 跳转 `checkout.waffo.ai`  
+3. 用 Waffo **test** 卡完成支付  
+4. Webhook 到达后 `/api/auth/me` 应显示 `plan: pro`、`plan_source: waffo`  
+
+## API 行为
+
+| 路径 | 说明 |
+|------|------|
+| `POST /api/billing/checkout` | 创建 Waffo session，返回 `{ url, provider: "waffo" }` |
+| `POST /api/billing/webhook/waffo` | 校验 `X-Waffo-Signature` 后更新 `profiles.plan` |
+
+结账时写入 `orderMerchantExternalId = 用户 uid`，Webhook 凭此把订单绑回本站用户。
+
+## 遗留 Polar / Stripe
+
+若仍配置了 `POLAR_*` / `STRIPE_*`，仅在 **未配置齐 Waffo** 时作为回退。新部署请只配 Waffo。
 
 ## 注意
 
-- 本说明不构成法律/税务建议；新加坡税务居民请自行确认申报义务。  
-- `lifetime` / `grandfather` 用户不会因订阅取消被降为 free。  
-- N26、Fiat24 不建议作为 Polar 结算账户。
+- `lifetime` / `grandfather` 用户不会因取消订阅被降为 free  
+- 本说明不构成法律/税务建议  

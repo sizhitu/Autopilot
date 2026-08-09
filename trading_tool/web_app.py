@@ -1121,7 +1121,7 @@ if __name__ == "__main__":
     uvicorn.run(app, host=host, port=port)
 
 
-# ========== 订阅 / Polar（首选）+ Stripe 可选；统一 $9.9/月；已注册 lifetime 不受影响 ==========
+# ========== 订阅 / Waffo Pancake（首选）+ Polar/Stripe 遗留；统一 $9.9/月；lifetime 不受影响 ==========
 
 def _billing_provider_configured() -> dict:
     polar = bool(os.getenv("POLAR_ACCESS_TOKEN", "").strip() and os.getenv("POLAR_PRODUCT_ID", "").strip())
@@ -1251,8 +1251,45 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
         success_url = "https://timebricks.bid/?billing=success"
 
     cfg = _billing_provider_configured()
+    if not cfg.get("any"):
+        raise HTTPException(
+            status_code=503,
+            detail="未配置收款：请设置 WAFFO_MERCHANT_ID / WAFFO_PRIVATE_KEY / WAFFO_PRODUCT_ID",
+        )
 
-    # ---- Polar API Checkout ----
+    # ---- Waffo Pancake（首选）----
+    if cfg.get("waffo"):
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        success_url = (body.get("success_url") or os.getenv("BILLING_SUCCESS_URL") or "").strip()
+        if not success_url:
+            # 尽量回前端域名
+            origin = (request.headers.get("origin") or "").rstrip("/")
+            if origin:
+                success_url = origin + "/?billing=success"
+        try:
+            session = waffo_client.create_checkout_session(
+                buyer_email=(user.get("email") or "").strip().lower(),
+                success_url=success_url,
+                order_merchant_external_id=str(uid),
+                metadata={"userId": str(uid), "plan": "pro"},
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Waffo 创建结账失败: {e}")
+        url = session.get("checkoutUrl") or session.get("url")
+        if not url:
+            raise HTTPException(status_code=502, detail=f"Waffo 未返回 checkoutUrl: {session}")
+        return {
+            "success": True,
+            "url": url,
+            "provider": "waffo",
+            "session_id": session.get("sessionId") or session.get("id"),
+        }
+
+    # ---- Polar API Checkout（遗留）----
     polar_token = os.getenv("POLAR_ACCESS_TOKEN", "").strip()
     polar_product = os.getenv("POLAR_PRODUCT_ID", "").strip()
     if polar_token and polar_product:
@@ -1343,14 +1380,71 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
     )
 
 
+@app.post("/api/billing/webhook/waffo")
 @app.post("/api/billing/webhook/polar")
-@app.post("/api/billing/webhook")  # 兼容旧路径；优先按 Polar 解析，失败再试 Stripe
+@app.post("/api/billing/webhook")  # 兼容旧路径；优先 Waffo，再 Polar / Stripe
 async def billing_webhook(request: Request):
-    """Polar / Stripe Webhook → 更新 plan。lifetime / grandfather 永不降级。"""
+    """Waffo / Polar / Stripe Webhook → 更新 plan。lifetime / grandfather 永不降级。"""
     body = await request.body()
     polar_secret = os.getenv("POLAR_WEBHOOK_SECRET", "").strip()
     stripe_wh = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+
+    # ---------- Waffo Pancake ----------
+    waffo_sig = request.headers.get("X-Waffo-Signature") or request.headers.get("x-waffo-signature")
+    if waffo_sig and waffo_client.load_webhook_public_key_pem():
+        raw_text = body.decode("utf-8", errors="replace")
+        if not waffo_client.verify_webhook_signature(raw_text, waffo_sig):
+            raise HTTPException(status_code=401, detail="Waffo webhook 签名校验失败")
+        try:
+            event = json.loads(raw_text)
+        except Exception:
+            raise HTTPException(status_code=400, detail="无效 JSON")
+        etype = (event.get("eventType") or event.get("type") or "").strip()
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        uid = waffo_client.extract_uid_from_event(event)
+        order_id = data.get("orderId") or data.get("id") or event.get("id")
+        exp = data.get("currentPeriodEnd") or data.get("current_period_end")
+        if isinstance(exp, (int, float)):
+            exp = None  # 仅接受 ISO 字符串写入
+
+        activate = etype in (
+            "subscription.activated",
+            "subscription.uncanceled",
+            "subscription.updated",
+            "order.completed",
+            "subscription.payment_succeeded",
+        )
+        # subscription.updated：仅 active 才升 pro
+        if etype == "subscription.updated":
+            st = (data.get("orderStatus") or data.get("status") or "").lower()
+            if st and st not in ("active", "trialing"):
+                activate = False
+        if activate and uid:
+            user_store.set_plan(
+                uid,
+                plan="pro",
+                plan_source="waffo",
+                stripe_subscription_id=str(order_id) if order_id else None,
+                plan_expires_at=str(exp) if exp else None,
+            )
+        elif etype in ("subscription.canceled", "subscription.past_due", "refund.succeeded"):
+            if uid:
+                try:
+                    prof = user_store.get_or_create_profile(uid)
+                    if (prof.get("plan") or "") == "lifetime" or (prof.get("plan_source") or "") == "grandfather":
+                        pass
+                    elif etype == "subscription.past_due":
+                        # 宽限期：不立即降级，可按需调整
+                        pass
+                    else:
+                        user_store.set_plan(
+                            uid, plan="free", plan_source="waffo",
+                            stripe_subscription_id=str(order_id) if order_id else None,
+                        )
+                except Exception:
+                    pass
+        return {"received": True, "provider": "waffo", "eventType": etype}
 
     # ---------- Polar ----------
     if polar_secret and (
