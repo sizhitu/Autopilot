@@ -424,25 +424,21 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.action = "阶梯止盈关注"
             status.action_color = "red"
             reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂卖出档")
-        elif nt_signal in ('买入', '加仓'):
-            status.action = "策略偏多"
-            status.action_color = "orange"
-            reasons.append(f"融合策略信号：{nt_signal}")
-        elif nt_signal == '卖出':
-            status.action = "策略偏空"
-            status.action_color = "red"
-            reasons.append("融合策略信号：卖出")
         else:
+            # 无九转/阶梯等明确时机时统一观望（不再单独标「策略偏多/偏空」）
             status.action = "观望"
             status.action_color = "gray"
-            reasons.append("无共振时机")
+            if nt_signal in ('买入', '加仓', '卖出', '持有'):
+                reasons.append(f"无明确时机共振（策略信号仅供参考：{nt_signal}）")
+            else:
+                reasons.append("无共振时机")
 
         status.action_reason = "；".join(reasons)
         # 兼容旧看板汇总字段
-        if status.action in ("关注买入", "阶梯抄底关注", "策略偏多"):
+        if status.action in ("关注买入", "阶梯抄底关注"):
             status.signal = "即将上涨关注"
             status.signal_color = "orange"
-        elif status.action in ("关注卖出", "阶梯止盈关注", "策略偏空", "减仓观察"):
+        elif status.action in ("关注卖出", "阶梯止盈关注", "减仓观察"):
             status.signal = "上涨见顶关注"
             status.signal_color = "red"
         elif status.action == "轻仓观察":
