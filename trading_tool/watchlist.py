@@ -215,7 +215,7 @@ class StockStatus:
     valuation: str = "合理"       # 估值状态：低估/高估/合理
     valuation_type: str = "fair"  # under/over/fair
     valuation_detail: str = ""    # 估值依据（如 "MA250 -8%" / "分位85%"）
-    analyst_target: object = None  # 分析师均价 float | None
+    analyst_target: object = None  # 参考价：个股=去极值分析师均价；基金=NAV float | None
     analyst_upside_pct: object = None  # 相对现价涨幅空间% | None
     error: str = ""
 
@@ -472,7 +472,7 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         status.valuation_type = val_type
         status.valuation_detail = val_detail
 
-        # 分析师均价 + 相对现价涨幅空间
+        # 参考价（个股：去极值分析师均价；基金/ETF：NAV）+ 相对现价涨幅空间
         try:
             tgt = fetcher.fetch_analyst_mean_target(code)
             if tgt and last_close and last_close > 0:

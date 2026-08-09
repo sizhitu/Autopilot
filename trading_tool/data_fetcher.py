@@ -30,6 +30,27 @@ _YAHOO_COOLDOWN_SEC = 120  # 冷却时长（秒），每次命中 429 均顺延
 # 分析师目标价缓存：symbol -> (unix_ts, mean_target|None)
 _ANALYST_CACHE = {}
 _ANALYST_CACHE_TTL = 6 * 3600  # 6 小时
+_FUND_NAV_CACHE = {}
+_FUND_NAV_CACHE_TTL = 2 * 3600  # 净值缓存 2 小时
+
+
+def _trimmed_mean(vals):
+    """去掉一个最小值、一个最大值后再取平均；样本不足 3 个时退回普通均值。"""
+    nums = []
+    for v in vals or []:
+        try:
+            x = float(v)
+            if x > 0 and x == x:  # 排除 NaN
+                nums.append(x)
+        except Exception:
+            continue
+    if not nums:
+        return None
+    if len(nums) < 3:
+        return sum(nums) / len(nums)
+    nums.sort()
+    core = nums[1:-1]  # 去掉一个最小、一个最大
+    return sum(core) / len(core) if core else None
 
 
 
@@ -1099,7 +1120,7 @@ class DataFetcher:
                         if not data:
                             continue
                         row = data[0]
-                        # 东财一致预期常用：目标价区间中值
+                        # 东财一致预期：仅有高低价时取中值（仅 2 点无法再去极值）
                         mx, mn = row.get("DEC_AIMPRICEMAX"), row.get("DEC_AIMPRICEMIN")
                         try:
                             if mx is not None and mn is not None:
@@ -1160,7 +1181,9 @@ class DataFetcher:
                                         except Exception:
                                             pass
                             if vals:
-                                return sum(vals) / len(vals)
+                                tm = _trimmed_mean(vals)
+                                if tm is not None:
+                                    return tm
             except Exception:
                 pass
             return None
@@ -1200,11 +1223,172 @@ class DataFetcher:
         except Exception:
             return None
 
+
+    def _is_fund_like(self, symbol: str) -> bool:
+        """判断是否为基金/ETF（无分析师目标价，改用 NAV/IOPV 作合理价）。"""
+        s = (symbol or "").strip()
+        if not s:
+            return False
+        su = s.upper()
+        # 人工元数据里带 ETF/基金
+        meta = STOCK_META.get(su) or STOCK_META.get(s) or {}
+        ind = str(meta.get("industry") or "")
+        desc = str(meta.get("desc") or "")
+        if any(k in ind or k in desc for k in ("ETF", "基金", "FOF", "LOF", "QDII")):
+            return True
+        # A 股场内基金常见代码段
+        if s.isdigit() and len(s) == 6:
+            # 15/16/18 深市 ETF/LOF；50/51/56/58 沪市 ETF/基金；与部分债券/货币基金
+            if s.startswith(("15", "16", "18", "50", "51", "52", "56", "58")):
+                return True
+        # 美股常见被动 ETF 后缀/名单（轻量启发式；未知字母代码不强制）
+        us_etf_hints = {
+            "SPY", "QQQ", "IWM", "DIA", "GLD", "SLV", "USO", "UNG", "TLT", "HYG",
+            "EEM", "EFA", "VTI", "VOO", "VEA", "VWO", "SMH", "XLF", "XLE", "XLK",
+            "ARKK", "TQQQ", "SQQQ", "JEPI", "VGT", "SPCX",
+        }
+        if su in us_etf_hints:
+            return True
+        name = (
+            self.US_STOCKS.get(su)
+            or self.CN_STOCKS.get(s)
+            or self.CN_STOCKS.get(su)
+            or ""
+        )
+        if any(k in str(name) for k in ("ETF", "基金", "LOF", "FOF")):
+            return True
+        return False
+
+    def _fetch_cn_fund_nav(self, symbol: str):
+        """A 股基金/ETF 最新单位净值（DWJZ / 新浪 f_ 接口）。"""
+        try:
+            s = symbol.strip()
+            code = s
+            if not s.isdigit():
+                ns = self._normalize_cn_symbol(s)
+                code = ns[2:] if len(ns) > 2 and ns[:2] in ("sh", "sz", "bj") else ns
+            if not (str(code).isdigit() and len(str(code)) == 6):
+                return None
+            code = str(code)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://finance.sina.com.cn",
+            }
+            # 1) 新浪 f_ 实时/最新净值（轻量）
+            try:
+                r = self.session.get(
+                    f"https://hq.sinajs.cn/list=f_{code}",
+                    headers=headers,
+                    timeout=8,
+                )
+                if r.status_code == 200 and "=" in r.text:
+                    body = r.text.split("=", 1)[-1].strip().strip(";").strip('"')
+                    parts = body.split(",")
+                    # name, 单位净值, 累计净值, ...
+                    if len(parts) >= 2:
+                        v = float(parts[1])
+                        if v > 0:
+                            return v
+            except Exception:
+                pass
+            # 2) 东财历史净值最新一条
+            try:
+                r2 = self.session.get(
+                    "https://api.fund.eastmoney.com/f10/lsjz",
+                    params={"fundCode": code, "pageIndex": 1, "pageSize": 1},
+                    headers={
+                        "User-Agent": headers["User-Agent"],
+                        "Referer": "https://fund.eastmoney.com/",
+                    },
+                    timeout=10,
+                )
+                if r2.status_code == 200:
+                    lst = ((r2.json() or {}).get("Data") or {}).get("LSJZList") or []
+                    if lst:
+                        v = float(lst[0].get("DWJZ"))
+                        if v > 0:
+                            return v
+            except Exception:
+                pass
+            return None
+        except Exception:
+            return None
+
+    def _fetch_us_fund_nav(self, symbol: str):
+        """美股 ETF/基金 NAV（Yahoo defaultKeyStatistics.navPrice 等，best-effort）。"""
+        if _yahoo_in_cooldown():
+            return None
+        ysym = self._yahoo_symbol(symbol)
+        headers = {
+            "User-Agent": _rotate_ua() if "_rotate_ua" in dir() else "Mozilla/5.0",
+            "Accept": "application/json",
+        }
+        try:
+            headers["User-Agent"] = _rotate_ua()
+        except Exception:
+            pass
+        for domain in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+            try:
+                r = self.session.get(
+                    f"https://{domain}/v10/finance/quoteSummary/{ysym}",
+                    params={"modules": "defaultKeyStatistics,price,summaryDetail"},
+                    headers=headers,
+                    timeout=12,
+                )
+                if r.status_code == 429:
+                    _trigger_yahoo_cooldown()
+                    return None
+                if r.status_code != 200:
+                    continue
+                result = (r.json().get("quoteSummary") or {}).get("result") or []
+                if not result:
+                    continue
+                row = result[0] or {}
+                dks = row.get("defaultKeyStatistics") or {}
+                for key in ("navPrice", "navAmount", "bookValue"):
+                    v = self._parse_yahoo_price_field(dks.get(key)) if hasattr(self, "_parse_yahoo_price_field") else None
+                    if v is None:
+                        raw = dks.get(key)
+                        if isinstance(raw, dict):
+                            raw = raw.get("raw")
+                        try:
+                            v = float(raw) if raw is not None else None
+                        except Exception:
+                            v = None
+                    if v is not None and v > 0:
+                        return v
+            except Exception:
+                continue
+        return None
+
+    def fetch_fund_nav(self, symbol: str):
+        """基金/ETF 最新净值（合理价基准）。成功缓存 2h。"""
+        global _FUND_NAV_CACHE
+        sym = (symbol or "").strip()
+        if not sym:
+            return None
+        key = sym.upper()
+        now = time.time()
+        hit = _FUND_NAV_CACHE.get(key)
+        if hit and now - hit[0] < _FUND_NAV_CACHE_TTL:
+            return hit[1]
+        nav = None
+        try:
+            if self._is_cn_stock(sym) or (sym.isdigit() and len(sym) == 6):
+                nav = self._fetch_cn_fund_nav(sym)
+            else:
+                nav = self._fetch_us_fund_nav(sym)
+        except Exception:
+            nav = None
+        _FUND_NAV_CACHE[key] = (now, nav)
+        return nav
+
     def fetch_analyst_mean_target(self, symbol: str):
+
         """
-        分析师目标价均值。无数据返回 None。
-        A股：东财多源 → Yahoo；美股：Yahoo 多域名。
-        成功缓存 6h；失败短缓存 20min，避免空结果长期占坑。
+        个股：分析师目标价均值（有多条时去掉一个最高、一个最低再平均）。
+        基金/ETF：无分析师覆盖时改用最新 NAV/IOPV 作为合理价。
+        成功缓存 6h；失败短缓存 20min。
         """
         global _ANALYST_CACHE
         sym = (symbol or "").strip()
@@ -1221,17 +1405,25 @@ class DataFetcher:
 
         mean = None
         try:
-            if self._is_cn_stock(sym):
-                mean = self._fetch_em_target_mean(sym)
-                if mean is None:
-                    ysym = self._yahoo_symbol(sym)
-                    mean = self._fetch_yahoo_target_mean(ysym)
-            else:
-                # 美股：Nasdaq 优先（无需 Yahoo crumb），再 Yahoo
-                mean = self._fetch_nasdaq_target_mean(sym)
-                if mean is None:
-                    ysym = self._yahoo_symbol(sym)
-                    mean = self._fetch_yahoo_target_mean(ysym)
+            # 基金/ETF：优先净值作为合理价（被动产品几乎无分析师目标价）
+            if self._is_fund_like(sym):
+                mean = self.fetch_fund_nav(sym)
+            if mean is None:
+                if self._is_cn_stock(sym):
+                    mean = self._fetch_em_target_mean(sym)
+                    if mean is None:
+                        ysym = self._yahoo_symbol(sym)
+                        mean = self._fetch_yahoo_target_mean(ysym)
+                else:
+                    # 美股：Nasdaq 优先（无需 Yahoo crumb），再 Yahoo
+                    mean = self._fetch_nasdaq_target_mean(sym)
+                    if mean is None:
+                        ysym = self._yahoo_symbol(sym)
+                        mean = self._fetch_yahoo_target_mean(ysym)
+                # 非识别为基金但分析师为空时，再尝试净值（覆盖漏检的场内基金）
+                if mean is None and (self._is_cn_stock(sym) or (sym.isdigit() and len(sym) == 6)):
+                    if str(sym).isdigit() and str(sym).startswith(("15", "16", "18", "50", "51", "52", "56", "58")):
+                        mean = self.fetch_fund_nav(sym)
         except Exception:
             mean = None
 

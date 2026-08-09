@@ -514,10 +514,11 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <th style="padding:6px 2px;" title="时机×趋势综合建议（非投资建议）">操盘动作</th>
           <th style="padding:6px 2px;">新高/估值</th>
           <th style="padding:6px 2px;white-space:nowrap;">参考价/涨幅<span class="help-q" style="margin-left:2px;vertical-align:middle;" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?<span class="help-pop" onclick="event.stopPropagation()" style="min-width:220px;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
-            <div class="hp-row"><b>参考价</b><br>公开渠道汇总的分析师目标价均值（一致预期），非本系统定价。</div>
-            <div class="hp-row"><b>涨幅</b><br>相对当前现价测算的空间：<code>(参考价/现价-1)×100%</code>，保留两位小数。</div>
+            <div class="hp-row"><b>参考价 · 个股</b><br>公开渠道汇总的分析师目标价。有多条目标价时：<b>去掉一个最高、一个最低后再取平均</b>（样本不足 3 条则用普通均值）。非本系统定价。</div>
+            <div class="hp-row"><b>参考价 · 基金/ETF</b><br>被动产品几乎无分析师目标价，改用最新 <b>单位净值 NAV</b>（或 IOPV）作为合理价基准：<code>NAV = (总资产 − 总负债) ÷ 份额总数</code>。ETF 市价通常贴近净值（正常溢价约 ±0.5%）；封闭式基金可大幅折溢价。</div>
+            <div class="hp-row"><b>涨幅</b><br>相对当前现价测算的空间：<code>(参考价/现价-1)×100%</code>，保留两位小数。基金场景下即相对净值的折溢价反向空间。</div>
             <div class="hp-row"><b>格式</b><br>展示为 <code>参考价/涨幅</code>，例如 <code>333.18/+8.50%</code>；无数据为 <code>--</code>。</div>
-            <div class="hp-row"><b>说明</b><br>仅供研究参考，不构成投资建议；ETF 等常无覆盖。</div>
+            <div class="hp-row"><b>说明</b><br>仅供研究参考，不构成投资建议。实际交易以实时行情与基金公司披露净值为准。</div>
           </span></span></th>
         </tr>
       </thead>
