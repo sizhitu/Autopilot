@@ -421,7 +421,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <div id="userArea" class="hidden">
       <span id="userName"><span id="userNameText"></span><span id="userNameTip"></span></span>
       <span id="planBadge" style="display:none;font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);color:var(--text-dim);"></span>
-      <button id="btnSubscribe" class="btn btn-sm" style="display:none;background:var(--gold);color:#111;" onclick="startCheckout()">订阅 $9.9/月</button>
+      <button id="btnSubscribe" class="btn btn-sm" style="display:none;background:var(--gold);color:#111;" onclick="openUpgradeModal()">升级</button>
       <button id="btnManageSub" class="btn btn-outline btn-sm" style="display:none;" onclick="openManageSub()">管理订阅</button>
       <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
     </div>
@@ -429,6 +429,35 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 </div>
 
 <!-- 登录/注册 弹窗 -->
+
+<!-- 升级套餐弹窗 -->
+<div id="upgradeModal" class="modal hidden" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:16px;">
+  <div style="background:var(--panel,#0f1c24);border:1px solid var(--border);border-radius:14px;max-width:420px;width:100%;padding:18px 16px 16px;position:relative;box-shadow:0 12px 40px rgba(0,0,0,.45);">
+    <button onclick="closeUpgradeModal()" style="position:absolute;left:12px;top:10px;background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;line-height:1;">×</button>
+    <div style="text-align:center;font-size:16px;font-weight:600;margin-bottom:14px;color:var(--text);">选择套餐</div>
+    <div id="planCardPlus" onclick="selectUpgradePlan('plus')" style="cursor:pointer;border:1px solid var(--gold,#c9a227);border-radius:12px;padding:14px;margin-bottom:12px;background:rgba(201,162,39,.08);position:relative;">
+      <span style="position:absolute;right:10px;top:10px;background:var(--gold,#c9a227);color:#111;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;">推荐</span>
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px;">Plus</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">分析数据 + 邮件推送</div>
+      <div style="font-size:22px;font-weight:700;color:var(--gold,#c9a227);">$<span id="pricePlusLabel">12.9</span><span style="font-size:12px;font-weight:400;color:var(--text-dim);"> /月</span></div>
+      <ul style="margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--text-dim);line-height:1.7;">
+        <li>完整行情与策略分析</li>
+        <li>自选看板与回测</li>
+        <li>邮件订阅推送</li>
+      </ul>
+    </div>
+    <div id="planCardBasic" onclick="selectUpgradePlan('basic')" style="cursor:pointer;border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg,#0a1419);">
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px;">Basic</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">适合日常查看分析</div>
+      <div style="font-size:22px;font-weight:700;color:var(--text);">$<span id="priceBasicLabel">9.9</span><span style="font-size:12px;font-weight:400;color:var(--text-dim);"> /月</span></div>
+      <ul style="margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--text-dim);line-height:1.7;">
+        <li>完整行情与策略分析</li>
+        <li>自选看板与回测</li>
+        <li style="opacity:.55;">不含邮件推送</li>
+      </ul>
+    </div>
+  </div>
+</div>
 <div id="authModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;">
   <div class="card" style="width:360px;max-width:92vw;">
     <div class="card-title" id="authTitle">登录</div>
@@ -1342,14 +1371,15 @@ async function refreshPlanFromServer() {
 async function openManageSub() {
   try {
     const r = await apiJSON('/api/billing/portal');
-    const plan = (r && r.plan) || (currentUser && currentUser.plan) || 'free';
+    const plan = ((r && r.plan) || (currentUser && currentUser.plan) || 'free').toLowerCase();
     const canCancel = !!(r && r.can_cancel);
-    const msg = plan === 'pro'
-      ? (canCancel
-          ? '当前为 Pro 订阅。取消后将在本账期结束后降为免费用户，是否确认取消自动续费？'
-          : '当前为 Pro，但未找到可自助取消的订单号，请联系客服。')
-      : '当前计划：' + plan;
-    if (!canCancel) { showToast(msg, plan === 'pro' ? 'ok' : 'err'); return; }
+    const label = plan === 'plus' ? 'Plus' : (plan === 'basic' || plan === 'pro' ? 'Basic' : plan);
+    if (plan === 'lifetime') { showToast('终身用户无需管理订阅', 'ok'); return; }
+    if (!canCancel) {
+      showToast(plan === 'free' ? '当前为免费用户' : ('当前为 ' + label + '，暂无可取消订单，请联系客服'), plan === 'free' ? 'err' : 'ok');
+      return;
+    }
+    const msg = '当前为 ' + label + ' 订阅。取消后将在本账期结束后降为免费用户，是否确认取消自动续费？\n（退费请通过支付渠道或联系客服处理）';
     if (!confirm(msg)) return;
     const c = await apiJSON('/api/billing/cancel', { method: 'POST', body: '{}' });
     showToast((c && c.message) || '已提交取消', 'ok');
@@ -1359,14 +1389,39 @@ async function openManageSub() {
   }
 }
 
-async function startCheckout() {
+function openUpgradeModal() {
+  const m = document.getElementById('upgradeModal');
+  if (!m) { startCheckout('basic'); return; }
+  const pb = (currentUser && currentUser.price_basic_usd) || 9.9;
+  const pp = (currentUser && currentUser.price_plus_usd) || (Number(pb) + 3);
+  const elB = document.getElementById('priceBasicLabel');
+  const elP = document.getElementById('pricePlusLabel');
+  if (elB) elB.textContent = Number(pb).toFixed(1).replace(/\.0$/, '');
+  if (elP) elP.textContent = Number(pp).toFixed(1).replace(/\.0$/, '');
+  m.style.display = 'flex';
+  m.classList.remove('hidden');
+}
+function closeUpgradeModal() {
+  const m = document.getElementById('upgradeModal');
+  if (!m) return;
+  m.style.display = 'none';
+  m.classList.add('hidden');
+}
+function selectUpgradePlan(plan) {
+  closeUpgradeModal();
+  startCheckout(plan === 'plus' ? 'plus' : 'basic');
+}
+
+async function startCheckout(plan) {
+  plan = plan || 'basic';
   try {
     const origin = location.origin + location.pathname;
     const r = await apiJSON('/api/billing/checkout', {
       method: 'POST',
       body: JSON.stringify({
-        success_url: origin + '?billing=success',
-        cancel_url: origin + '?billing=cancel',
+        plan: plan,
+        success_url: origin + (origin.indexOf('?') >= 0 ? '&' : '?') + 'billing=success',
+        cancel_url: origin + (origin.indexOf('?') >= 0 ? '&' : '?') + 'billing=cancel',
       }),
     });
     if (r && r.already_entitled) {
@@ -1381,7 +1436,7 @@ async function startCheckout() {
   }
 }
 
-// 支付成功回跳：轮询 /me 直到 plan=pro（webhook 可能略延迟）
+// 支付成功回跳：confirm + 轮询 /me
 (function handleBillingReturn() {
   try {
     const q = new URLSearchParams(location.search);
@@ -1396,15 +1451,19 @@ async function startCheckout() {
     }
     setTimeout(async () => {
       showToast('支付成功，正在同步会员状态…', 'ok');
-      for (let i = 0; i < 8; i++) {
+      try {
+        await apiJSON('/api/billing/confirm', { method: 'POST', body: '{}' });
+      } catch (e) { console.warn('confirm', e); }
+      for (let i = 0; i < 10; i++) {
         const u = await refreshPlanFromServer();
-        if (u && (u.plan === 'pro' || u.plan === 'lifetime' || u.entitled)) {
-          showToast('已开通 Pro', 'ok');
+        const pl = u && (u.plan || '').toLowerCase();
+        if (u && (pl === 'basic' || pl === 'plus' || pl === 'pro' || pl === 'lifetime' || u.entitled)) {
+          showToast(pl === 'plus' ? '已开通 Plus' : '已开通 Basic', 'ok');
           return;
         }
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 1200));
       }
-      showToast('支付已完成，若仍显示订阅请稍后刷新页面', 'ok');
+      showToast('支付已完成，若仍显示升级请稍后刷新', 'ok');
     }, 400);
   } catch (e) {}
 })();
@@ -1464,24 +1523,34 @@ function refreshAuthUI() {
     if (tipEl) tipEl.textContent = full;
     if (el) { el.dataset.full = full; el.classList.remove('show-tip'); }
     bindUserNameTip();
-    // 订阅角标 / 按钮：pro·lifetime 显示徽章；未授权显示订阅；pro 显示管理
+    // 角标 / 升级 / 管理
     const pb = document.getElementById('planBadge');
     const bs = document.getElementById('btnSubscribe');
     const bm = document.getElementById('btnManageSub');
-    const plan = (currentUser.plan || 'free').toLowerCase();
-    const entitled = currentUser.entitled === true || plan === 'pro' || plan === 'lifetime' || !!currentUser.is_admin;
+    let plan = (currentUser.plan || 'free').toLowerCase();
+    if (plan === 'pro') plan = 'basic';
+    const entitled = currentUser.entitled === true || plan === 'basic' || plan === 'plus' || plan === 'lifetime' || !!currentUser.is_admin;
     if (pb) {
       if (plan === 'lifetime') { pb.style.display = 'inline'; pb.textContent = '终身'; pb.style.color = 'var(--gold)'; }
-      else if (plan === 'pro' || (entitled && plan !== 'free')) { pb.style.display = 'inline'; pb.textContent = 'Pro'; pb.style.color = 'var(--green)'; }
+      else if (plan === 'plus') { pb.style.display = 'inline'; pb.textContent = 'Plus'; pb.style.color = 'var(--gold)'; }
+      else if (plan === 'basic') { pb.style.display = 'inline'; pb.textContent = 'Basic'; pb.style.color = 'var(--green)'; }
       else { pb.style.display = 'none'; }
     }
     if (bs) {
-      // 已登录且未授权 → 显示订阅（门禁开启后 free 用户）
-      const needPay = !entitled;
-      bs.style.display = needPay ? 'inline-flex' : 'none';
+      // 免费：升级；Basic：可升级到 Plus；Plus/终身：隐藏
+      if (!entitled || plan === 'free') { bs.style.display = 'inline-flex'; bs.textContent = '升级'; }
+      else if (plan === 'basic') { bs.style.display = 'inline-flex'; bs.textContent = '升级 Plus'; }
+      else { bs.style.display = 'none'; }
     }
     if (bm) {
-      bm.style.display = (plan === 'pro' && !currentUser.is_admin) ? 'inline-flex' : 'none';
+      bm.style.display = ((plan === 'basic' || plan === 'plus') && !currentUser.is_admin) ? 'inline-flex' : 'none';
+    }
+    // 邮件推送开关：无 can_digest 时禁用
+    const digEn = document.getElementById('digestEnabled');
+    if (digEn) {
+      const canDig = !!(currentUser.can_digest || plan === 'plus' || plan === 'lifetime' || currentUser.is_admin);
+      digEn.disabled = !canDig;
+      if (!canDig) digEn.title = '邮件推送需 Plus 套餐';
     }
     document.getElementById('addWatchRow').style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';

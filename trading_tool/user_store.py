@@ -219,60 +219,73 @@ PRO_PRICE_USD = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
 def entitlement_from_profile(profile: dict = None, is_admin_user: bool = False) -> dict:
     """
     计算用户权益。
-    plan: free | pro | lifetime
-    entitled: 是否可使用完整功能
+    plan: free | basic | plus | pro(兼容=basic) | lifetime
+    entitled: 是否可使用分析等核心功能
+    can_digest: 是否可开启邮件推送（plus / lifetime / admin）
     """
     p = profile or {}
     plan = (p.get("plan") or "free").strip().lower()
     source = (p.get("plan_source") or "default").strip().lower()
+    # 兼容旧 pro → 视为 basic
+    if plan == "pro":
+        plan = "basic"
+    price_basic = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
+    price_plus = float(os.getenv("PLUS_PRICE_USD", str(round(price_basic + 3, 1))) or (price_basic + 3))
+
+    base = {
+        "billing_required": BILLING_REQUIRED,
+        "price_usd": price_basic,
+        "price_basic_usd": price_basic,
+        "price_plus_usd": price_plus,
+    }
+
     if is_admin_user or p.get("is_admin"):
         return {
-            "plan": "lifetime" if plan == "lifetime" else plan or "pro",
+            **base,
+            "plan": "lifetime" if plan == "lifetime" else (plan if plan in ("basic", "plus", "lifetime") else "plus"),
             "plan_source": source or "admin",
             "entitled": True,
-            "billing_required": BILLING_REQUIRED,
-            "price_usd": PRO_PRICE_USD,
+            "can_digest": True,
             "reason": "admin",
         }
     if plan == "lifetime" or source == "grandfather":
         return {
+            **base,
             "plan": "lifetime",
             "plan_source": source or "grandfather",
             "entitled": True,
-            "billing_required": BILLING_REQUIRED,
-            "price_usd": PRO_PRICE_USD,
+            "can_digest": True,
             "reason": "grandfather",
         }
-    if plan == "pro":
+    if plan in ("basic", "plus"):
         exp = _parse_ts(p.get("plan_expires_at"))
         now = datetime.now(timezone.utc)
         if exp is None or exp > now:
             return {
-                "plan": "pro",
-                "plan_source": source or "stripe",
+                **base,
+                "plan": plan,
+                "plan_source": source or "waffo",
                 "entitled": True,
-                "billing_required": BILLING_REQUIRED,
-                "price_usd": PRO_PRICE_USD,
+                "can_digest": plan == "plus",
                 "plan_expires_at": p.get("plan_expires_at"),
                 "reason": "subscription",
             }
-        # 已过期
         return {
+            **base,
             "plan": "free",
             "plan_source": source,
             "entitled": not BILLING_REQUIRED,
-            "billing_required": BILLING_REQUIRED,
-            "price_usd": PRO_PRICE_USD,
+            "can_digest": False,
             "plan_expires_at": p.get("plan_expires_at"),
             "reason": "expired",
         }
-    # free：收费未开启时仍可用；开启后需订阅
+    # free
     return {
+        **base,
         "plan": "free",
         "plan_source": source,
         "entitled": not BILLING_REQUIRED,
-        "billing_required": BILLING_REQUIRED,
-        "price_usd": PRO_PRICE_USD,
+        "can_digest": False,
         "reason": "free",
     }
 

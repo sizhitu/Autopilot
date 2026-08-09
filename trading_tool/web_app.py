@@ -414,6 +414,20 @@ async def get_digest_prefs_api(user: dict = Depends(auth.get_current_user)):
 
 @app.post("/api/user/digest")
 async def set_digest_prefs_api(req: DigestPrefsRequest, user: dict = Depends(auth.get_current_user)):
+    profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
+    ent = user_store.entitlement_from_profile(
+        profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin"))
+    )
+    # 开启邮件推送需要 Plus / 终身 / 管理员
+    if req.enabled and not ent.get("can_digest"):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "plus_required",
+                "message": "邮件推送需升级到 Plus 套餐",
+                "price_usd": ent.get("price_plus_usd"),
+            },
+        )
     freq = req.freq if req.freq in ("weekly", "biweekly") else "weekly"
     prefs = user_store.set_digest_prefs(user["id"], enabled=req.enabled, freq=freq)
     return {"success": True, **prefs}
@@ -1275,7 +1289,15 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
     ent = user_store.entitlement_from_profile(
         profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin"))
     )
-    if ent.get("plan") in ("lifetime", "pro") and ent.get("entitled"):
+    # 已有付费权益：若请求升级到 plus 且当前仅 basic，仍允许结账
+    _req_plan = "basic"
+    try:
+        _body_early = {}
+    except Exception:
+        pass
+    if ent.get("plan") in ("lifetime",) and ent.get("entitled"):
+        return {"success": True, "already_entitled": True, "plan": ent.get("plan")}
+    if ent.get("plan") in ("plus",) and ent.get("entitled"):
         return {"success": True, "already_entitled": True, "plan": ent.get("plan")}
 
     body = {}
@@ -1301,23 +1323,77 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
             if origin:
                 success_url = origin + "/?billing=success"
         uid = user["id"]
+        want = (body.get("plan") or "basic").strip().lower()
+        if want in ("pro", "basic"):
+            want = "basic"
+        elif want not in ("basic", "plus"):
+            want = "basic"
+        product_id = os.getenv("WAFFO_PRODUCT_ID", "").strip()
+        price_basic = float(os.getenv("PRO_PRICE_USD", "9.9") or "9.9")
+        price_plus = float(os.getenv("PLUS_PRICE_USD", str(round(price_basic + 3, 1))) or (price_basic + 3))
+        extra = {}
+        if want == "plus":
+            plus_pid = os.getenv("WAFFO_PRODUCT_ID_PLUS", "").strip()
+            if plus_pid:
+                product_id = plus_pid
+            else:
+                # 无独立 Plus 产品时，用价格快照 +$3
+                extra["priceSnapshot"] = {
+                    "amount": f"{price_plus:.2f}",
+                    "taxCategory": "saas",
+                }
         try:
             session = waffo_client.create_checkout_session(
+                product_id=product_id or None,
                 buyer_email=(user.get("email") or "").strip().lower() or None,
                 success_url=success_url or None,
                 order_merchant_external_id=str(uid),
-                metadata={"userId": str(uid), "user_id": str(uid), "plan": "pro"},
+                metadata={"userId": str(uid), "user_id": str(uid), "plan": want},
+                **{k: v for k, v in extra.items()},
             )
+        except TypeError:
+            # 旧版 create_checkout_session 无 priceSnapshot 参数
+            try:
+                session = waffo_client.create_checkout_session(
+                    product_id=product_id or None,
+                    buyer_email=(user.get("email") or "").strip().lower() or None,
+                    success_url=success_url or None,
+                    order_merchant_external_id=str(uid),
+                    metadata={"userId": str(uid), "user_id": str(uid), "plan": want},
+                )
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Waffo 创建结账失败: {e}")
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Waffo 创建结账失败: {e}")
         url = session.get("checkoutUrl") or session.get("url")
         if not url:
             raise HTTPException(status_code=502, detail=f"Waffo 未返回 checkoutUrl: {session}")
+        # 记录待确认，支付回跳时可确认开通（防 webhook 延迟/丢单）
+        try:
+            import cache as _cache
+            sid = session.get("sessionId") or session.get("id") or ""
+            _cache.set_setting(
+                f"billing.pending.{uid}",
+                {"session_id": sid, "plan": want, "ts": __import__("time").time()},
+            ) if hasattr(_cache, "set_setting") else None
+            if hasattr(_cache, "set_cache"):
+                _cache.set_cache(f"billing.pending.{uid}", {"session_id": sid, "plan": want}, ttl=7200)
+        except Exception:
+            try:
+                import settings_store
+                import json as _json, time as _time
+                settings_store.set_setting(
+                    f"billing.pending.{uid}",
+                    _json.dumps({"session_id": session.get("sessionId"), "plan": want, "ts": _time.time()}),
+                )
+            except Exception:
+                pass
         return {
             "success": True,
             "url": url,
             "provider": "waffo",
             "session_id": session.get("sessionId") or session.get("id"),
+            "plan": want,
         }
 
     # ---- Polar API Checkout（遗留）----
@@ -1412,6 +1488,49 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
 
 
 
+
+@app.post("/api/billing/confirm")
+async def billing_confirm(user: dict = Depends(auth.get_current_user)):
+    """支付成功回跳后由前端调用：若存在 pending 结账记录则开通对应套餐（弥补 webhook 延迟）。"""
+    uid = user["id"]
+    profile = user_store.get_or_create_profile(uid, user.get("email", ""))
+    cur = (profile.get("plan") or "free").lower()
+    if cur in ("lifetime", "plus"):
+        ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(profile.get("is_admin")))
+        return {"success": True, "already": True, **ent}
+    pending = None
+    try:
+        import settings_store, json as _json
+        raw = settings_store.get_setting(f"billing.pending.{uid}", None)
+        if isinstance(raw, str) and raw:
+            pending = _json.loads(raw)
+        elif isinstance(raw, dict):
+            pending = raw
+    except Exception:
+        pending = None
+    if not pending:
+        # 无 pending 时：若已是 basic/pro 直接返回；否则不擅自开通
+        if cur in ("basic", "pro"):
+            ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(profile.get("is_admin")))
+            return {"success": True, "already": True, **ent}
+        raise HTTPException(status_code=400, detail="未找到待确认的支付会话，请等待 webhook 同步或联系客服")
+    want = (pending.get("plan") or "basic").lower()
+    if want not in ("basic", "plus"):
+        want = "basic"
+    # 不可降级：已 plus 不写成 basic
+    if cur == "plus":
+        want = "plus"
+    user_store.set_plan(uid, plan=want, plan_source="waffo")
+    try:
+        import settings_store
+        settings_store.set_setting(f"billing.pending.{uid}", "")
+    except Exception:
+        pass
+    profile = user_store.get_or_create_profile(uid, user.get("email", ""))
+    ent = user_store.entitlement_from_profile(profile, is_admin_user=bool(profile.get("is_admin")))
+    return {"success": True, "confirmed": True, **ent}
+
+
 @app.post("/api/billing/cancel")
 async def billing_cancel(user: dict = Depends(auth.get_current_user)):
     """取消订阅（Waffo：到期后失效；lifetime 不可取消）。"""
@@ -1420,7 +1539,7 @@ async def billing_cancel(user: dict = Depends(auth.get_current_user)):
     source = (profile.get("plan_source") or "").lower()
     if plan == "lifetime" or source == "grandfather":
         return {"success": True, "message": "终身用户无需取消"}
-    if plan != "pro":
+    if plan not in ("pro", "basic", "plus"):
         return {"success": True, "message": "当前不是付费订阅"}
     order_id = (profile.get("stripe_subscription_id") or "").strip()
     if not order_id:
@@ -1452,7 +1571,7 @@ async def billing_portal(user: dict = Depends(auth.get_current_user)):
         **ent,
         "order_id": profile.get("stripe_subscription_id") or "",
         "can_cancel": bool(
-            (profile.get("plan") or "").lower() == "pro"
+            (profile.get("plan") or "").lower() in ("pro", "basic", "plus")
             and (profile.get("plan_source") or "").lower() not in ("grandfather",)
             and (profile.get("stripe_subscription_id") or "")
         ),
@@ -1518,13 +1637,39 @@ async def billing_webhook(request: Request):
             if st and st not in ("active", "trialing"):
                 activate = False
         if activate and uid:
-            user_store.set_plan(
-                uid,
-                plan="pro",
-                plan_source="waffo",
-                stripe_subscription_id=str(order_id) if order_id else None,
-                plan_expires_at=str(exp) if exp else None,
-            )
+            meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+            want = (meta.get("plan") or meta.get("user_plan") or "basic")
+            want = str(want).lower()
+            if want in ("pro", "basic"):
+                want = "basic"
+            elif want != "plus":
+                want = "basic"
+            # 不覆盖 lifetime；plus 不被 basic 降级
+            prev = {}
+            try:
+                prev = user_store.get_or_create_profile(uid) or {}
+                prev_plan = (prev.get("plan") or "").lower()
+                if prev_plan == "lifetime" or (prev.get("plan_source") or "") == "grandfather":
+                    want = "lifetime"
+                elif prev_plan == "plus" and want == "basic":
+                    want = "plus"
+            except Exception:
+                prev = {}
+            if want == "lifetime":
+                pass  # 不改动终身
+            else:
+                user_store.set_plan(
+                    uid,
+                    plan=want,
+                    plan_source="waffo",
+                    stripe_subscription_id=str(order_id) if order_id else None,
+                    plan_expires_at=str(exp) if exp else None,
+                )
+            try:
+                import settings_store
+                settings_store.set_setting(f"billing.pending.{uid}", "")
+            except Exception:
+                pass
         elif etype in ("subscription.canceled", "subscription.past_due", "refund.succeeded"):
             if uid:
                 try:

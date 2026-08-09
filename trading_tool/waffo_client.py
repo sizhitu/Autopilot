@@ -100,6 +100,7 @@ def create_checkout_session(
     order_merchant_external_id: str = None,
     metadata: dict = None,
     product_type: str = "subscription",
+    priceSnapshot: dict = None,
 ) -> dict:
     pid = (product_id or os.getenv("WAFFO_PRODUCT_ID", "")).strip()
     if not pid:
@@ -122,6 +123,8 @@ def create_checkout_session(
         meta["user_id"] = str(ext_id)
     if meta:
         payload["metadata"] = meta
+    if priceSnapshot:
+        payload["priceSnapshot"] = priceSnapshot
 
     data = api_call("POST", "/v1/actions/checkout/create-session", payload)
     session = data.get("data") if isinstance(data.get("data"), dict) else data
