@@ -275,10 +275,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .industry-tag { margin-top:4px; display:inline-block; font-size:11px; font-weight:600; color:var(--gold); background:rgba(212,175,55,0.12); border:1px solid rgba(212,175,55,0.35); padding:2px 9px; border-radius:999px; }
 
 /* 自选看板表格：列宽合计 100%，间距视觉均匀 */
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 860px; border-collapse: collapse; }
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 820px; border-collapse: collapse; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
-  padding: 6px 2px !important;   /* 左右 2px，列间距再缩一半 */
+  padding: 6px 1px !important;   /* 左右再缩，给末列腾空间 */
   box-sizing: border-box;
 }
 #watchlistTable th {
@@ -287,10 +287,10 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 }
 #watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }
 #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 9%; }    /* 代码（含删除按钮） */
-#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 12%; }   /* 名称 */
-#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 8%; }   /* 现价 */
-#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 7%; }   /* 日 */
-#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 8%; }   /* 近5日 */
+#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 11%; }   /* 名称 */
+#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 7%; }   /* 现价 */
+#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 6%; }   /* 日涨幅 */
+#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 6%; }   /* 近5日 */
 /* 数据行：代码/名称左对齐；数值列居中；其余文字列左对齐 */
 #watchlistTable td:nth-child(1),
 #watchlistTable td:nth-child(2) { text-align: left; }
@@ -301,11 +301,11 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 #watchlistTable td:nth-child(7),
 #watchlistTable td:nth-child(8) { text-align: center !important; }  /* 九转时机/趋势过滤/操盘动作 居中 */
 #watchlistTable td:nth-child(9) { text-align: left !important; }    /* 新高/估值 */
-#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 15%; }  /* 九转时机 */
-#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }  /* 趋势过滤 */
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }  /* 操盘动作 */
+#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 13%; }  /* 九转时机 */
+#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 8%; }   /* 趋势过滤 */
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 10%; }  /* 操盘动作 */
 #watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 14%; }  /* 新高/估值 */
-#watchlistTable th:nth-child(10), #watchlistTable td:nth-child(10) { width: 11%; text-align: center !important; }  /* 参考价/涨幅 */
+#watchlistTable th:nth-child(10), #watchlistTable td:nth-child(10) { width: 14%; text-align: center !important; }  /* 参考价/涨幅：加宽减轻拥挤 */
 #watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:1px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
 /* 详情页：新高/新低/估值 卡片 */
@@ -2559,7 +2559,7 @@ function renderWatchlist(stocks) {
       html += `<tr style="border-bottom:1px solid var(--border);">
         <td style="padding:5px 6px;font-weight:600;color:var(--gold);">${s.code}</td>
         <td style="padding:5px 6px;">${s.name}</td>
-        <td colspan="7" style="padding:5px 6px;color:var(--red);font-size:11px;">${s.error}</td>
+        <td colspan="8" style="padding:5px 6px;color:var(--red);font-size:11px;">${s.error}</td>
       </tr>`;
       continue;
     }
@@ -2607,7 +2607,7 @@ function renderWatchlist(stocks) {
       let upPart = '';
       if (up != null && up !== '' && !isNaN(Number(up))) {
         const upn = Number(up);
-        const uc = upn >= 0 ? 'var(--red)' : 'var(--green)';
+        const uc = upn >= 0 ? 'var(--green)' : 'var(--red)';  // 与日涨幅一致：涨绿跌红
         const sign = upn >= 0 ? '+' : '';
         upPart = `<span style="color:${uc};font-weight:600;">${sign}${upn.toFixed(2)}%</span>`;
       } else {
