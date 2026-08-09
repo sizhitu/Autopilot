@@ -27,6 +27,11 @@ import numpy as np
 _YAHOO_COOLDOWN_UNTIL = 0.0
 _YAHOO_COOLDOWN_SEC = 120  # 冷却时长（秒），每次命中 429 均顺延
 
+# 分析师目标价缓存：symbol -> (unix_ts, mean_target|None)
+_ANALYST_CACHE = {}
+_ANALYST_CACHE_TTL = 6 * 3600  # 6 小时
+
+
 
 def _yahoo_in_cooldown() -> bool:
     return time.time() < _YAHOO_COOLDOWN_UNTIL
@@ -957,6 +962,117 @@ class DataFetcher:
             return ind.strip() if ind else None
         except Exception:
             return None
+
+    def _yahoo_symbol(self, symbol: str) -> str:
+        """转为 Yahoo 代码。"""
+        s = symbol.strip()
+        if self._is_cn_stock(s):
+            ns = self._normalize_cn_symbol(s)
+            code = ns[2:] if ns[:2] in ('sh', 'sz', 'bj') else ns
+            if ns.startswith('sh'):
+                return f"{code}.SS"
+            if ns.startswith('sz'):
+                return f"{code}.SZ"
+            if ns.startswith('bj'):
+                return f"{code}.BJ"
+            return f"{code}.SS"
+        return s.upper().replace('.', '-')
+
+    def _fetch_yahoo_target_mean(self, ysym: str):
+        """Yahoo financialData.targetMeanPrice。"""
+        if _yahoo_in_cooldown():
+            return None
+        try:
+            r = self.session.get(
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ysym}",
+                params={"modules": "financialData"},
+                timeout=10,
+            )
+            if r.status_code == 429:
+                _trigger_yahoo_cooldown()
+                return None
+            if r.status_code != 200:
+                return None
+            result = (r.json().get("quoteSummary") or {}).get("result")
+            if not result:
+                return None
+            fd = result[0].get("financialData") or {}
+            tm = fd.get("targetMeanPrice")
+            if isinstance(tm, dict):
+                tm = tm.get("raw")
+            if tm is None:
+                return None
+            v = float(tm)
+            return v if v > 0 else None
+        except Exception:
+            return None
+
+    def _fetch_em_target_mean(self, symbol: str):
+        """东方财富一致预期目标价（A股），失败返回 None。"""
+        try:
+            s = symbol.strip()
+            code = s
+            if not s.isdigit():
+                ns = self._normalize_cn_symbol(s)
+                code = ns[2:] if len(ns) > 2 else ns
+            if not (code.isdigit() and len(code) == 6):
+                return None
+            url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+            params = {
+                "reportName": "RPT_WEB_RESPREDICT",
+                "columns": "SECURITY_CODE,TARGET_PRICE_AVG,RATING_ORG_NUM",
+                "filter": f'(SECURITY_CODE="{code}")',
+                "pageNumber": "1",
+                "pageSize": "1",
+                "source": "WEB",
+                "client": "WEB",
+            }
+            r = self.session.get(
+                url,
+                params=params,
+                timeout=10,
+                headers={"Referer": "https://data.eastmoney.com/"},
+            )
+            if r.status_code != 200:
+                return None
+            data = (r.json().get("result") or {}).get("data") or []
+            if not data:
+                return None
+            avg = data[0].get("TARGET_PRICE_AVG")
+            if avg is None:
+                return None
+            v = float(avg)
+            return v if v > 0 else None
+        except Exception:
+            return None
+
+    def fetch_analyst_mean_target(self, symbol: str):
+        """
+        分析师目标价均值。无数据返回 None。
+        美股/部分标的：Yahoo targetMeanPrice；A股优先东财一致预期，再试 Yahoo。
+        """
+        global _ANALYST_CACHE
+        sym = (symbol or "").strip()
+        if not sym:
+            return None
+        key = sym.upper()
+        now = time.time()
+        hit = _ANALYST_CACHE.get(key)
+        if hit and now - hit[0] < _ANALYST_CACHE_TTL:
+            return hit[1]
+
+        mean = None
+        try:
+            if self._is_cn_stock(sym):
+                mean = self._fetch_em_target_mean(sym)
+            if mean is None:
+                ysym = self._yahoo_symbol(sym)
+                mean = self._fetch_yahoo_target_mean(ysym)
+        except Exception:
+            mean = None
+
+        _ANALYST_CACHE[key] = (now, mean)
+        return mean
 
     def _fetch_yahoo_industry(self, ysym: str) -> "str | None":
         """Yahoo assetProfile 的 sector / industry（本机可用，沙箱常限流）。"""

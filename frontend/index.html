@@ -275,7 +275,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .industry-tag { margin-top:4px; display:inline-block; font-size:11px; font-weight:600; color:var(--gold); background:rgba(212,175,55,0.12); border:1px solid rgba(212,175,55,0.35); padding:2px 9px; border-radius:999px; }
 
 /* 自选看板表格：列宽合计 100%，间距视觉均匀 */
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 780px; border-collapse: collapse; }
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 860px; border-collapse: collapse; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
   padding: 6px 2px !important;   /* 左右 2px，列间距再缩一半 */
@@ -304,7 +304,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 #watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 15%; }  /* 九转时机 */
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }  /* 趋势过滤 */
 #watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; }  /* 操盘动作 */
-#watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 19%; }  /* 新高/估值 */
+#watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 14%; }  /* 新高/估值 */
+#watchlistTable th:nth-child(10), #watchlistTable td:nth-child(10) { width: 10%; text-align: center !important; }  /* 分析师均价 */
 #watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:1px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
 /* 详情页：新高/新低/估值 卡片 */
@@ -2594,6 +2595,17 @@ function renderWatchlist(stocks) {
     const hlHtml = `${hlPart}<br><span style="color:${_vColor};font-weight:600;">${s.valuation||'合理'}</span>` +
       (s.valuation_detail ? ` <span style="color:var(--text-dim);font-size:10px;">${s.valuation_detail}</span>` : '') +
       ` <span style="color:${_rColor};font-size:9px;border:1px solid currentColor;border-radius:3px;padding:0 3px;white-space:nowrap;">${s.role||''}</span>`;
+    let analystHtml = '<span style="color:var(--text-dim);">--</span>';
+    if (s.analyst_target != null && s.analyst_target !== '' && !isNaN(Number(s.analyst_target))) {
+      const up = s.analyst_upside_pct;
+      let upPart = '';
+      if (up != null && up !== '' && !isNaN(Number(up))) {
+        const upn = Number(up);
+        const uc = upn >= 0 ? 'var(--red)' : 'var(--green)';
+        upPart = ` <span style="color:${uc};font-weight:600;">${upn >= 0 ? '+' : ''}${upn.toFixed(1)}%</span>`;
+      }
+      analystHtml = `<span style="font-family:monospace;">${Number(s.analyst_target).toFixed(2)}</span>${upPart}`;
+    }
     html += `<tr style="border-bottom:1px solid var(--border); cursor:pointer;" onclick="fetchQuote('${s.code}','${s.name}','${s.market}')">
       <td style="padding:5px 6px;font-weight:600;color:var(--gold);white-space:nowrap;">${
         currentUser ? `<button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-right:4px;">✕</button>` : ''
@@ -2606,6 +2618,7 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 6px;"><span style="color:${trendColor};font-weight:600;">${trendText}</span></td>
       <td style="padding:5px 6px;" title="${actionTip}"><span style="color:${actionColor};font-weight:700;">${actionText}</span></td>
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
+      <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
     </tr>`;
   }
   body.innerHTML = html;

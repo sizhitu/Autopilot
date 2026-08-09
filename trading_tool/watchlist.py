@@ -215,6 +215,8 @@ class StockStatus:
     valuation: str = "合理"       # 估值状态：低估/高估/合理
     valuation_type: str = "fair"  # under/over/fair
     valuation_detail: str = ""    # 估值依据（如 "MA250 -8%" / "分位85%"）
+    analyst_target: object = None  # 分析师均价 float | None
+    analyst_upside_pct: object = None  # 相对现价涨幅空间% | None
     error: str = ""
 
 
@@ -470,6 +472,19 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         status.valuation_type = val_type
         status.valuation_detail = val_detail
 
+        # 分析师均价 + 相对现价涨幅空间
+        try:
+            tgt = fetcher.fetch_analyst_mean_target(code)
+            if tgt and last_close and last_close > 0:
+                status.analyst_target = round(float(tgt), 2)
+                status.analyst_upside_pct = round((float(tgt) / float(last_close) - 1.0) * 100.0, 1)
+            else:
+                status.analyst_target = None
+                status.analyst_upside_pct = None
+        except Exception:
+            status.analyst_target = None
+            status.analyst_upside_pct = None
+
         # 顺手把当日粒度行情落库（daily_data），供回测 / 指标分析 / 容错使用
         try:
             store_daily_bars(code, df, source="watchlist")
@@ -516,6 +531,8 @@ def _status_to_dict(st: StockStatus) -> dict:
         'valuation': st.valuation,
         'valuation_type': st.valuation_type,
         'valuation_detail': st.valuation_detail,
+        'analyst_target': st.analyst_target,
+        'analyst_upside_pct': st.analyst_upside_pct,
         'error': st.error,
     }
 
@@ -638,6 +655,7 @@ def _placeholder_row(code: str, name: str) -> dict:
         'timing': '—', 'timing_color': 'gray',
         'trend_filter': '—', 'trend_filter_color': 'gray',
         'nine_turn': '—', 'high_low': '—',
+        'analyst_target': None, 'analyst_upside_pct': None,
         'pending': True, 'error': None,
     }
 
