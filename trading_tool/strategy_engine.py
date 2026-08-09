@@ -640,18 +640,46 @@ class FujimotoStrategy:
             except Exception:
                 pass
 
-        # 九转到位 + 量价支持；量能/价格收敛为辅助（仍必须九转）
-        # 收敛不判多空：整理末端 + 九转同向时作环境加分
+        # —— 斐波那契纳入时机层（中等权重）——
+        # 纯触及权重低；「放量止跌 / 阳线反包」在关键位是较强时机，可作独立买侧路径
+        # 九转仍是主路径；Fib 放量止跌为次主路径；两者叠加时置信最高
+        fib_react_buy = bool(fib_buy is not None and fib_buy.reacted)
+        fib_vol_stop = bool(
+            fib_react_buy
+            and fib_buy.reaction_signal in ("放量止跌", "阳线反包确认")
+        )
+        fib_txt = "无斐波那契买点"
+        if fib_buy is not None:
+            lv = f"0.{int(fib_buy.level * 1000)}"
+            if fib_vol_stop:
+                fib_txt = f"Fib{lv}{fib_buy.reaction_signal}"
+            elif fib_react_buy:
+                fib_txt = f"Fib{lv}有反应({fib_buy.reaction_signal or '确认'})"
+            elif fib_buy.tested:
+                fib_txt = f"Fib{lv}已触及未确认"
+            else:
+                fib_txt = f"Fib{lv}附近"
+
+        # 收敛辅助（不单独定方向）
         conv_boost_buy = (conv_info["converging"] or price_tri.get("forming")) and nine_buy
         conv_boost_sell = (conv_info["converging"] or price_tri.get("forming")) and nine_sell
-        timing_buy = nine_buy and vol_ok_buy
+
+        # 买侧路径：
+        # A 九转主路径：九转到位 + 量价支持
+        # B Fib 次主路径：关键位放量止跌/反包 + 量价支持（可无九转）
+        nine_path_buy = nine_buy and vol_ok_buy
+        fib_path_buy = fib_vol_stop and vol_ok_buy
+        timing_buy = nine_path_buy or fib_path_buy
         timing_sell = nine_sell and vol_ok_sell
-        # 价格三角已向上/下突破时，与九转同向可强化，但不取消九转门槛
+        # 价格三角突破强化（需九转同向）
         if price_tri.get("breakout") == "up" and nine_buy and vol_ok_buy:
             timing_buy = True
+            nine_path_buy = True
         if price_tri.get("breakout") == "down" and nine_sell and vol_ok_sell:
             timing_sell = True
         timing_pass = timing_buy or timing_sell
+        # 仅 Fib 路径、无九转 → 仓位略折（见后）
+        fib_led_only = bool(fib_path_buy and not nine_path_buy)
 
         if nt and nt.count > 0:
             nine_txt = f"{'下跌' if nt.direction=='down' else '上涨' if nt.direction=='up' else ''}九转{nt.count}（{nt.status}）"
@@ -666,25 +694,37 @@ class FujimotoStrategy:
         if price_tri.get("breakout") in ("up", "down"):
             pt_txt += f"·已偏{'上' if price_tri['breakout']=='up' else '下'}破"
         if timing_buy:
-            extra = "（收敛辅助）" if conv_boost_buy else ""
-            timing_status = f"买侧确认：{nine_txt} + {vol_txt}；{div_txt}；{conv_txt}；{pt_txt}{extra}"
+            path_note = ""
+            if nine_path_buy and fib_vol_stop:
+                path_note = "（九转+Fib放量止跌·高置信）"
+            elif fib_led_only:
+                path_note = "（Fib放量止跌路径·中等权重）"
+            elif conv_boost_buy:
+                path_note = "（收敛辅助）"
+            timing_status = (
+                f"买侧确认：{nine_txt} + {vol_txt}；{div_txt}；{fib_txt}；{conv_txt}；{pt_txt}{path_note}"
+            )
         elif timing_sell:
             extra = "（收敛辅助）" if conv_boost_sell else ""
-            timing_status = f"卖侧确认：{nine_txt} + {vol_txt}；{div_txt}；{conv_txt}；{pt_txt}{extra}"
+            timing_status = f"卖侧确认：{nine_txt} + {vol_txt}；{div_txt}；{fib_txt}；{conv_txt}；{pt_txt}{extra}"
         else:
             parts = []
-            if not (nine_buy or nine_sell):
+            if not (nine_buy or nine_sell or fib_vol_stop):
                 parts.append(f"九转未到位（{nine_txt}）")
+                if fib_buy and fib_buy.tested and not fib_react_buy:
+                    parts.append(f"{fib_txt}（触及未放量确认，权重不足）")
             if nine_buy and not vol_ok_buy:
                 parts.append(f"量价不支持买（{vol_txt} / {div_txt}）")
             if nine_sell and not vol_ok_sell:
                 parts.append(f"量价不支持卖（{vol_txt} / {div_txt}）")
+            if fib_vol_stop and not vol_ok_buy:
+                parts.append(f"Fib已放量止跌但量价结构仍不支持（{div_txt}）")
             if conv_info["converging"]:
                 parts.append(f"{conv_txt}（量能收束，需突破确认）")
             if price_tri.get("forming"):
                 parts.append(f"{pt_txt}（整理压缩，方向看收盘突破）")
             if not parts:
-                parts.append(f"{nine_txt}；{vol_txt}；{div_txt}；{conv_txt}；{pt_txt}")
+                parts.append(f"{nine_txt}；{vol_txt}；{div_txt}；{fib_txt}；{conv_txt}；{pt_txt}")
             timing_status = "；".join(parts)
 
         # === 三层一致性检验 ===
@@ -732,7 +772,7 @@ class FujimotoStrategy:
                         ("（已测试但未确认反应）" if tool_tested and not tool_confirmed else "") +
                         ("；震荡市结构放宽为「触及可参考」" if is_range and tool_tested and not tool_confirmed else "")
             },
-            "时机层（九转+量价+收敛）": {
+            "时机层（九转+量价+Fib）": {
                 "通过": timing_pass,
                 "状态": timing_status + ("；震荡市权重优先" if is_range and timing_pass else "")
             },
@@ -803,6 +843,10 @@ class FujimotoStrategy:
             if range_mode:
                 position_pct = position_pct * 0.5
                 risk_warning = (risk_warning + "；" if risk_warning else "") + "震荡市轻仓（时机主导，仓位×0.5）"
+            # 仅 Fib 放量止跌、无九转：中等权重，仓位约 70%
+            elif fib_led_only:
+                position_pct = position_pct * 0.7
+                risk_warning = (risk_warning + "；" if risk_warning else "") + "Fib放量止跌路径（无九转，仓位×0.7）"
 
             entry_price = close
             stop_loss = close - 1.5 * atr_val
