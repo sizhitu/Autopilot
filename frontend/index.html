@@ -48,23 +48,47 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .header-auth #userArea.hidden { display:none !important; }
 .header-auth .btn { height:28px; line-height:1; padding:0 12px; display:inline-flex; align-items:center; justify-content:center; }
 .header-auth .btn-sm { height:28px; padding:0 10px; font-size:11px; }
-#userName, .user-pill {
-  height:28px; max-width:168px; padding:0 10px; gap:6px;
-  display:inline-flex; align-items:center;
-  font-size:11px; color:var(--text); font-weight:500;
-  background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.12));
-  border:1px solid var(--border); border-radius:999px;
+/* 用户名+套餐：与 header 登录/退出同一套 btn 体系 */
+#userName.user-pill,
+.header-auth #userName {
+  height:28px; max-width:180px; padding:0 10px; gap:6px;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:11px; font-weight:500; line-height:1;
+  color:var(--text);
+  background:transparent;
+  border:1px solid var(--border);
+  border-radius:4px;
   overflow:hidden; white-space:nowrap; cursor:pointer;
   position:relative; user-select:none; -webkit-tap-highlight-color:transparent;
   box-sizing:border-box; font-family:inherit;
+  transition: opacity 0.2s, border-color 0.2s, color 0.2s;
 }
-#userName:hover, .user-pill:hover { border-color:var(--gold); color:var(--gold); }
-#userName .plan-chip, #planBadge.plan-chip {
-  font-size:9px; font-weight:700; padding:1px 6px; border-radius:999px;
-  border:1px solid currentColor; letter-spacing:.3px; flex-shrink:0;
+#userName.user-pill:hover,
+.header-auth #userName:hover {
+  border-color:var(--blue);
+  opacity:0.95;
+}
+#userName .plan-chip,
+#planBadge.plan-chip {
+  font-size:10px; font-weight:600; padding:0 5px; height:16px;
+  display:inline-flex; align-items:center; justify-content:center;
+  border-radius:3px; border:1px solid var(--border);
+  color:var(--text-dim); background:rgba(255,255,255,.04);
+  letter-spacing:0; flex-shrink:0; line-height:1;
+}
+#planBadge.plan-chip[data-plan="pro"],
+#planBadge.plan-chip[data-plan="basic"] {
+  color:var(--green); border-color:rgba(46,204,113,.45); background:rgba(46,204,113,.1);
+}
+#planBadge.plan-chip[data-plan="plus"],
+#planBadge.plan-chip[data-plan="lifetime"] {
+  color:var(--gold); border-color:rgba(241,196,15,.45); background:rgba(241,196,15,.1);
+}
+#planBadge.plan-chip[data-plan="free"] {
+  color:var(--text-dim); border-color:var(--border); background:transparent;
 }
 #userNameText {
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:96px;
 }
 #userNameTip {
   display:none; position:absolute; right:0; top:calc(100% + 8px);
@@ -96,7 +120,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   .header-auth #authArea,
   .header-auth #userArea { gap:4px; }
   .header-auth .btn-sm { padding:0 8px; height:26px; font-size:11px; }
-  #userName { max-width:110px; height:26px; padding:0 8px; font-size:10px; }
+  #userName { max-width:130px; height:26px; padding:0 8px; font-size:11px; border-radius:4px; }
   #userNameText { max-width:94px; }
 }
 
@@ -425,7 +449,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <button class="btn btn-sm" onclick="openRegister()">注册</button>
     </div>
     <div id="userArea" class="hidden">
-      <button type="button" id="userName" class="user-pill" title="订阅与账号" onclick="openManageSub()">
+      <button type="button" id="userName" class="btn btn-outline btn-sm user-pill" title="订阅与账号" onclick="openManageSub()">
         <span id="userNameText"></span>
         <span id="planBadge" class="plan-chip" style="display:none;"></span>
         <span id="userNameTip"></span>
@@ -1667,10 +1691,13 @@ function refreshAuthUI() {
     if (plan === 'basic') plan = 'pro';
     const entitled = currentUser.entitled === true || plan === 'pro' || plan === 'plus' || plan === 'lifetime' || !!currentUser.is_admin;
     if (pb) {
-      if (plan === 'lifetime') { pb.style.display = 'inline'; pb.textContent = '终身'; pb.style.color = 'var(--gold)'; pb.style.borderColor = 'var(--gold)'; }
-      else if (plan === 'plus') { pb.style.display = 'inline'; pb.textContent = 'Plus'; pb.style.color = 'var(--gold)'; pb.style.borderColor = 'var(--gold)'; }
-      else if (plan === 'pro' || plan === 'basic') { pb.style.display = 'inline'; pb.textContent = 'Pro'; pb.style.color = 'var(--green)'; pb.style.borderColor = 'var(--green)'; }
-      else { pb.style.display = 'inline'; pb.textContent = '免费'; pb.style.color = 'var(--text-dim)'; pb.style.borderColor = 'var(--border)'; }
+      pb.style.display = 'inline-flex';
+      pb.style.color = '';
+      pb.style.borderColor = '';
+      if (plan === 'lifetime') { pb.textContent = '终身'; pb.dataset.plan = 'lifetime'; }
+      else if (plan === 'plus') { pb.textContent = 'Plus'; pb.dataset.plan = 'plus'; }
+      else if (plan === 'pro' || plan === 'basic') { pb.textContent = 'Pro'; pb.dataset.plan = 'pro'; }
+      else { pb.textContent = '免费'; pb.dataset.plan = 'free'; }
     }
     // 订阅入口已合并到用户名圆角按钮，不再单独展示升级/订阅按钮
     if (bs) bs.style.display = 'none';
