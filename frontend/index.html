@@ -420,10 +420,37 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     </div>
     <div id="userArea" class="hidden">
       <span id="userName"><span id="userNameText"></span><span id="userNameTip"></span></span>
-      <span id="planBadge" style="display:none;font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);color:var(--text-dim);"></span>
+      <span id="planBadge" role="button" title="查看订阅" style="display:none;font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);color:var(--text-dim);cursor:pointer;" onclick="openManageSub()"></span>
       <button id="btnSubscribe" class="btn btn-sm" style="display:none;background:var(--gold);color:#111;" onclick="openUpgradeModal()">升级</button>
-      <button id="btnManageSub" class="btn btn-outline btn-sm" style="display:none;" onclick="openManageSub()">管理订阅</button>
+      <button id="btnManageSub" class="btn btn-outline btn-sm" style="display:none;" onclick="openManageSub()">订阅</button>
       <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 订阅管理弹窗 -->
+<div id="manageSubModal" style="display:none;position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:16px;">
+  <div style="background:var(--panel,#0f1c24);border:1px solid var(--border);border-radius:14px;max-width:400px;width:100%;padding:18px 16px 16px;position:relative;box-shadow:0 12px 40px rgba(0,0,0,.45);">
+    <button type="button" onclick="closeManageSub()" style="position:absolute;left:12px;top:10px;background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;line-height:1;">×</button>
+    <div style="text-align:center;font-size:16px;font-weight:600;margin-bottom:14px;color:var(--text);">订阅管理</div>
+    <div id="manageSubBody" style="font-size:13px;color:var(--text-dim);line-height:1.65;">
+      <div>当前套餐：<b id="managePlanLabel" style="color:var(--text);">—</b></div>
+      <div id="manageOrderRow" style="margin-top:6px;display:none;">订单号：<span id="manageOrderId" style="word-break:break-all;"></span></div>
+      <div id="manageExpireRow" style="margin-top:6px;display:none;">到期：<span id="manageExpireAt"></span></div>
+      <div style="margin-top:12px;padding:10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.03);font-size:12px;">
+        <div style="color:var(--text);font-weight:600;margin-bottom:4px;">取消与退费说明</div>
+        <ul style="margin:0;padding-left:18px;">
+          <li><b>取消续费</b>：当前账期仍可使用，到期后不再扣款并降为免费。</li>
+          <li><b>退费</b>：首次订阅 48 小时内且几乎未使用，可申请全额退；通过下方按钮提交或联系客服。退款成功后权限立即失效。</li>
+        </ul>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px;">
+      <button type="button" id="manageBtnUpgrade" class="btn btn-sm" style="background:var(--gold);color:#111;width:100%;" onclick="closeManageSub();openUpgradeModal();">升级套餐</button>
+      <button type="button" id="manageBtnCancel" class="btn btn-outline btn-sm" style="width:100%;display:none;" onclick="doCancelSubscription()">取消自动续费</button>
+      <button type="button" id="manageBtnRefund" class="btn btn-outline btn-sm" style="width:100%;display:none;border-color:#c0392b;color:#e74c3c;" onclick="doRequestRefund()">申请退费</button>
+      <button type="button" class="btn btn-outline btn-sm" style="width:100%;" onclick="closeManageSub()">关闭</button>
     </div>
   </div>
 </div>
@@ -1369,23 +1396,118 @@ async function refreshPlanFromServer() {
 }
 
 async function openManageSub() {
+  const m = document.getElementById('manageSubModal');
+  if (!m) { showToast('订阅管理暂不可用', 'err'); return; }
+  let plan = ((currentUser && currentUser.plan) || 'free').toLowerCase();
+  if (plan === 'basic') plan = 'pro';
+  let orderId = '';
+  let canCancel = false;
+  let expires = (currentUser && currentUser.plan_expires_at) || '';
   try {
     const r = await apiJSON('/api/billing/portal');
-    const plan = ((r && r.plan) || (currentUser && currentUser.plan) || 'free').toLowerCase();
-    const canCancel = !!(r && r.can_cancel);
-    const label = plan === 'plus' ? 'Plus' : (plan === 'basic' || plan === 'pro' ? 'Pro' : plan);
-    if (plan === 'lifetime') { showToast('终身用户无需管理订阅', 'ok'); return; }
-    if (!canCancel) {
-      showToast(plan === 'free' ? '当前为免费用户' : ('当前为 ' + label + '，暂无可取消订单，请联系客服'), plan === 'free' ? 'err' : 'ok');
-      return;
+    if (r) {
+      plan = (r.plan || plan || 'free').toLowerCase();
+      if (plan === 'basic') plan = 'pro';
+      orderId = r.order_id || '';
+      canCancel = !!r.can_cancel;
+      expires = r.plan_expires_at || expires || '';
+      currentUser = Object.assign(currentUser || {}, {
+        plan: r.plan, entitled: r.entitled, can_digest: r.can_digest,
+        price_pro_usd: r.price_pro_usd, price_plus_usd: r.price_plus_usd,
+        plan_expires_at: r.plan_expires_at,
+      });
     }
-    const msg = '当前为 ' + label + ' 订阅。取消后将在本账期结束后降为免费用户，是否确认取消自动续费？\n（退费请通过支付渠道或联系客服处理）';
-    if (!confirm(msg)) return;
-    const c = await apiJSON('/api/billing/cancel', { method: 'POST', body: '{}' });
-    showToast((c && c.message) || '已提交取消', 'ok');
-    await refreshPlanFromServer();
   } catch (e) {
-    showToast((e && e.message) || '无法管理订阅', 'err');
+    console.warn('portal', e);
+  }
+  const labelMap = { free: '免费', pro: 'Pro', plus: 'Plus', lifetime: '终身' };
+  const label = labelMap[plan] || plan;
+  const elL = document.getElementById('managePlanLabel');
+  if (elL) elL.textContent = label;
+  const rowO = document.getElementById('manageOrderRow');
+  const elO = document.getElementById('manageOrderId');
+  if (rowO && elO) {
+    if (orderId) { rowO.style.display = 'block'; elO.textContent = orderId; }
+    else { rowO.style.display = 'none'; }
+  }
+  const rowE = document.getElementById('manageExpireRow');
+  const elE = document.getElementById('manageExpireAt');
+  if (rowE && elE) {
+    if (expires) { rowE.style.display = 'block'; elE.textContent = String(expires).replace('T', ' ').slice(0, 19); }
+    else { rowE.style.display = 'none'; }
+  }
+  const btnUp = document.getElementById('manageBtnUpgrade');
+  const btnCa = document.getElementById('manageBtnCancel');
+  const btnRe = document.getElementById('manageBtnRefund');
+  if (btnUp) {
+    if (plan === 'free') { btnUp.style.display = 'block'; btnUp.textContent = '升级到 Pro / Plus'; }
+    else if (plan === 'pro') { btnUp.style.display = 'block'; btnUp.textContent = '升级到 Plus'; }
+    else { btnUp.style.display = 'none'; }
+  }
+  if (btnCa) {
+    btnCa.style.display = (plan === 'pro' || plan === 'plus') ? 'block' : 'none';
+    btnCa.disabled = false;
+    btnCa.dataset.canCancel = canCancel ? '1' : '0';
+  }
+  if (btnRe) {
+    btnRe.style.display = (plan === 'pro' || plan === 'plus') ? 'block' : 'none';
+  }
+  m.style.display = 'flex';
+}
+
+function closeManageSub() {
+  const m = document.getElementById('manageSubModal');
+  if (m) m.style.display = 'none';
+}
+
+async function doCancelSubscription() {
+  const btn = document.getElementById('manageBtnCancel');
+  if (btn && btn.dataset.canCancel === '0') {
+    showToast('未找到可取消的订单号。若刚付款请稍后再试，或联系客服处理', 'err');
+    return;
+  }
+  if (!confirm('确认取消自动续费？\n当前账期仍可继续使用，到期后将降为免费用户。')) return;
+  try {
+    const c = await apiJSON('/api/billing/cancel', { method: 'POST', body: '{}' });
+    showToast((c && c.message) || '已提交取消续费', 'ok');
+    await refreshPlanFromServer();
+    closeManageSub();
+  } catch (e) {
+    showToast((e && e.message) || '取消失败', 'err');
+  }
+}
+
+async function doRequestRefund() {
+  const msg = '退费说明：\n\n1. 首次订阅 48 小时内且几乎未使用 → 可申请全额退\n2. 退款成功后会员权限立即失效\n3. 超过冷却期一般不退当月，建议改用「取消自动续费」\n\n确认向客服提交退费申请？（将打开邮件）';
+  if (!confirm(msg)) return;
+  const email = (currentUser && currentUser.email) || '';
+  const plan = (currentUser && currentUser.plan) || '';
+  let orderId = '';
+  try {
+    const r = await apiJSON('/api/billing/portal');
+    orderId = (r && r.order_id) || '';
+  } catch (e) {}
+  const subject = encodeURIComponent('[TimeBricks] 退费申请');
+  const body = encodeURIComponent(
+    '邮箱: ' + email + '\n套餐: ' + plan + '\n订单号: ' + orderId +
+    '\n说明: 申请退费（请补充原因）\n'
+  );
+  // 优先走站内联系接口，失败则 mailto
+  try {
+    await apiJSON('/api/contact', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: email || 'user',
+        email: email,
+        country: '',
+        message: '【退费申请】套餐: ' + plan + '；订单号: ' + (orderId || '无') + '；用户申请退费，请处理。',
+      }),
+    });
+    showToast('退费申请已提交，我们会尽快处理', 'ok');
+    closeManageSub();
+    return;
+  } catch (e) {
+    window.location.href = 'mailto:support@timebricks.bid?subject=' + subject + '&body=' + body;
   }
 }
 
@@ -1543,7 +1665,9 @@ function refreshAuthUI() {
       else { bs.style.display = 'none'; }
     }
     if (bm) {
-      bm.style.display = ((plan === 'pro' || plan === 'plus') && !currentUser.is_admin) ? 'inline-flex' : 'none';
+      // 登录用户始终可进「订阅」面板（免费可升级，付费可取消/退费）
+      bm.style.display = 'inline-flex';
+      bm.textContent = (plan === 'free' || !entitled) ? '订阅' : '订阅管理';
     }
     // 邮件推送开关：无 can_digest 时禁用
     const digEn = document.getElementById('digestEnabled');
