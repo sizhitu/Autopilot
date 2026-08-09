@@ -1930,9 +1930,18 @@ let lastChartData = null;
 // === Tab 切换 ===
 function switchTab(name, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  document.querySelectorAll('[id^="tab-"]').forEach(t => t.classList.add('hidden'));
-  document.getElementById('tab-' + name).classList.remove('hidden');
+  if (el) el.classList.add('active');
+  // 只切换右侧面板内容，绝不能匹配主导航 tabWatchlist / tabAnalysis
+  const SIDE_PANELS = ['indicators', 'fibonacci', 'ladder', 'calculator', 'backtest', 'admin'];
+  SIDE_PANELS.forEach(function (n) {
+    const pane = document.getElementById('tab-' + n);
+    if (pane) pane.classList.toggle('hidden', n !== name);
+  });
+  // 兜底：若主导航曾被误加 hidden，恢复可见
+  const tw = document.getElementById('tabWatchlist');
+  const ta = document.getElementById('tabAnalysis');
+  if (tw) tw.classList.remove('hidden');
+  if (ta) ta.classList.remove('hidden');
   if (name === 'admin') loadAdmin();
 }
 
@@ -2616,14 +2625,20 @@ async function ensureAnalysisSymbol() {
     return;
   }
   // 超过 8 秒仍标记 loading 则强制解锁（避免偶发卡住）
-  if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 8000) {
+  if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 2500) {
     _analysisLoading = false;
   }
-  if (_analysisLoading) return;
+  if (_analysisLoading) {
+    // 已有在途请求：仍允许重绘已有图，不挡 Tab
+    if (lastChartData && lastChartData.candles && lastChartData.candles.length) {
+      try { drawChart(lastChartData); } catch (e) {}
+    }
+    return;
+  }
   _analysisLoading = true;
   _analysisLoadStarted = Date.now();
   clearTimeout(_analysisLoadGuard);
-  _analysisLoadGuard = setTimeout(function () { _analysisLoading = false; }, 12000);
+  _analysisLoadGuard = setTimeout(function () { _analysisLoading = false; }, 8000);
   try {
     const freeDef = FREE_DEFAULT_ANALYSIS;
     const paidDef = DEFAULT_ANALYSIS;
@@ -2648,31 +2663,39 @@ async function ensureAnalysisSymbol() {
 
 // === 主Tab切换 ===
 function switchMainTab(tab) {
-  // 始终先切换视图，不依赖任何网络请求
+  // 始终先切换视图，不依赖任何网络请求；并确保主导航可点
   try {
-    document.getElementById('tabAnalysis').classList.toggle('active', tab === 'analysis');
-    document.getElementById('tabWatchlist').classList.toggle('active', tab === 'watchlist');
-    document.getElementById('tabAnalysis').style.borderBottomColor = tab === 'analysis' ? 'var(--gold)' : 'transparent';
-    document.getElementById('tabWatchlist').style.borderBottomColor = tab === 'watchlist' ? 'var(--gold)' : 'transparent';
-    document.getElementById('tabAnalysis').style.color = tab === 'analysis' ? 'var(--gold)' : 'var(--text-dim)';
-    document.getElementById('tabWatchlist').style.color = tab === 'watchlist' ? 'var(--gold)' : 'var(--text-dim)';
-    document.getElementById('analysisView').classList.toggle('hidden', tab !== 'analysis');
-    document.getElementById('watchlistView').classList.toggle('hidden', tab !== 'watchlist');
+    const ta = document.getElementById('tabAnalysis');
+    const tw = document.getElementById('tabWatchlist');
+    const av = document.getElementById('analysisView');
+    const wv = document.getElementById('watchlistView');
+    if (ta) { ta.classList.remove('hidden'); ta.classList.toggle('active', tab === 'analysis');
+      ta.style.borderBottom = tab === 'analysis' ? '2px solid var(--gold)' : '2px solid transparent';
+      ta.style.borderBottomColor = tab === 'analysis' ? 'var(--gold)' : 'transparent';
+      ta.style.color = tab === 'analysis' ? 'var(--gold)' : 'var(--text-dim)';
+      ta.style.fontWeight = tab === 'analysis' ? '600' : '400';
+    }
+    if (tw) { tw.classList.remove('hidden'); tw.classList.toggle('active', tab === 'watchlist');
+      tw.style.borderBottom = tab === 'watchlist' ? '2px solid var(--gold)' : '2px solid transparent';
+      tw.style.borderBottomColor = tab === 'watchlist' ? 'var(--gold)' : 'transparent';
+      tw.style.color = tab === 'watchlist' ? 'var(--gold)' : 'var(--text-dim)';
+      tw.style.fontWeight = tab === 'watchlist' ? '600' : '400';
+    }
+    if (av) {
+      if (tab === 'analysis') av.classList.remove('hidden');
+      else av.classList.add('hidden');
+    }
+    if (wv) {
+      if (tab === 'watchlist') wv.classList.remove('hidden');
+      else wv.classList.add('hidden');
+    }
   } catch (e) {}
   if (tab === 'watchlist') {
-    // 切回看板时不强制刷新，避免与冷启动轮询叠加成多次闪动
     try { loadWatchlist(false); } catch (e) {}
   }
   if (tab === 'analysis') {
-    // 主动切 Tab：尽快解锁，避免上次请求卡住导致点不动
-    if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 1000) {
-      _analysisLoading = false;
-    }
-    setTimeout(function () {
-      if (_analysisLoading && (Date.now() - _analysisLoadStarted) > 2000) {
-        _analysisLoading = false;
-      }
-    }, 2100);
+    // 视图已切出；数据加载失败也不影响 Tab 可点
+    _analysisLoading = false;
     ensureAnalysisSymbol().catch(function () {});
   }
 }
