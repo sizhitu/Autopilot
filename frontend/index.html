@@ -174,19 +174,56 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .layer-name { font-size:12px; font-weight:600; display:inline-flex; align-items:center; gap:5px; }
 .layer-status { font-size:11px; color:var(--text-dim); margin-top:2px; line-height:1.45; }
 
-/* 小问号帮助（毛玻璃） */
+/* 帮助图标（信息圈，非问号字符） */
 .help-q {
   display:inline-flex; align-items:center; justify-content:center;
-  width:16px; height:16px; border-radius:50%;
-  font-size:11px; font-weight:700; line-height:1;
-  color:var(--gold); border:1px solid rgba(241,196,15,0.45);
+  width:18px; height:18px; border-radius:50%;
+  font-size:0; line-height:0; color:transparent;
+  border:1px solid rgba(241,196,15,0.45);
   background:rgba(241,196,15,0.08); cursor:pointer;
   vertical-align:middle; flex-shrink:0;
-  transition: background .15s, border-color .15s;
+  transition: background .15s, border-color .15s, box-shadow .15s;
   position:relative; user-select:none;
+  -webkit-tap-highlight-color:transparent;
+}
+.help-q::before {
+  content:'';
+  width:12px; height:12px;
+  background-color: var(--gold);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 10v6'/%3E%3Ccircle cx='12' cy='7.2' r='0.9' fill='black' stroke='none'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 10v6'/%3E%3Ccircle cx='12' cy='7.2' r='0.9' fill='black' stroke='none'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .help-q:hover, .help-q.open {
-  background:rgba(241,196,15,0.18); border-color:var(--gold);
+  background:rgba(241,196,15,0.2);
+  border-color:var(--gold);
+  box-shadow:0 0 0 3px rgba(241,196,15,0.12);
+}
+/* 看板汇总旁：图标 + 「说明」文字，更易发现 */
+.help-q.help-q-board {
+  width:auto; height:22px; padding:0 8px 0 6px; gap:4px;
+  border-radius:11px; font-size:11px; line-height:1;
+  color:var(--gold); font-weight:600;
+  background:rgba(241,196,15,0.1);
+}
+.help-q.help-q-board::before {
+  width:11px; height:11px; flex-shrink:0;
+}
+.help-q.help-q-board .help-q-txt {
+  font-size:11px; color:var(--gold); font-weight:600; letter-spacing:0.2px;
+}
+.help-q.help-q-board:hover, .help-q.help-q-board.open {
+  background:rgba(241,196,15,0.18);
+}
+.help-pop .hp-sec {
+  margin:0 0 10px; padding-bottom:10px;
+  border-bottom:1px solid rgba(255,255,255,0.08);
+}
+.help-pop .hp-sec:last-child { margin-bottom:0; padding-bottom:0; border-bottom:none; }
+.help-pop .hp-sec b {
+  display:block; color:var(--gold); font-size:12px; margin-bottom:4px; font-weight:600;
+}
+.help-pop .hp-sec p {
+  margin:0; font-size:12px; line-height:1.65; color:var(--text); font-weight:400;
 }
 .help-pop {
   display:none; z-index:10050;
@@ -642,7 +679,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div>加载中...</div>
     </div>
   </div>
-  <div class="footer-note">点击任意一行加载详细分析 · 汇总旁 ? 可查看列说明 · 仅供研究不构成投资建议 · <a href="/privacy.html" style="color:var(--text-dim);">隐私政策</a> · <a href="/terms.html" style="color:var(--text-dim);">服务条款</a> <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
+  <div class="footer-note">点击任意一行加载详细分析 · 汇总旁「说明」可查看列释义 · 仅供研究不构成投资建议 · <a href="/privacy.html" style="color:var(--text-dim);">隐私政策</a> · <a href="/terms.html" style="color:var(--text-dim);">服务条款</a> <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
 </div>
 
 <!-- 分析模式视图 -->
@@ -3090,15 +3127,15 @@ function renderWatchlistSummary(summary) {
     const label = it.key === 'error' ? '数据异常' : it.key;
     html += `<span style="color:${it.color};font-weight:700;">${label}: ${v}</span>`;
   }
-  // 列说明统一放在统计后面，避免每个表头点问号
-  html += `<span class="help-q" style="margin-left:4px;vertical-align:middle;" onclick="event.stopPropagation();toggleHelp(this)" title="看板列说明">?<span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,320px);max-width:min(92vw,360px);text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
-    <div class="hp-row"><b>汇总</b><br>按「即将上涨关注 / 上涨见顶关注 / 下跌观望」统计当前列表研究标签，便于扫一眼池子结构。</div>
-    <div class="hp-row"><b>九转时机</b><br>神奇九转（TD Sequential 思路）：收盘相对前第 4 根 K 的连续计数，日/月可并列。下跌九转偏买侧观察，上涨九转偏卖侧观察。更适震荡与弱趋势；强单边里单独九转易失效。标签不是下单指令。</div>
-    <div class="hp-row"><b>趋势过滤</b><br>主要反映均线方向（多头/空头/震荡）。「多头·指标未齐」= 均线已偏多但系统层加权指标未齐，可与详情页系统层红叉对照，不等于整单策略已通过。</div>
-    <div class="hp-row"><b>操盘动作</b><br>综合时机×趋势等给出的研究向动作（持有/观望/关注等）。时机与趋势冲突时会降权偏观察。仅作复查清单，非买卖委托。</div>
-    <div class="hp-row"><b>新高/估值</b><br>新高/回撤描述阶段位置。低估/合理/高估为相对均线或区间分位的粗分档（如压舱石 MA250±8%、高赔率 MA250±35%、周期弹性 MA120±18%、卫星仓分位约 80/20），不是基本面公允价证明。</div>
-    <div class="hp-row"><b>参考价/涨幅</b><br>个股：分析师目标价去极值后均值（样本不足则普通均值）；无覆盖可用上市首日价。基金/ETF：以 NAV/IOPV 为基准。涨幅 = (参考价/现价-1)×100%。格式如 333.18/+8.50%，无数据为 --。</div>
-    <div class="hp-row"><b>说明</b><br>仅供研究，不构成投资建议。点任意行进入分析详情。</div>
+  // 统一说明入口：信息图标 +「说明」文案，内容分区便于扫读
+  html += `<span class="help-q help-q-board" style="margin-left:6px;" onclick="event.stopPropagation();toggleHelp(this)" title="查看看板列说明" role="button" aria-label="看板列说明"><span class="help-q-txt">说明</span><span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
+    <div class="hp-sec"><b>汇总数字</b><p>即将上涨关注 / 上涨见顶关注 / 下跌观望 — 按当前列表研究标签计数，方便一眼看池子结构。</p></div>
+    <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）：收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
+    <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多头·指标未齐」= 均线已偏多，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
+    <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签（持有 / 观望 / 关注等）。冲突时降权偏观察。作复查清单，非买卖委托。</p></div>
+    <div class="hp-sec"><b>新高 / 估值</b><p>新高或回撤看阶段位置。低估 / 合理 / 高估是相对均线或分位的粗分档（如压舱石 MA250±8%、高赔率 ±35% 等），不是基本面公允价。</p></div>
+    <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股：分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF：以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
+    <div class="hp-sec"><b>提示</b><p>点任意行进入分析详情。仅供研究，不构成投资建议。</p></div>
   </span></span>`;
   el.innerHTML = html;
 }
