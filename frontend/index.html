@@ -2972,6 +2972,7 @@ async function _loadWatchlistBody(forceRefresh) {
     // 免费 / 未登录：固定两只真实行情（服务端缓存），可点进分析
     if (isDemoMode()) {
       try {
+        if (forceRefresh) { try { showToast('正在拉取最新收盘价…', 'ok'); } catch (e) {} }
         const res = await api('/api/watchlist/free-preview' + (forceRefresh ? '?refresh=1' : ''));
         const json = await res.json();
         let stocks = (json && json.stocks) ? json.stocks : [];
@@ -2996,6 +2997,7 @@ async function _loadWatchlistBody(forceRefresh) {
       }
     }
     setDemoBanner(false);
+    if (forceRefresh) { try { showToast('正在更新自选行情…', 'ok'); } catch (e) {} }
     const res = await api('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''));
     const json = await res.json();
     if (!json.success) throw new Error('获取失败');
@@ -3215,7 +3217,16 @@ function renderWatchlist(stocks) {
         currentUser ? `<button onclick="event.stopPropagation();removeWatch('${s.code}')" title="删除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-right:4px;">✕</button>` : ''
       }<span onclick="event.stopPropagation();editNote('${s.code}')" title="${(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};border-bottom:${watchNotes[s.code]?'1px dotted var(--gold)':'none'};">${s.code}</span></td>
       <td style="padding:5px 6px;font-weight:500;">${s.name || '—'}</td>
-      <td style="padding:5px 6px;font-family:monospace;color:${(s.pending || s.price === '-' || s.signal === '计算中') ? 'var(--text-dim)' : 'inherit'};">${(s.pending || s.price === '-' || s.signal === '计算中') && (s.price === '-' || s.price == null) ? '…' : s.price}</td>
+      <td style="padding:5px 6px;font-family:monospace;color:${(s.pending || s.price === '-' || s.signal === '计算中') ? 'var(--text-dim)' : 'inherit'};line-height:1.25;">${(function(){
+        const pending = (s.pending || s.price === '-' || s.signal === '计算中') && (s.price === '-' || s.price == null);
+        if (pending) return '…';
+        const px = (s.price == null || s.price === '') ? '—' : s.price;
+        let bd = (s.bar_date || '').toString().trim();
+        if (bd.length >= 10) bd = bd.slice(5, 10); // MM-DD
+        else if (bd.length > 5) bd = bd.slice(-5);
+        const bdHtml = bd ? `<span class="sub-nt" title="行情日期 ${s.bar_date || bd}">${bd}</span>` : '';
+        return px + bdHtml;
+      })()}</td>
       <td style="padding:5px 6px;color:${dayColor};font-weight:600;">${dayText}</td>
       <td style="padding:5px 6px;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:5px 6px;white-space:normal;line-height:1.25;"><span style="color:${timingColor};font-weight:600;">${timingText}</span>${ntSub}</td>

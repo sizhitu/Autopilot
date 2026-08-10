@@ -823,6 +823,21 @@ async def watchlist_free_preview(refresh: bool = False):
         return JSONResponse(content=_to_jsonable(payload),
                             headers={"Cache-Control": "public, max-age=300"})
 
+    if refresh:
+        try:
+            from data_fetcher import invalidate_kline_cache
+            from watchlist import _STATUS_CACHE
+            for code, _name in items:
+                cu = str(code).strip().upper()
+                _STATUS_CACHE.pop(cu, None)
+                try:
+                    invalidate_kline_cache(code)
+                    invalidate_kline_cache(cu)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     stocks = []
     for code, name in items:
         try:

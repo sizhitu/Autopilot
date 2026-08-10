@@ -171,6 +171,23 @@ def _kline_cache_set(key, frame):
     _kline_cache_prune()
 
 
+def invalidate_kline_cache(symbol=None) -> None:
+    """强制刷新时清掉内存 K 线缓存。symbol 为 None 时清空全部。"""
+    if symbol is None:
+        _KLINE_CACHE.clear()
+        _KLINE_CACHE_TS.clear()
+        return
+    su = str(symbol).strip().upper()
+    for k in list(_KLINE_CACHE.keys()):
+        try:
+            k0 = k[0] if isinstance(k, tuple) else k
+        except Exception:
+            k0 = k
+        if str(k0).strip().upper() == su:
+            _KLINE_CACHE.pop(k, None)
+            _KLINE_CACHE_TS.pop(k, None)
+
+
 class DataFetcher:
     """统一数据获取接口"""
 

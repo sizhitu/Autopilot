@@ -187,6 +187,7 @@ class StockStatus:
     name: str
     market: str
     price: float = 0
+    bar_date: str = ""  # 现价对应的K线交易日 YYYY-MM-DD
     change_1d: float = 0          # 当日涨跌幅%（最近一根K线相对前一根）
     change_5d: float = 0          # 近5日涨跌幅%
     signal: str = "观望"          # 兼容旧字段：操盘动作（汇总用）
@@ -319,6 +320,14 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         # 低价/微小波动股（如 8.626→8.63）涨跌幅符号翻转。
         last_close = float(df['close'].iloc[-1])
         status.price = round(last_close, 2)
+        try:
+            _ld = df['date'].iloc[-1]
+            if hasattr(_ld, 'strftime'):
+                status.bar_date = _ld.strftime('%Y-%m-%d')
+            else:
+                status.bar_date = str(_ld)[:10]
+        except Exception:
+            status.bar_date = ""
 
         # 当日涨跌幅（昨收口径：今收/昨收 - 1，即最近一根K线收盘价相对前一根）。
         # A-share primary K-line is Eastmoney forward-adjusted; avoids false day-change after split/dividend.
@@ -504,6 +513,7 @@ def _status_to_dict(st: StockStatus) -> dict:
         'name': st.name,
         'market': st.market,
         'price': st.price,
+        'bar_date': getattr(st, 'bar_date', '') or '',
         'change_1d': st.change_1d,
         'change_5d': st.change_5d,
         'signal': st.signal,
@@ -626,7 +636,7 @@ def _align_stocks_to_items(stocks, items: list) -> list:
             out.append({
                 'code': c, 'name': n or c,
                 'market': '美股' if not str(c).isdigit() else 'A股',
-                'price': '-', 'change_1d': None, 'change_5d': None,
+                'price': '-', 'bar_date': '', 'change_1d': None, 'change_5d': None,
                 'signal': '计算中', 'signal_color': 'gray',
                 'action': '计算中', 'action_color': 'gray',
                 'timing': '—', 'timing_color': 'gray',
@@ -649,7 +659,7 @@ def _placeholder_row(code: str, name: str) -> dict:
     return {
         'code': code, 'name': name or code,
         'market': '美股' if not str(code).isdigit() else 'A股',
-        'price': '-', 'change_1d': None, 'change_5d': None,
+        'price': '-', 'bar_date': '', 'change_1d': None, 'change_5d': None,
         'signal': '计算中', 'signal_color': 'gray',
         'action': '计算中', 'action_color': 'gray',
         'timing': '—', 'timing_color': 'gray',
@@ -689,8 +699,19 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
                     base[str(s['code']).upper()] = dict(s)
 
     if bust_status_cache:
+        try:
+            from data_fetcher import invalidate_kline_cache
+        except Exception:
+            invalidate_kline_cache = None
         for c, _ in items:
-            _STATUS_CACHE.pop(str(c).strip().upper(), None)
+            cu = str(c).strip().upper()
+            _STATUS_CACHE.pop(cu, None)
+            if invalidate_kline_cache:
+                try:
+                    invalidate_kline_cache(c)
+                    invalidate_kline_cache(cu)
+                except Exception:
+                    pass
 
     def _assemble(done_map: dict) -> list:
         rows = []
