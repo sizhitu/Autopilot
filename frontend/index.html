@@ -198,18 +198,11 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
   border-color:var(--gold);
   box-shadow:0 0 0 3px rgba(241,196,15,0.12);
 }
-/* 看板汇总旁：图标 + 「说明」文字，更易发现 */
+/* 看板汇总旁：仅信息图标 */
 .help-q.help-q-board {
-  width:auto; height:22px; padding:0 8px 0 6px; gap:4px;
-  border-radius:11px; font-size:11px; line-height:1;
-  color:var(--gold); font-weight:600;
+  width:18px; height:18px; padding:0;
+  border-radius:50%;
   background:rgba(241,196,15,0.1);
-}
-.help-q.help-q-board::before {
-  width:11px; height:11px; flex-shrink:0;
-}
-.help-q.help-q-board .help-q-txt {
-  font-size:11px; color:var(--gold); font-weight:600; letter-spacing:0.2px;
 }
 .help-q.help-q-board:hover, .help-q.help-q-board.open {
   background:rgba(241,196,15,0.18);
@@ -679,7 +672,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div>加载中...</div>
     </div>
   </div>
-  <div class="footer-note">点击任意一行加载详细分析 · 汇总旁「说明」可查看列释义 · 仅供研究不构成投资建议 · <a href="/privacy.html" style="color:var(--text-dim);">隐私政策</a> · <a href="/terms.html" style="color:var(--text-dim);">服务条款</a> <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
+  <div class="footer-note">点击任意一行加载详细分析 · 汇总旁图标可查看列释义 · 仅供研究不构成投资建议 · <a href="/privacy.html" style="color:var(--text-dim);">隐私政策</a> · <a href="/terms.html" style="color:var(--text-dim);">服务条款</a> <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
 </div>
 
 <!-- 分析模式视图 -->
@@ -3129,8 +3122,8 @@ function renderWatchlistSummary(summary) {
     const label = it.key === 'error' ? '数据异常' : it.key;
     html += `<span style="color:${it.color};font-weight:700;">${label}: ${v}</span>`;
   }
-  // 统一说明入口：信息图标 +「说明」文案，内容分区便于扫读
-  html += `<span class="help-q help-q-board" style="margin-left:6px;" onclick="event.stopPropagation();toggleHelp(this)" title="查看看板列说明" role="button" aria-label="看板列说明"><span class="help-q-txt">说明</span><span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
+  // 统一说明入口：信息图标，内容分区便于扫读
+  html += `<span class="help-q help-q-board" style="margin-left:6px;" onclick="event.stopPropagation();toggleHelp(this)" title="查看看板列说明" role="button" aria-label="看板列说明"><span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
     <div class="hp-sec"><b>汇总数字</b><p>即将上涨关注 / 上涨见顶关注 / 下跌观望 — 按当前列表研究标签计数，方便一眼看池子结构。</p></div>
     <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）：收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
     <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多·指标未齐 / 空·指标未齐」= 均线已偏多/偏空，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
