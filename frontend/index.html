@@ -3224,7 +3224,12 @@ function renderWatchlist(stocks) {
         let bd = (s.bar_date || '').toString().trim();
         if (bd.length >= 10) bd = bd.slice(5, 10); // MM-DD
         else if (bd.length > 5) bd = bd.slice(-5);
-        const bdHtml = bd ? `<span class="sub-nt" title="行情日期 ${s.bar_date || bd}">${bd}</span>` : '';
+        const stale = !!s.bar_stale;
+        const bdColor = stale ? 'var(--orange)' : 'var(--text-dim)';
+        const bdTitle = stale
+          ? `行情日期 ${s.bar_date || bd}（可能延迟，已尝试多源）`
+          : `行情日期 ${s.bar_date || bd}`;
+        const bdHtml = bd ? `<span class="sub-nt" style="color:${bdColor};" title="${bdTitle}">${bd}${stale ? '·延' : ''}</span>` : '';
         return px + bdHtml;
       })()}</td>
       <td style="padding:5px 6px;color:${dayColor};font-weight:600;">${dayText}</td>

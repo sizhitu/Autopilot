@@ -188,6 +188,75 @@ def invalidate_kline_cache(symbol=None) -> None:
             _KLINE_CACHE_TS.pop(k, None)
 
 
+
+def _df_last_date(df):
+    """返回 DataFrame 最后一根 K 的 date（datetime.date）或 None。"""
+    try:
+        if df is None or len(df) == 0 or "date" not in getattr(df, "columns", []):
+            return None
+        import pandas as pd
+        ts = pd.to_datetime(df["date"].iloc[-1])
+        return ts.date()
+    except Exception:
+        return None
+
+
+def _expected_session_date(market: str = "us"):
+    """粗估最近应有交易日（跳过周末；不含完整节假日表）。"""
+    from datetime import datetime, timedelta, timezone, date
+    try:
+        if market == "cn":
+            now = datetime.now(timezone(timedelta(hours=8)))
+            d = now.date()
+            if now.hour < 15:
+                d = d - timedelta(days=1)
+        else:
+            now = datetime.now(timezone(timedelta(hours=-4)))
+            d = now.date()
+            if now.hour < 16:
+                d = d - timedelta(days=1)
+        while d.weekday() >= 5:
+            d = d - timedelta(days=1)
+        return d
+    except Exception:
+        d = date.today()
+        while d.weekday() >= 5:
+            d = d - timedelta(days=1)
+        return d
+
+
+def _bar_is_stale(last_date, market: str = "us", grace_days: int = 1) -> bool:
+    """最后一根 K 是否明显落后。"""
+    if last_date is None:
+        return True
+    try:
+        from datetime import timedelta
+        exp = _expected_session_date(market)
+        delta = (exp - last_date).days
+        if delta <= 0:
+            return False
+        # 周五收盘 → 周一/周二仍用周五，不标陈旧
+        if last_date.weekday() == 4 and exp.weekday() <= 1 and delta <= 3:
+            return False
+        return delta > grace_days
+    except Exception:
+        return False
+
+
+def _pick_freshest(frames):
+    best = None
+    best_d = None
+    for df in frames:
+        if df is None or len(df) == 0:
+            continue
+        d = _df_last_date(df)
+        if d is None:
+            continue
+        if best is None or d > best_d:
+            best, best_d = df, d
+    return best
+
+
 class DataFetcher:
     """统一数据获取接口"""
 
@@ -323,12 +392,23 @@ class DataFetcher:
         # 系统性限流防护：Yahoo 处于冷却期时，直接走 Nasdaq 兜底，
         # 不做任何 Yahoo 请求，从根本上避免“逐只代码空等 429”。
         if _yahoo_in_cooldown():
+            cands = []
             try:
                 df = self._fetch_us_stock_nasdaq(symbol, days)
                 if df is not None and len(df) > 0:
-                    return df
+                    cands.append(df)
             except Exception:
-                pass  # 冷却可能即将结束，下方仍尝试一次 Yahoo
+                pass
+            try:
+                df = self._fetch_stooq(symbol, days)
+                if df is not None and len(df) > 0:
+                    cands.append(df)
+            except Exception:
+                pass
+            best = _pick_freshest(cands)
+            if best is not None and not _bar_is_stale(_df_last_date(best), market="us"):
+                return best
+            # 偏旧则继续尝试 Yahoo；若 Yahoo 仍失败，后面会再与兜底合并
 
         # days 是交易日，转换为日历天（交易日约占日历天的 5/7）
         # 额外多取 40 天日历时间，确保足够
@@ -405,23 +485,32 @@ class DataFetcher:
                 last_error = str(e)
                 continue
 
+        candidates = []
         if parsed is not None and len(parsed) > 0:
-            return parsed
+            candidates.append(parsed)
 
-        # Yahoo 两域名均失败 → 触发全局冷却，依次用 Nasdaq / Stooq 兜底
-        _trigger_yahoo_cooldown()
-        try:
-            df = self._fetch_us_stock_nasdaq(symbol, days)
-            if df is not None and len(df) > 0:
-                return df
-        except Exception as ne:
-            last_error = f"{last_error}；Nasdaq 兜底失败: {ne}"
-        try:
-            df = self._fetch_stooq(symbol, days)
-            if df is not None and len(df) > 0:
-                return df
-        except Exception as se:
-            last_error = f"{last_error}；Stooq 兜底失败: {se}"
+        # 无论 Yahoo 成败，若结果偏旧或为空，继续拉 Nasdaq / Stooq，取「交易日最新」的一份
+        need_more = (not candidates) or _bar_is_stale(_df_last_date(parsed), market="us")
+        if not candidates:
+            _trigger_yahoo_cooldown()
+
+        if need_more or not candidates:
+            try:
+                df_n = self._fetch_us_stock_nasdaq(symbol, days)
+                if df_n is not None and len(df_n) > 0:
+                    candidates.append(df_n)
+            except Exception as ne:
+                last_error = f"{last_error}；Nasdaq: {ne}"
+            try:
+                df_s = self._fetch_stooq(symbol, days)
+                if df_s is not None and len(df_s) > 0:
+                    candidates.append(df_s)
+            except Exception as se:
+                last_error = f"{last_error}；Stooq: {se}"
+
+        best = _pick_freshest(candidates)
+        if best is not None and len(best) > 0:
+            return best
 
         raise ValueError(f"Yahoo/Nasdaq/Stooq 均失败: {last_error}")
 
@@ -755,16 +844,30 @@ class DataFetcher:
         """
         symbol = symbol.strip()
         key = (symbol, days)
+        market = "cn" if self._is_cn_stock(symbol) and not self._is_us_index(symbol) else "us"
         cached = _kline_cache_get(key)
         if cached is not None:
-            return cached.copy()
+            # 缓存若已明显落后，丢弃并重拉，避免看板长期显示「上周价」
+            if not _bar_is_stale(_df_last_date(cached), market=market):
+                return cached.copy()
+            try:
+                invalidate_kline_cache(symbol)
+            except Exception:
+                pass
 
         if self._is_us_index(symbol) or not self._is_cn_stock(symbol):
             df = self.fetch_us_stock(symbol, days)
         else:
             df = self.fetch_cn_stock(symbol, days)
 
+        # 仍旧时缩短缓存时间：写入后立刻标旧 ts 一半 TTL，促使下次再试
         _kline_cache_set(key, df)
+        if _bar_is_stale(_df_last_date(df), market=market):
+            try:
+                # 缩短为 30s，避免整页一直钉死旧数据
+                _KLINE_CACHE_TS[key] = time.time() - max(0, _KLINE_TTL - 30)
+            except Exception:
+                pass
         return df
 
     def search(self, keyword: str) -> list:

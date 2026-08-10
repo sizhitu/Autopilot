@@ -188,6 +188,7 @@ class StockStatus:
     market: str
     price: float = 0
     bar_date: str = ""  # 现价对应的K线交易日 YYYY-MM-DD
+    bar_stale: bool = False  # 明显落后于应有交易日
     change_1d: float = 0          # 当日涨跌幅%（最近一根K线相对前一根）
     change_5d: float = 0          # 近5日涨跌幅%
     signal: str = "观望"          # 兼容旧字段：操盘动作（汇总用）
@@ -328,6 +329,29 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
                 status.bar_date = str(_ld)[:10]
         except Exception:
             status.bar_date = ""
+        try:
+            from data_fetcher import _df_last_date, _bar_is_stale
+            mkt = "cn" if str(code).isdigit() else "us"
+            status.bar_stale = bool(_bar_is_stale(_df_last_date(df), market=mkt))
+            # 若仍陈旧：清缓存再拉一次，取更新结果
+            if status.bar_stale:
+                try:
+                    from data_fetcher import invalidate_kline_cache
+                    invalidate_kline_cache(code)
+                    df2 = fetcher.fetch(code, days)
+                    if df2 is not None and len(df2) >= 5:
+                        d2 = _df_last_date(df2)
+                        d1 = _df_last_date(df)
+                        if d2 and (d1 is None or d2 >= d1):
+                            df = df2
+                            last_close = float(df['close'].iloc[-1])
+                            status.price = round(last_close, 2)
+                            status.bar_date = d2.strftime('%Y-%m-%d') if d2 else status.bar_date
+                            status.bar_stale = bool(_bar_is_stale(d2, market=mkt))
+                except Exception:
+                    pass
+        except Exception:
+            status.bar_stale = False
 
         # 当日涨跌幅（昨收口径：今收/昨收 - 1，即最近一根K线收盘价相对前一根）。
         # A-share primary K-line is Eastmoney forward-adjusted; avoids false day-change after split/dividend.
@@ -514,6 +538,7 @@ def _status_to_dict(st: StockStatus) -> dict:
         'market': st.market,
         'price': st.price,
         'bar_date': getattr(st, 'bar_date', '') or '',
+        'bar_stale': bool(getattr(st, 'bar_stale', False)),
         'change_1d': st.change_1d,
         'change_5d': st.change_5d,
         'signal': st.signal,
