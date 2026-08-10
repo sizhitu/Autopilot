@@ -615,14 +615,9 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       </div>
     </div>
     <div id="watchlistSummary" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px;"></div>
-    <div style="margin-top:8px; font-size:11px; color:var(--text-dim); display:flex; gap:16px; flex-wrap:wrap;">
-      <span><span style="color:var(--orange);font-weight:700;">●</span> 九转时机：下跌九转买点 / 上涨九转卖点（更适震荡与弱趋势；强单边中易失效）</span>
-      <span><span style="color:var(--green);font-weight:700;">●</span> 趋势过滤：均线方向（多头·指标未齐 = 均线多头但系统层未过）</span>
-      <span><span style="color:var(--gold);font-weight:700;">●</span> 操盘动作：时机×趋势综合（冲突则降权为观察）</span>
-      <span style="color:var(--text-dim);">汇总仍按「即将上涨 / 见顶 / 观望」统计</span>
-      <span><span style="color:var(--green);font-weight:700;">●</span> 低估 / <span style="color:var(--red);font-weight:700;">●</span> 高估 / <span style="color:var(--text-dim);font-weight:700;">●</span> 合理</span>
-      <span>估值按定位差异化：压舱石(MA250±8%) · 高赔率(MA250±35%) · 周期弹性(MA120±18%) · 卫星仓(区间分位80/20)</span>
-      <span id="watchLoginHint" style="color:var(--blue);cursor:pointer;" onclick="openLogin()">· 登录后可自定义自选看板</span>
+    <div style="margin-top:8px; font-size:11px; color:var(--text-dim); display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <span>列含义见表头 <b style="color:var(--gold);">?</b> · 汇总仍按「即将上涨 / 见顶 / 观望」</span>
+      <span id="watchLoginHint" style="color:var(--blue);cursor:pointer;" onclick="openLogin()">登录后可自定义自选</span>
     </div>
   </div>
   <div class="card" style="overflow-x:auto;">
@@ -634,10 +629,32 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
           <th style="padding:6px 2px;">现价</th>
           <th style="padding:6px 2px;">日涨幅</th>
           <th style="padding:6px 2px;">近5日</th>
-          <th style="padding:6px 2px;" title="TD Sequential 日/月九转时机">九转时机</th>
-          <th style="padding:6px 2px;" title="均线趋势方向；「指标未齐」表示系统层加权未过，与详情红叉一致">趋势过滤</th>
-          <th style="padding:6px 2px;" title="时机×趋势综合建议（非投资建议）">操盘动作</th>
-          <th style="padding:6px 2px;">新高/估值</th>
+          <th style="padding:6px 2px;white-space:nowrap;">九转时机<span class="help-q" style="margin-left:2px;vertical-align:middle;" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?<span class="help-pop" onclick="event.stopPropagation()" style="min-width:240px;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
+            <div class="hp-row"><b>是什么</b><br>神奇九转（TD Sequential 思路）：统计收盘价相对前第 4 根 K 线的连续计数，日/月可并列显示。</div>
+            <div class="hp-row"><b>怎么读</b><br>下跌九转侧重观察买侧完成；上涨九转侧重观察卖侧完成。标签表示阶段，不是下单指令。</div>
+            <div class="hp-row"><b>适用环境</b><br>更适合震荡、弱牛/弱熊；强单边趋势里单独九转更容易失效。</div>
+            <div class="hp-row"><b>建议</b><br>先看「趋势过滤」，再看九转是否同向；点进分析页可看日线/月线详解。</div>
+            <div class="hp-row"><b>说明</b><br>仅供研究，不构成投资建议。</div>
+          </span></span></th>
+          <th style="padding:6px 2px;white-space:nowrap;">趋势过滤<span class="help-q" style="margin-left:2px;vertical-align:middle;" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?<span class="help-pop" onclick="event.stopPropagation()" style="min-width:240px;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
+            <div class="hp-row"><b>是什么</b><br>主要反映均线排列方向（多头 / 空头 / 震荡等），用来过滤大环境。</div>
+            <div class="hp-row"><b>「多头·指标未齐」</b><br>均线已偏多，但系统层加权指标（如 MACD/RSI/量能等）尚未同时满足；与详情页系统层红叉可对照，<b>不等于</b>整单策略已通过。</div>
+            <div class="hp-row"><b>权重思路</b><br>系统层各指标并非简单四票等权；强趋势常参考多周期均线阶梯，波动大的标的对「远大于」间距要求更高。</div>
+            <div class="hp-row"><b>说明</b><br>看板趋势列是环境过滤，细节以分析页三层校验为准。不构成投资建议。</div>
+          </span></span></th>
+          <th style="padding:6px 2px;white-space:nowrap;">操盘动作<span class="help-q" style="margin-left:2px;vertical-align:middle;" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?<span class="help-pop" onclick="event.stopPropagation()" style="min-width:240px;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
+            <div class="hp-row"><b>是什么</b><br>综合「九转时机 × 趋势过滤」等给出的研究向动作标签（如持有、观望、关注等）。</div>
+            <div class="hp-row"><b>冲突时</b><br>时机与趋势不一致时会降权，更偏向观察，避免在对抗环境里加重仓暗示。</div>
+            <div class="hp-row"><b>怎么用</b><br>当作观察池排序与复查清单，不要直接当买卖委托。最终仓位与风控由你自己决定。</div>
+            <div class="hp-row"><b>说明</b><br>仅供研究，不构成投资建议。</div>
+          </span></span></th>
+          <th style="padding:6px 2px;white-space:nowrap;">新高/估值<span class="help-q" style="margin-left:2px;vertical-align:middle;" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?<span class="help-pop" onclick="event.stopPropagation()" style="min-width:260px;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
+            <div class="hp-row"><b>新高/回撤</b><br>相对阶段高点/低点的位置描述，便于快速看到是在近高区还是回撤区。</div>
+            <div class="hp-row"><b>低估 / 合理 / 高估</b><br>相对均线或区间分位的粗分档，不是基本面公允价格证明。</div>
+            <div class="hp-row"><b>分档规则（研究）</b><br>按标的定位差异化：压舱石约 MA250±8%；高赔率约 MA250±35%；周期弹性约 MA120±18%；卫星仓用区间分位约 80/20。阈值与标签以实际计算结果为准。</div>
+            <div class="hp-row"><b>颜色直觉</b><br>常见：低估偏绿、高估偏红、合理偏中性——仅便于扫读。</div>
+            <div class="hp-row"><b>说明</b><br>技术位置参考，不构成投资建议。</div>
+          </span></span></th>
           <th style="padding:6px 2px;white-space:nowrap;">参考价/涨幅<span class="help-q" style="margin-left:2px;vertical-align:middle;" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?<span class="help-pop" onclick="event.stopPropagation()" style="min-width:220px;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
             <div class="hp-row"><b>参考价 · 个股</b><br>公开渠道汇总的分析师目标价。有多条目标价时：<b>去掉一个最高、一个最低后再取平均</b>（样本不足 3 条则用普通均值）。若无分析师覆盖（如新上市），用<b>上市首日收盘价</b>作参考。指数不计算参考价。</div>
             <div class="hp-row"><b>参考价 · 基金/ETF</b><br>被动产品几乎无分析师目标价，改用最新 <b>单位净值 NAV</b>（或 IOPV）作为合理价基准：<code>NAV = (总资产 − 总负债) ÷ 份额总数</code>。ETF 市价通常贴近净值（正常溢价约 ±0.5%）；封闭式/特殊份额若无公开净值，则回退到上市首日价。</div>
@@ -654,7 +671,7 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
       <div>加载中...</div>
     </div>
   </div>
-  <div class="footer-note">点击任意一行加载详细分析 · 九转时机 / 趋势过滤 / 操盘动作分列 · 仅供研究不构成投资建议 · <a href="/privacy.html" style="color:var(--text-dim);">隐私政策</a> · <a href="/terms.html" style="color:var(--text-dim);">服务条款</a> <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
+  <div class="footer-note">点击任意一行加载详细分析 · 表头 ? 可查看列说明 · 仅供研究不构成投资建议 · <a href="/privacy.html" style="color:var(--text-dim);">隐私政策</a> · <a href="/terms.html" style="color:var(--text-dim);">服务条款</a> <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
 </div>
 
 <!-- 分析模式视图 -->
