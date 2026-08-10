@@ -379,7 +379,7 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
                 status.trend_filter = "空头趋势"
                 status.trend_filter_color = "red"
             else:
-                status.trend_filter = "空头·指标未齐"
+                status.trend_filter = "空头·未齐"
                 status.trend_filter_color = "orange"
         else:
             status.trend_filter = "震荡整理"
