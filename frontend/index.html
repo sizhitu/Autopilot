@@ -3130,8 +3130,8 @@ function renderWatchlistSummary(summary) {
   // 统一说明入口：信息图标 +「说明」文案，内容分区便于扫读
   html += `<span class="help-q help-q-board" style="margin-left:6px;" onclick="event.stopPropagation();toggleHelp(this)" title="查看看板列说明" role="button" aria-label="看板列说明"><span class="help-q-txt">说明</span><span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
     <div class="hp-sec"><b>汇总数字</b><p>即将上涨关注 / 上涨见顶关注 / 下跌观望 — 按当前列表研究标签计数，方便一眼看池子结构。</p></div>
-    <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）：收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
-    <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多头·指标未齐」= 均线已偏多，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
+    <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）：收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 跌转完成·买 / 涨转完成·卖 等为精简标签；日线与月线细节见分析页<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
+    <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多头·未齐 / 空头·未齐」= 均线已偏多/偏空，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
     <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签（持有 / 观望 / 关注等）。冲突时降权偏观察。作复查清单，非买卖委托。</p></div>
     <div class="hp-sec"><b>新高 / 估值</b><p>新高或回撤看阶段位置。低估 / 合理 / 高估是相对均线或分位的粗分档（如压舱石 MA250±8%、高赔率 ±35% 等），不是基本面公允价。</p></div>
     <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股：分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF：以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>

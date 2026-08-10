@@ -344,19 +344,19 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
 
         # ---------- 1) 九转时机 ----------
         if nt.get('conflict'):
-            status.timing = "日/月九转背离"
+            status.timing = "九转背离"
             status.timing_color = "gray"
         elif nt.get('is_complete') and nt.get('direction') == 'down':
-            status.timing = "下跌九转完成·买点"
+            status.timing = "跌转完成·买"
             status.timing_color = "orange"
         elif nt.get('is_completing') and nt.get('direction') == 'down':
-            status.timing = "下跌九转临近"
+            status.timing = "跌转临近"
             status.timing_color = "orange"
         elif nt.get('is_complete') and nt.get('direction') == 'up':
-            status.timing = "上涨九转完成·卖点"
+            status.timing = "涨转完成·卖"
             status.timing_color = "red"
         elif nt.get('is_completing') and nt.get('direction') == 'up':
-            status.timing = "上涨九转临近"
+            status.timing = "涨转临近"
             status.timing_color = "red"
         else:
             status.timing = "无明确九转"
@@ -372,14 +372,14 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
                 status.trend_filter_color = "green"
             else:
                 # 均线偏多但加权指标未过 → 与详情页系统层红叉一致
-                status.trend_filter = "多头·指标未齐"
+                status.trend_filter = "多头·未齐"
                 status.trend_filter_color = "orange"
         elif trend == "空头趋势":
             if sys_ok:
                 status.trend_filter = "空头趋势"
                 status.trend_filter_color = "red"
             else:
-                status.trend_filter = "空头·指标未齐"
+                status.trend_filter = "空头·未齐"
                 status.trend_filter_color = "orange"
         else:
             status.trend_filter = "震荡整理"

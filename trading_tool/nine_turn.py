@@ -284,7 +284,7 @@ def calc_nine_turn_display(df: pd.DataFrame) -> dict:
 
     if conflict:
         suggestion = "观望"
-        suggestion_detail = "九转日/月背离（方向相反）"
+        suggestion_detail = "九转背离（日线与月线方向相反）"
     elif daily_sig == "down" or monthly_sig == "down":
         suggestion = "买"
         suggestion_detail = "下跌九转买点"
