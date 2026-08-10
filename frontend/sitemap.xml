@@ -31,4 +31,10 @@
     <changefreq>monthly</changefreq>
     <priority>0.3</priority>
   </url>
+
+  <url><loc>https://timebricks.bid/guides/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://timebricks.bid/guides/jiuzhuan-watchlist.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://timebricks.bid/guides/volume-price.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://timebricks.bid/guides/watchlist-us-cn.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://timebricks.bid/guides/en-watchlist-checklist.html</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
 </urlset>

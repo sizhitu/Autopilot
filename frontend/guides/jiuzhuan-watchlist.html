@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>九转序列怎么用在自选股看板上 · Autopilot 指南</title>
+<meta name="description" content="把九转序列放进美股A股自选看板：先看趋势过滤再看时机标签，避免把计数当成买卖指令。研究工具，不构成投资建议。">
+<link rel="canonical" href="https://timebricks.bid/guides/jiuzhuan-watchlist.html">
+<meta property="og:title" content="九转序列怎么用在自选股看板上 · Autopilot 指南">
+<meta property="og:description" content="把九转序列放进美股A股自选看板：先看趋势过滤再看时机标签，避免把计数当成买卖指令。研究工具，不构成投资建议。">
+<meta property="og:type" content="article">
+<meta property="og:image" content="https://timebricks.bid/guides/img/watchlist-board.png">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+:root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e8e8e8; --dim:#8b8f9a; --gold:#f1c40f; --blue:#3498db; --green:#2ecc71; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; line-height:1.75; font-size:15px; }
+a { color:var(--blue); }
+.wrap { max-width:760px; margin:0 auto; padding:0 20px 48px; }
+.nav { display:flex; justify-content:space-between; align-items:center; padding:16px 0; border-bottom:1px solid var(--border); margin-bottom:28px; }
+.nav .brand { color:var(--gold); font-weight:700; text-decoration:none; }
+.nav a { color:var(--dim); margin-left:12px; font-size:13px; text-decoration:none; }
+.meta { color:var(--dim); font-size:12px; margin-bottom:18px; }
+h1 { font-size:clamp(22px,4vw,30px); line-height:1.3; margin-bottom:12px; }
+h2 { font-size:18px; margin:28px 0 10px; color:#fff; }
+h3 { font-size:15px; margin:18px 0 8px; }
+p,li { color:var(--text); margin-bottom:10px; }
+ul { padding-left:1.2em; margin-bottom:14px; }
+.lead { color:var(--dim); font-size:16px; margin-bottom:18px; }
+figure { margin:18px 0 22px; }
+figure img { width:100%; border-radius:10px; border:1px solid var(--border); background:var(--card); }
+figcaption { font-size:12px; color:var(--dim); margin-top:8px; }
+.note { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 14px; font-size:13px; color:var(--dim); margin:16px 0; }
+.cta { display:flex; flex-wrap:wrap; gap:10px; margin:22px 0; }
+.btn { display:inline-flex; padding:10px 16px; border-radius:6px; font-weight:600; font-size:14px; text-decoration:none !important; }
+.btn-gold { background:var(--gold); color:#111; }
+.btn-outline { border:1px solid var(--border); color:var(--text); }
+footer { border-top:1px solid var(--border); margin-top:36px; padding-top:16px; font-size:12px; color:var(--dim); }
+footer a { color:var(--dim); margin-right:10px; }
+.related a { display:block; margin:6px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="nav"><a class="brand" href="/home.html">Autopilot</a><div><a href="/home.html">介绍</a><a href="/guides/">指南</a><a href="/index.html">打开应用</a></div></nav>
+  
+  <p class="meta">指南 · 约 6 分钟阅读 · 更新于 2026-08-10</p>
+  <h1>九转序列怎么用在自选股看板上</h1>
+  <p class="lead">九转（TD Sequential 思路）常被用来观察「计数是否走完」，而不是单独当作买卖开关。把它放进自选看板，是为了让多只标的的时机状态能一眼扫完。</p>
+  <div class="note"><b>重要：</b>本文只介绍研究用法与产品界面含义，不构成任何投资建议。市场有风险，决策请自行负责。</div>
+  <h2>你在看板上会看到什么</h2>
+  <p>在 Autopilot 自选看板中，「九转时机」列用于展示与计数/阶段相关的标签（例如观察、完成等，以实际显示为准）。它和「趋势过滤」「操盘动作」分开，是为了避免把「时机线索」和「趋势环境」混成一句话。</p>
+  <figure>
+    <img src="/guides/img/watchlist-board.png" alt="Autopilot 自选看板九转时机列示意" width="1100" height="620" loading="lazy">
+    <figcaption>示意：自选看板中的「九转时机」与「趋势过滤」分列展示，便于对照。</figcaption>
+  </figure>
+  <h2>建议的阅读顺序</h2>
+  <ol>
+    <li><b>先看趋势过滤</b>：当前更偏多头、空头还是震荡环境。</li>
+    <li><b>再看九转时机</b>：计数是否进入你需要重点观察的阶段。</li>
+    <li><b>最后看动作与仓位逻辑</b>：产品给出的是研究向提示，需结合你自己的规则。</li>
+  </ol>
+  <h2>常见误区</h2>
+  <ul>
+    <li>把「九转完成」直接当成必须开仓/平仓的指令。</li>
+    <li>忽略更大周期与波动环境，只盯单一计数。</li>
+    <li>在免费体验标的上形成习惯后，不回看帮助说明就扩展到高波动标的。</li>
+  </ul>
+  <h2>和分析页的关系</h2>
+  <p>从看板点进某一行，可进入分析视图查看更完整的结构信息。看板负责「扫」，分析页负责「拆」。</p>
+  <figure>
+    <img src="/guides/img/analysis-layers.png" alt="分析页三层结构示意" width="1100" height="620" loading="lazy">
+    <figcaption>示意：分析侧将趋势、结构、时机分层展示，便于核对是否同向。</figcaption>
+  </figure>
+  <div class="cta">
+    <a class="btn btn-gold" href="/index.html">打开应用体验看板</a>
+    <a class="btn btn-outline" href="/guides/volume-price.html">下一篇：量价背离与收敛</a>
+  </div>
+  <h2>相关指南</h2>
+  <div class="related">
+    <a href="/guides/volume-price.html">量价背离与收敛：看盘时看什么</a>
+    <a href="/guides/watchlist-us-cn.html">美股与 A 股放进同一个观察池</a>
+    <a href="/guides/en-watchlist-checklist.html">English: US stock watchlist checklist</a>
+  </div>
+
+  <footer>
+    <a href="/home.html">中文介绍</a>
+    <a href="/en.html">English</a>
+    <a href="/privacy.html">Privacy</a>
+    <a href="/terms.html">Terms</a>
+    <p style="margin-top:8px;">© Autopilot / TimeBricks · 研究工具，不构成投资建议。Not investment advice.</p>
+  </footer>
+</div>
+</body>
+</html>
