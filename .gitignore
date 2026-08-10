@@ -25,3 +25,7 @@ dist/
 # Playwright / 浏览器自动化产物
 playwright-report/
 test-results/
+
+# 允许指南配图入库
+!frontend/guides/img/
+!frontend/guides/img/**
