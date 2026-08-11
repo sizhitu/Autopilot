@@ -114,9 +114,39 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """安全响应头：不引入 Google/国外验证码，不阻断国内网络。"""
+    response = await call_next(request)
+    # 防点击劫持
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # 权限收敛（相机/麦克风等默认禁用）
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=(), payment=()",
+    )
+    # 温和 CSP：允许本站、Supabase、内联脚本（现有前端依赖），禁止随意嵌套
+    # 不强制 upgrade-insecure；不引入 reCAPTCHA / 谷歌域名
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://*.supabase.co; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob: https:; "
+        "font-src 'self' data:; "
+        "connect-src 'self' https: wss:; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self' https:"
+    )
+    response.headers.setdefault("Content-Security-Policy", csp)
+    return response
 
 
 # 服务启动：初始化数据库
@@ -600,14 +630,17 @@ async def cron_reports_generate(
 
 
 @app.post("/api/contact")
-async def api_contact(req: ContactRequest):
+async def api_contact(req: ContactRequest, request: Request):
     """公开咨询入口：收集 姓名/邮箱/国家/问题，落库并立即转发到 support 邮箱（自动建单）。"""
+    _rate_check(None, request, "contact", 8, 3600)  # 每小时最多 8 次，防灌水
     email = (req.email or "").strip().lower()
     message = (req.message or "").strip()
     if not email or "@" not in email:
         raise HTTPException(400, "请填写有效邮箱")
     if len(message) < 3:
         raise HTTPException(400, "请填写咨询内容")
+    if len(message) > 4000:
+        raise HTTPException(400, "内容过长，请精简后提交")
     # 落库（service 操作）+ 立即转发到客服邮箱
     tid = ticket_store.create_ticket(req.name.strip(), email, req.country.strip(), message)
     mailed = mailer.send_ticket_notification(req.name, email, req.country, message, tid)
@@ -800,8 +833,9 @@ async def get_daily(symbol: str, limit: int = Query(0, description="0=全部，>
 # ================================================================
 
 @app.get("/api/watchlist/free-preview")
-async def watchlist_free_preview(refresh: bool = False):
+async def watchlist_free_preview(request: Request, refresh: bool = False):
     """免费用户固定两只真实行情（服务端缓存），避免静态假数据。"""
+    _rate_check(None, request, "free_preview", 30, 60)
     import time as _time
     from watchlist import _status_dict_cached
 
@@ -1414,6 +1448,32 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
         body = {}
     success_url = (body.get("success_url") or os.getenv("BILLING_SUCCESS_URL") or "").strip()
     if not success_url:
+        success_url = "https://timebricks.bid/?billing=success"
+    # 防开放重定向：仅允许本站与 CORS 白名单域名
+    try:
+        from urllib.parse import urlparse
+        _su = urlparse(success_url)
+        _host = (_su.hostname or "").lower()
+        _allowed_hosts = {"timebricks.bid", "www.timebricks.bid"}
+        for o in allow_origins:
+            if o and o != "*":
+                try:
+                    h = urlparse(o if "://" in o else f"https://{o}").hostname
+                    if h:
+                        _allowed_hosts.add(h.lower())
+                except Exception:
+                    pass
+        _origin = (request.headers.get("origin") or "").strip()
+        if _origin:
+            try:
+                oh = urlparse(_origin).hostname
+                if oh:
+                    _allowed_hosts.add(oh.lower())
+            except Exception:
+                pass
+        if _su.scheme not in ("https", "http") or _host not in _allowed_hosts:
+            success_url = "https://timebricks.bid/?billing=success"
+    except Exception:
         success_url = "https://timebricks.bid/?billing=success"
 
     cfg = _billing_provider_configured()
