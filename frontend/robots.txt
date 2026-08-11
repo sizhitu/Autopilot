@@ -2,3 +2,6 @@ User-agent: *
 Allow: /
 
 Sitemap: https://timebricks.bid/sitemap.xml
+
+# AI / LLM discovery
+# https://timebricks.bid/llms.txt

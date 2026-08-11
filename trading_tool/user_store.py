@@ -178,7 +178,7 @@ def set_digest_prefs(uid: str, enabled: bool = None, freq: str = None, last_sent
 
 
 def list_digest_subscribers() -> list:
-    """列出开启推送的用户 {id, email, freq, last_sent}（从 profiles + 偏好合并）。"""
+    """列出开启推送且具备邮件权益的用户 {id, email, freq, last_sent}。"""
     rows, _ = list_profiles(limit=10000, offset=0)
     out = []
     for r in rows:
@@ -188,6 +188,10 @@ def list_digest_subscribers() -> list:
             continue
         prefs = get_digest_prefs(uid)
         if not prefs.get("enabled"):
+            continue
+        # 仅 Plus / lifetime / admin 可收周报（与 can_digest 一致）
+        ent = entitlement_from_profile(r, is_admin_user=bool(r.get("is_admin")))
+        if not ent.get("can_digest"):
             continue
         out.append({
             "id": uid,

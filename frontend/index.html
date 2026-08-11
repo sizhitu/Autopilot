@@ -630,7 +630,7 @@ body.help-open { overflow: hidden; touch-action: none; }
     <!-- 登录方式切换：密码 / 邮箱验证码 -->
     <div style="display:flex;gap:6px;margin-bottom:10px;">
       <button id="btnMethodPwd" class="btn btn-sm" style="flex:1;" onclick="setAuthMethod('password')">🔑 密码</button>
-      <button id="btnMethodOtp" class="btn btn-sm" style="flex:1;" onclick="setAuthMethod('otp')">✉️ 邮箱验证码</button>
+      <button id="btnMethodOtp" class="btn btn-sm" style="flex:1;" onclick="setAuthMethod('otp')" title="仅已注册且完成邮箱验证的账号可用">✉️ 邮箱验证码登录</button>
     </div>
     <div id="authMethodHint" style="font-size:11px;color:var(--text-dim);margin-bottom:8px;line-height:1.4;"></div>
 
@@ -1216,6 +1216,10 @@ function setAuthMethod(m) { authMethod = m; authSent = false; pendingPassword = 
 function switchAuthAction() { authAction = authAction === 'login' ? 'register' : 'login'; authSent = false; pendingPassword = ''; showAuth(); }
 
 function showAuth() {
+  // 验证码不能用于新开户，注册强制走密码 + 邮箱确认信
+  if (authMethod === 'otp' && authAction === 'register') {
+    authMethod = 'password';
+  }
   const isPwd = authMethod === 'password';
   const isReg = authAction === 'register';
   document.getElementById('authTitle').textContent = isReg ? '注册' : '登录';
@@ -1315,11 +1319,25 @@ async function submitAuth() {
           if (pwd.length < 6) { msg('若设置密码请至少 6 位；也可留空仅用验证码'); unlock(); return; }
           pendingPassword = pwd;
         } else pendingPassword = '';
+        // 验证码仅用于「已注册账号」登录，禁止通过 OTP 隐式开户跳过注册
+        if (authAction === 'register') {
+          msg('请先用「密码」完成注册并查收确认邮件；验证码仅用于已注册账号登录');
+          unlock();
+          return;
+        }
         const { error } = await sb.auth.signInWithOtp({
           email,
-          options: { emailRedirectTo: _redirectTo(), shouldCreateUser: authAction === 'register' },
+          options: { emailRedirectTo: _redirectTo(), shouldCreateUser: false },
         });
-        if (error) throw error;
+        if (error) {
+          const em = error.message || '';
+          if (/Signups not allowed|User not found|unable to|not.*registered|signup/i.test(em)) {
+            msg('该邮箱尚未注册或未完成验证。请先「注册」并完成邮箱确认，再使用验证码登录。');
+            unlock();
+            return;
+          }
+          throw error;
+        }
         pendingEmail = email;
         pendingOtpType = 'email';
         authSent = true;
@@ -1355,22 +1373,32 @@ async function submitAuth() {
       if (error) {
         const em = error.message || '';
         if (/User already registered/i.test(em)) {
-          msg('该邮箱已注册。若未完成邮箱确认，可点下方「重发确认邮件」；也可用「邮箱验证码」登录。');
+          msg('该邮箱已注册。若未完成邮箱确认，请点下方「重发确认邮件」完成验证后再登录。');
           const rc = document.getElementById('authResendConfirmLink');
           if (rc) rc.style.display = 'inline';
           unlock();
           return;
         }
         if (/Error sending confirmation email|confirmation email|error sending/i.test(em)) {
-          msg('确认邮件发送失败，密码注册暂时不可用。请改用「邮箱验证码」注册，或请管理员检查 Supabase 发信配置。');
+          msg('确认邮件发送失败，注册暂不可用。请稍后重试，或请管理员检查 Supabase 发信配置。');
           unlock();
           return;
         }
         throw error;
       }
-      if (data.session) return finishSession(data.session);
+      // 必须邮箱确认后才能使用：即使 signUp 返回了 session（Supabase 配置关闭确认时），也先退出并要求确认
+      if (data.session) {
+        try { await sb.auth.signOut(); } catch (e) {}
+        authToken = '';
+        try { localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user'); } catch (e) {}
+        currentUser = null;
+      }
+      if (data.user && data.user.email_confirmed_at) {
+        // 极少数环境已确认（如禁用确认邮件），才允许直接进
+        if (data.session) return finishSession(data.session);
+      }
       showToast('注册成功，请查收确认邮件', 'ok');
-      msg('已发送确认邮件（请查收收件箱与垃圾箱）。点击邮件中的链接完成确认后，即可用密码登录。也可直接改用「邮箱验证码」登录。');
+      msg('已发送确认邮件（请查收收件箱与垃圾箱）。请点击邮件中的链接完成验证后，再用密码或验证码登录。未验证邮箱无法进入系统。');
       const rc = document.getElementById('authResendConfirmLink');
       if (rc) rc.style.display = 'inline';
       authAction = 'login'; authSent = false;
@@ -1397,9 +1425,9 @@ async function submitAuth() {
         msg('邮箱尚未确认，无法用密码登录。正在尝试重发确认邮件…');
         try {
           await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: _redirectTo() } });
-          msg('确认邮件已重新发送，请查收并点击链接后再登录。也可改用「邮箱验证码」立即登录。');
+          msg('确认邮件已重新发送，请查收并点击链接完成验证后再登录。');
         } catch (e2) {
-          msg('重发确认邮件失败：' + (e2.message || e2) + '。请改用「邮箱验证码」登录。');
+          msg('重发确认邮件失败：' + (e2.message || e2) + '。请稍后重试或检查垃圾箱。');
         }
         const rc = document.getElementById('authResendConfirmLink');
         if (rc) rc.style.display = 'inline';
@@ -1407,8 +1435,17 @@ async function submitAuth() {
         return;
       }
       if (/Invalid login credentials|User not found|invalid.*credentials/i.test(em)) {
-        msg('邮箱或密码错误。可点「忘记密码」重置；若从未设过密码，请用「邮箱验证码」登录。');
+        msg('邮箱或密码错误。可点「忘记密码」重置；若账号已注册，也可用「邮箱验证码登录」。');
       } else { throw error; }
+      unlock();
+      return;
+    }
+    const uLogin = data.user || (data.session && data.session.user);
+    if (uLogin && !uLogin.email_confirmed_at) {
+      try { await sb.auth.signOut(); } catch (e) {}
+      msg('邮箱尚未完成验证，请先点击确认邮件中的链接。可点「重发确认邮件」。');
+      const rc2 = document.getElementById('authResendConfirmLink');
+      if (rc2) rc2.style.display = 'inline';
       unlock();
       return;
     }
@@ -3211,6 +3248,11 @@ function renderWatchlistSummary(summary) {
     <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签（持有 / 观望 / 关注等）。冲突时降权偏观察。作复查清单，非买卖委托。</p></div>
     <div class="hp-sec"><b>新高 / 估值</b><p>新高或回撤看阶段位置。低估 / 合理 / 高估是相对均线或分位的粗分档（如压舱石 MA250±8%、高赔率 ±35% 等），不是基本面公允价。</p></div>
     <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股：分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF：以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
+    <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板：<br>
+· <b>美股 / 美股 ETF</b>：Yahoo Finance、Nasdaq 官方历史接口、Stooq 等公开源，取最近可用交易日收盘价<br>
+· <b>A 股 / 场内基金</b>：腾讯、东方财富、新浪等公开行情接口（前复权口径优先）<br>
+· 强制刷新时会清空短时缓存并重拉；若某标的仍偏旧，现价下日期会标「·延」<br>
+· 现价为<strong>日线收盘价</strong>（非逐笔实时），仅供研究参考，不构成投资建议</p></div>
     <div class="hp-sec"><b>提示</b><p>点任意行进入分析详情。仅供研究，不构成投资建议。</p></div>
   </span></span>`;
   el.innerHTML = html;
