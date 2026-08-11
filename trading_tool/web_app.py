@@ -1283,13 +1283,9 @@ async def run_backtest(req: BacktestRequest, request: Request = None,
             commission=req.commission,
             warmup=req.warmup
         )
-        _ep = float(req.entry_price or 0) or None
-        _ip = float(req.initial_position_pct or 0) or 0.0
-        if _ip < 0:
-            _ip = 0.0
-        if _ip > 1:
-            _ip = min(_ip / 100.0, 1.0) if _ip > 1 else _ip
-        result = bt.run(df, entry_price=_ep, initial_position_pct=_ip)
+        # 回测算法回退：仅可选 entry_price；initial_position_pct 暂不接入
+        _ep = float(getattr(req, "entry_price", 0) or 0) or None
+        result = bt.run(df, entry_price=_ep)
 
         if result.config.get("error"):
             raise ValueError(result.config["error"])
