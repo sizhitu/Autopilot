@@ -3939,9 +3939,9 @@ function drawChart(chartData) {
 
   // 均线图例
   if (chartData.mas) {
-    const order = ['5','10','20','50','100','200'];
+    const order = ['5','10','20','50','100','120','200'];
     let lx = padL + 4, ly = padT + 10;
-    for (const p of order) { if (!chartData.mas[p]) continue; ctx.fillStyle = chartData.mas[p].color; ctx.font = '9px sans-serif'; ctx.fillText('MA'+p, lx, ly); lx += 35; }
+    for (const p of order) { if (!chartData.mas[p]) continue; ctx.fillStyle = chartData.mas[p].color; ctx.font = (p === '120' ? 'bold ' : '') + '9px sans-serif'; ctx.fillText('MA'+p, lx, ly); lx += (p === '120' ? 42 : 34); }
   }
 
   // 成交量

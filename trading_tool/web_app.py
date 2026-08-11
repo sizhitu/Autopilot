@@ -251,8 +251,10 @@ def result_to_dict(result) -> dict:
     return d
 
 
-def df_to_chart_json(df: pd.DataFrame, result, show_last=80) -> dict:
-    """提取K线+均线数据供前端绘图"""
+def df_to_chart_json(df: pd.DataFrame, result, show_last=150) -> dict:
+    """提取K线+均线数据供前端绘图。默认至少 150 根，便于观察 MA120。"""
+    # 不足 show_last 时用全部；至少保证尽量靠近目标根数
+    show_last = max(int(show_last or 150), 120)
     recent = df.tail(show_last).copy().reset_index(drop=True)
 
     candles = []
@@ -266,10 +268,11 @@ def df_to_chart_json(df: pd.DataFrame, result, show_last=80) -> dict:
         })
 
     # 均线
-    ma_periods = [5, 10, 20, 30, 50, 100, 150, 200, 250]
+    ma_periods = [5, 10, 20, 30, 50, 100, 120, 150, 200, 250]
     ma_colors = {
         5: "#3498db", 10: "#9b59b6", 20: "#e67e22", 30: "#1abc9c",
-        50: "#f39c12", 100: "#e74c3c", 150: "#34495e", 200: "#7f8c8d", 250: "#bdc3c7"
+        50: "#f39c12", 100: "#e74c3c", 120: "#f1c40f", 150: "#34495e",
+        200: "#7f8c8d", 250: "#bdc3c7",
     }
     mas = {}
     for p in ma_periods:
