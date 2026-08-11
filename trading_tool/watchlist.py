@@ -418,65 +418,66 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.trend_filter = "震荡整理"
             status.trend_filter_color = "gray"
 
-        # ---------- 3) 操盘动作：与分析页「三层一致性」同源（strategy.analyze → signal）----------
-        # 九转/趋势列仍独立展示；动作不再用九转×阶梯另算一套，避免与详情页矛盾
-        from strategy_engine import SignalType
-        sig = result.signal
-        action_full = (result.action or "").strip()
-        reasons = [action_full] if action_full else []
-
-        if sig == SignalType.BUY:
-            status.action = "关注买入"
-            status.action_color = "orange"
-            if "震荡" in action_full:
-                status.action = "轻仓试探"
-        elif sig == SignalType.ADD:
-            status.action = "关注加仓"
-            status.action_color = "orange"
-            if "震荡" in action_full:
-                status.action = "轻仓加仓"
-        elif sig == SignalType.SELL:
-            if "阶梯" in action_full:
-                status.action = "阶梯止盈关注"
-            elif "空仓" in action_full or "观望" in action_full:
-                status.action = "观望"
-                status.action_color = "gray"
-            else:
-                status.action = "关注卖出"
-            if status.action != "观望":
-                status.action_color = "red"
-        elif sig == SignalType.HOLD:
-            status.action = "持有"
-            status.action_color = "green"
-        else:  # WAIT
-            if "等待" in action_full:
-                status.action = "等待时机"
-            else:
-                status.action = "观望"
-            status.action_color = "gray"
-
-        # 九转与策略冲突时，在 reason 中标明（不改动作，动作以三层为准）
+        # ---------- 3) 操盘动作（时机 × 趋势 × 阶梯，冲突则降权）----------
         timing_buy = status.timing_color == "orange" and "九转" in status.timing
         timing_sell = status.timing_color == "red" and "九转" in status.timing
-        if timing_sell and sig in (SignalType.BUY, SignalType.ADD):
-            reasons.append("看板九转为卖侧，但三层综合仍偏买，以三层动作为准")
-        elif timing_buy and sig == SignalType.SELL:
-            reasons.append("看板九转为买侧，但三层综合偏卖/减仓，以三层动作为准")
-        if buy_ladder_hit and sig in (SignalType.BUY, SignalType.ADD):
-            reasons.append(f"近5日{status.change_5d:+.1f}%靠近买入档（参考）")
-        if sell_ladder_hit and sig == SignalType.SELL:
-            reasons.append(f"近5日{status.change_5d:+.1f}%靠近卖出档（参考）")
+        reasons = []
 
-        status.action_reason = "；".join([r for r in reasons if r])
+        if nt.get('conflict'):
+            status.action = "观望"
+            status.action_color = "gray"
+            reasons.append("日/月九转方向冲突")
+        elif timing_buy and trend == "空头趋势":
+            status.action = "轻仓观察"
+            status.action_color = "gray"
+            reasons.append("九转买点与空头趋势背离，不宜重仓")
+        elif timing_sell and trend == "多头趋势":
+            status.action = "减仓观察"
+            status.action_color = "orange"
+            reasons.append("九转卖点与多头趋势背离，优先风控")
+        elif timing_buy and trend == "多头趋势":
+            status.action = "关注买入"
+            status.action_color = "orange"
+            reasons.append("九转买点与多头同向")
+        elif timing_sell and trend == "空头趋势":
+            status.action = "关注卖出"
+            status.action_color = "red"
+            reasons.append("九转卖点与空头同向")
+        elif timing_buy:
+            status.action = "关注买入"
+            status.action_color = "orange"
+            reasons.append(status.timing)
+        elif timing_sell:
+            status.action = "关注卖出"
+            status.action_color = "red"
+            reasons.append(status.timing)
+        elif buy_ladder_hit:
+            status.action = "阶梯抄底关注"
+            status.action_color = "orange"
+            reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂买入档")
+        elif sell_ladder_hit:
+            status.action = "阶梯止盈关注"
+            status.action_color = "red"
+            reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂卖出档")
+        else:
+            # 无九转/阶梯等明确时机时统一观望（不再单独标「策略偏多/偏空」）
+            status.action = "观望"
+            status.action_color = "gray"
+            if nt_signal in ('买入', '加仓', '卖出', '持有'):
+                reasons.append(f"无明确时机共振（策略信号仅供参考：{nt_signal}）")
+            else:
+                reasons.append("无共振时机")
+
+        status.action_reason = "；".join(reasons)
         # 兼容旧看板汇总字段
-        if status.action in ("关注买入", "关注加仓", "轻仓试探", "轻仓加仓", "阶梯抄底关注"):
+        if status.action in ("关注买入", "阶梯抄底关注"):
             status.signal = "即将上涨关注"
             status.signal_color = "orange"
         elif status.action in ("关注卖出", "阶梯止盈关注", "减仓观察"):
             status.signal = "上涨见顶关注"
             status.signal_color = "red"
-        elif status.action in ("轻仓观察", "等待时机"):
-            status.signal = "下跌观望"
+        elif status.action == "轻仓观察":
+            status.signal = "九转背离·观望"
             status.signal_color = "gray"
         else:
             status.signal = "下跌观望"
