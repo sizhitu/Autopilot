@@ -2691,7 +2691,7 @@ async function fetchQuote(symbol, name, market) {
   try {
     const res = await api('/api/quote', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbol: symbol, days: 300})
+      body: JSON.stringify({symbol: symbol, days: 300, force: !!(typeof window !== 'undefined' && window._quoteForce)})
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
@@ -2877,9 +2877,15 @@ async function ensureAnalysisSymbol() {
 }
 
 // === 主Tab切换 ===
+let _mainTab = 'watchlist';
 function switchMainTab(tab) {
-  // 纯 UI 切换：不依赖网络；刷新行情与切 Tab 互不影响
+  // 纯 UI 切换：不依赖网络；看板轮询不得挡住分析 Tab
+  _mainTab = tab;
   try {
+    // 离开看板时立刻停掉轮询，避免 20+ 标的刷新占满主线程/请求
+    if (tab === 'analysis') {
+      try { clearTimeout(_wlPollTimer); _wlPollTimer = null; } catch (e0) {}
+    }
     const ta = document.getElementById('tabAnalysis');
     const tw = document.getElementById('tabWatchlist');
     const av = document.getElementById('analysisView');
@@ -3184,14 +3190,14 @@ async function _loadWatchlistBody(forceRefresh) {
         // 再确认一次即可，避免连环闪
         if (_wlPollCount < 2) {
           _wlPollCount += 1;
-          _wlPollTimer = setTimeout(function () { loadWatchlist(false); }, 3000);
+          _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 3000);
         } else {
           _wlPollCount = 0;
           _watchWasComputing = false;
         }
       } else if (_wlPollCount < _WL_MAX_POLL) {
         _wlPollCount += 1;
-        _wlPollTimer = setTimeout(function () { loadWatchlist(false); }, 2500);
+        _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 2500);
       } else {
         _wlPollCount = 0;
         _watchWasComputing = false;

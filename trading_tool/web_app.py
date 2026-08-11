@@ -251,11 +251,11 @@ def result_to_dict(result) -> dict:
     return d
 
 
-def df_to_chart_json(df: pd.DataFrame, result, show_last=150) -> dict:
-    """提取K线+均线数据供前端绘图。默认至少 150 根，便于观察 MA120。"""
-    # 不足 show_last 时用全部；至少保证尽量靠近目标根数
-    show_last = max(int(show_last or 150), 120)
-    recent = df.tail(show_last).copy().reset_index(drop=True)
+def df_to_chart_json(df: pd.DataFrame, result, show_last=300) -> dict:
+    """提取K线+均线数据供前端绘图。默认约 300 根，便于观察 MA120/MA250。"""
+    show_last = max(int(show_last or 300), 120)
+    # 有多少展示多少，上限 show_last
+    recent = df.tail(min(show_last, len(df))).copy().reset_index(drop=True)
 
     candles = []
     for _, row in recent.iterrows():
@@ -714,6 +714,7 @@ async def search_stocks(q: str = Query(..., description="股票代码或名称�
 class QuoteRequest(BaseModel):
     symbol: str
     days: int = 300
+    force: bool = False
 
 
 @app.post("/api/quote")
@@ -729,16 +730,25 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         _require_pro(authorization)
     _rate_check(authorization, request, "quote", 20, 60)
     # 命中短时分析结果缓存：直接返回（同一标的重复打开详情页秒开）
+    # 若缓存 K 线过少（旧逻辑/残缺数据），忽略缓存并重新拉取
     cached_hit = cache.get_quote_cache(req.symbol)
-    if (cached_hit and not getattr(req, "force", False)
+    _force = bool(getattr(req, "force", False))
+    if (cached_hit and not _force
             and isinstance(cached_hit, dict)
             and isinstance(cached_hit.get("chart"), dict)
             and (cached_hit.get("chart") or {}).get("candles")):
-        cached_hit = dict(cached_hit)
-        cached_hit["stale"] = False
-        cached_hit["cache_hit"] = True
-        return JSONResponse(content=_to_jsonable(cached_hit),
-                            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+        _nc = len((cached_hit.get("chart") or {}).get("candles") or [])
+        if _nc >= 120:
+            cached_hit = dict(cached_hit)
+            cached_hit["stale"] = False
+            cached_hit["cache_hit"] = True
+            return JSONResponse(content=_to_jsonable(cached_hit),
+                                headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+        # 短 K 线缓存作废
+        try:
+            cache.set_quote_cache(req.symbol, None)  # may no-op
+        except Exception:
+            pass
     try:
         df = fetcher.fetch(req.symbol, req.days)
         source = "live"
@@ -796,7 +806,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         "symbol": req.symbol,
         "stale": stale,
         "data": result_to_dict(result),
-        "chart": df_to_chart_json(df, result),
+        "chart": df_to_chart_json(df, result, show_last=max(300, int(getattr(req, "days", 300) or 300))),
         "nine_turn": nine_turn,
         "high_low": extra["high_low"],
         "valuation": extra["valuation"],
