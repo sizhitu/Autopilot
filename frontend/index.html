@@ -574,7 +574,7 @@ body.help-open { overflow: hidden; touch-action: none; }
         <div style="color:var(--text);font-weight:600;margin-bottom:4px;">取消与退费说明</div>
         <ul style="margin:0;padding-left:18px;">
           <li><b>取消续费</b>：当前账期仍可使用，到期后不再扣款并降为免费。</li>
-          <li><b>退费</b>：首次订阅 48 小时内且几乎未使用，可申请全额退；通过下方按钮提交或联系客服。退款成功后权限立即失效。</li>
+          <li><b>退费</b>：首次订阅 48 小时内且几乎未使用，可申请全额退。平台审核通过后一般 24 小时内发起退款；银行/卡中心入账常见约 7 个工作日，部分地区可能 1～2 周。退款成功后会员权限立即失效。</li>
         </ul>
       </div>
     </div>
@@ -619,7 +619,9 @@ body.help-open { overflow: hidden; touch-action: none; }
       </ul>
       <div style="margin-top:12px;text-align:center;font-size:12px;font-weight:600;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 0;">选择 Pro 并支付</div>
     </div>
-    <div style="margin-top:12px;font-size:11px;color:var(--text-dim);text-align:center;line-height:1.5;">支付由 Waffo 安全处理 · 可随时在订阅管理中取消续费<br>研究工具，不构成投资建议</div>
+    <div style="margin-top:12px;font-size:11px;color:var(--text-dim);text-align:center;line-height:1.55;">支付由 Waffo 安全处理 · 可随时在订阅管理中取消续费<br>
+      <span style="display:inline-block;margin-top:6px;text-align:left;max-width:100%;">退款说明：符合条件的退款，平台审核通过后一般 <b style="color:var(--text);">24 小时内</b>发起退款处理；款项退回您的支付账户后，各国家/地区银行或信用卡中心入账通常约 <b style="color:var(--text);">7 个工作日</b>，部分情况可能需要 <b style="color:var(--text);">1～2 周</b>（与国际订房平台常见说明类似，以发卡机构实际处理为准）。</span><br>
+      研究工具，不构成投资建议</div>
   </div>
 </div>
 <div id="authModal" class="hidden glass-overlay" style="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;">
@@ -1596,9 +1598,10 @@ async function openManageSub() {
       planSource = r.plan_source || planSource || '';
       complimentary = !!r.complimentary || plan === 'lifetime' ||
         ['grandfather','admin','manual','gift','lifetime','comp','complimentary'].indexOf(String(planSource).toLowerCase()) >= 0;
-      canCancel = !!r.can_cancel && !complimentary;
+      canCancel = !!r.can_cancel && !complimentary && !r.cancel_pending;
       canRefund = !!(r.can_refund != null ? r.can_refund : r.can_cancel) && !complimentary;
       expires = r.plan_expires_at || expires || '';
+      window._cancelPending = !!r.cancel_pending;
       currentUser = Object.assign(currentUser || {}, {
         plan: r.plan, entitled: r.entitled, can_digest: r.can_digest,
         price_pro_usd: r.price_pro_usd, price_plus_usd: r.price_plus_usd,
@@ -1652,6 +1655,11 @@ async function openManageSub() {
       btnCa.style.display = 'block';
       btnCa.disabled = true;
       btnCa.textContent = '取消自动续费（赠送权益不可用）';
+    } else if (showCa && window._cancelPending) {
+      btnCa.disabled = true;
+      btnCa.dataset.canCancel = '0';
+      btnCa.textContent = '已取消续费（账期内仍有效）';
+      btnCa.title = '已提交取消自动续费，当前账期结束前仍可使用';
     } else if (showCa) {
       btnCa.textContent = '取消自动续费';
     }
@@ -1689,7 +1697,7 @@ async function doCancelSubscription() {
     showToast('未找到可取消的订单号。若刚付款请稍后再试，或联系客服处理', 'err');
     return;
   }
-  if (!confirm('确认取消自动续费？\n当前账期仍可继续使用，到期后将降为免费用户。')) return;
+  if (!confirm('确认取消自动续费？\n\n· 当前账期权益保留至到期\n· 到期后不再扣款并降为免费\n· 不会立即失去本周期内的付费功能')) return;
   try {
     const c = await apiJSON('/api/billing/cancel', { method: 'POST', body: '{}' });
     showToast((c && c.message) || '已提交取消续费', 'ok');
@@ -3243,14 +3251,14 @@ function renderWatchlistSummary(summary) {
   }
   // 统一说明入口：信息图标，内容分区便于扫读
   html += `<span class="help-q help-q-board" style="margin-left:6px;" onclick="event.stopPropagation();toggleHelp(this)" title="查看看板列说明" role="button" aria-label="看板列说明"><span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
-    <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）：收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
+    <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）— 收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
     <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多·指标未齐 / 空·指标未齐」= 均线已偏多/偏空，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
     <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签（持有 / 观望 / 关注等）。冲突时降权偏观察。作复查清单，非买卖委托。</p></div>
     <div class="hp-sec"><b>新高 / 估值</b><p>新高或回撤看阶段位置。低估 / 合理 / 高估是相对均线或分位的粗分档（如压舱石 MA250±8%、高赔率 ±35% 等），不是基本面公允价。</p></div>
-    <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股：分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF：以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
-    <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板：<br>
-· <b>美股 / 美股 ETF</b>：Yahoo Finance、Nasdaq 官方历史接口、Stooq 等公开源，取最近可用交易日收盘价<br>
-· <b>A 股 / 场内基金</b>：腾讯、东方财富、新浪等公开行情接口（前复权口径优先）<br>
+    <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股 — 分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF — 以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
+    <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板。<br>
+· <b>美股 / 美股 ETF</b> — Yahoo Finance、Nasdaq 官方历史接口、Stooq 等公开源，取最近可用交易日收盘价<br>
+· <b>A 股 / 场内基金</b> — 腾讯、东方财富、新浪等公开行情接口（前复权口径优先）<br>
 · 强制刷新时会清空短时缓存并重拉；若某标的仍偏旧，现价下日期会标「·延」<br>
 · 现价为<strong>日线收盘价</strong>（非逐笔实时），仅供研究参考，不构成投资建议</p></div>
     <div class="hp-sec"><b>提示</b><p>点任意行进入分析详情。仅供研究，不构成投资建议。</p></div>

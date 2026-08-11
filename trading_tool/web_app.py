@@ -1723,17 +1723,39 @@ async def billing_confirm(user: dict = Depends(auth.get_current_user)):
 
 @app.post("/api/billing/cancel")
 async def billing_cancel(user: dict = Depends(auth.get_current_user)):
-    """取消订阅（Waffo：到期后失效；lifetime 不可取消）。"""
-    profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
+    """取消自动续费（Waffo：账期结束才失效；lifetime/赠送不可取消）。"""
+    import json as _json
+    from datetime import datetime as _dt
+    uid = user["id"]
+    profile = user_store.get_or_create_profile(uid, user.get("email", ""))
     plan = (profile.get("plan") or "").lower()
     source = (profile.get("plan_source") or "").lower()
     if plan == "lifetime" or source in ("grandfather", "admin", "manual", "gift", "lifetime", "comp", "complimentary"):
         raise HTTPException(status_code=400, detail="赠送/老用户权益不支持自助取消")
     if plan not in ("pro", "basic", "plus"):
-        return {"success": True, "message": "当前不是付费订阅"}
+        return {"success": True, "message": "当前不是付费订阅", "status": "none"}
     order_id = (profile.get("stripe_subscription_id") or "").strip()
     if not order_id:
         raise HTTPException(status_code=400, detail="未找到订阅订单号，请联系客服处理")
+
+    # 已提交过取消：幂等返回，避免重复调支付侧
+    try:
+        prev = settings_store.get_setting(f"billing.cancel.{uid}", None)
+        if isinstance(prev, str) and prev:
+            try:
+                prev = _json.loads(prev)
+            except Exception:
+                prev = {"raw": prev}
+        if isinstance(prev, dict) and (prev.get("status") or "").lower() in ("canceling", "canceled"):
+            return {
+                "success": True,
+                "status": prev.get("status") or "canceling",
+                "message": "已取消自动续费，权益保留至当前账期结束",
+                "cancel_requested_at": prev.get("at"),
+            }
+    except Exception:
+        pass
+
     if source == "waffo" or order_id.startswith("ORD_"):
         try:
             import waffo_client
@@ -1743,8 +1765,30 @@ async def billing_cancel(user: dict = Depends(auth.get_current_user)):
                 {"orderId": order_id},
             )
         except Exception as e:
+            # 支付侧可能已取消：仍记本地状态，避免用户反复点
+            err_s = str(e).lower()
+            if any(k in err_s for k in ("already", "cancel", "not active", "已取消")):
+                try:
+                    settings_store.set_setting(
+                        f"billing.cancel.{uid}",
+                        _json.dumps({"status": "canceling", "at": _dt.utcnow().isoformat() + "Z", "order_id": order_id}, ensure_ascii=False),
+                    )
+                except Exception:
+                    pass
+                return {"success": True, "status": "canceling", "message": "已取消自动续费，权益保留至当前账期结束"}
             raise _client_http_error(502, "取消订阅失败，请稍后重试或联系客服", e)
-        # 周期结束才降级；本地标记 canceling 仍保持 pro 直到 webhook canceled
+        # 周期结束才降级；本地标记 canceling，plan 仍保持至 webhook
+        try:
+            settings_store.set_setting(
+                f"billing.cancel.{uid}",
+                _json.dumps({
+                    "status": "canceling",
+                    "at": _dt.utcnow().isoformat() + "Z",
+                    "order_id": order_id,
+                }, ensure_ascii=False),
+            )
+        except Exception:
+            pass
         return {"success": True, "status": "canceling", "raw": res, "message": "已提交取消，权益保留至当前账期结束"}
     raise HTTPException(status_code=400, detail="当前订阅渠道暂不支持自助取消")
 
@@ -1771,14 +1815,31 @@ async def billing_portal(user: dict = Depends(auth.get_current_user)):
     )
     paid_plan = raw_plan in ("pro", "basic", "plus") or (ent.get("plan") or "").lower() in ("pro", "plus")
     can_manage = bool(paid_plan and order_id and not complimentary)
+    cancel_pending = False
+    cancel_requested_at = None
+    try:
+        import json as _json
+        prev = settings_store.get_setting(f"billing.cancel.{user['id']}", None)
+        if isinstance(prev, str) and prev:
+            try:
+                prev = _json.loads(prev)
+            except Exception:
+                prev = None
+        if isinstance(prev, dict) and (prev.get("status") or "").lower() in ("canceling", "canceled"):
+            cancel_pending = True
+            cancel_requested_at = prev.get("at")
+    except Exception:
+        pass
     return {
         "success": True,
         **ent,
         "order_id": order_id,
         "plan_source": source or ent.get("plan_source") or "",
         "complimentary": complimentary,
-        "can_cancel": can_manage,
+        "can_cancel": can_manage and not cancel_pending,
         "can_refund": can_manage,
+        "cancel_pending": cancel_pending,
+        "cancel_requested_at": cancel_requested_at,
     }
 
 
