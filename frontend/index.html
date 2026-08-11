@@ -3021,7 +3021,10 @@ async function _loadWatchlistBody(forceRefresh) {
         _lastWatchSig = _watchRowsSig(stocks);
         setDemoBanner(true);
         renderWatchlist(stocks);
-        renderWatchlistSummary(json.summary || { count: stocks.length, free_preview: true });
+        const sum = (json.summary && (json.summary['即将上涨关注'] != null || json.summary['下跌观望'] != null))
+          ? json.summary
+          : buildWatchlistSummaryFromStocks(stocks);
+        renderWatchlistSummary(sum);
         setWatchUpdatedLabel({ computing: false, updated_at: (json && json.updated_at) || '免费体验·真实行情', demo: true });
         loading.classList.add('hidden');
         return;
@@ -3151,6 +3154,19 @@ async function editNote(code) {
   } catch (e) { showToast('备注失败: ' + e.message); }
 }
 
+function buildWatchlistSummaryFromStocks(stocks) {
+  const summary = { '即将上涨关注': 0, '上涨见顶关注': 0, '下跌观望': 0, error: 0 };
+  (stocks || []).forEach(s => {
+    if (!s) return;
+    if (s.error) { summary.error += 1; return; }
+    const sig = (s.signal || '').trim() || '下跌观望';
+    if (summary[sig] != null) summary[sig] += 1;
+    else if (sig.indexOf('见顶') >= 0 || sig.indexOf('卖') >= 0) summary['上涨见顶关注'] += 1;
+    else if (sig.indexOf('上涨') >= 0 || sig.indexOf('买入') >= 0 || sig.indexOf('抄底') >= 0) summary['即将上涨关注'] += 1;
+    else summary['下跌观望'] += 1;
+  });
+  return summary;
+}
 function renderWatchlistSummary(summary) {
   const el = document.getElementById('watchlistSummary');
   if (!el) return;

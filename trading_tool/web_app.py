@@ -853,6 +853,27 @@ async def watchlist_free_preview(refresh: bool = False):
                 "code": code, "name": name, "market": "美股" if not str(code).isdigit() else "A股",
                 "price": "-", "error": str(e)[:40], "pending": False, "free_fixed": True,
             })
+    summary = {"即将上涨关注": 0, "上涨见顶关注": 0, "下跌观望": 0, "error": 0}
+    for s in stocks:
+        if not isinstance(s, dict):
+            continue
+        if s.get("error"):
+            summary["error"] += 1
+            continue
+        sig = (s.get("signal") or "").strip() or "下跌观望"
+        if sig not in summary:
+            # 兼容其它标签，归入观望
+            if "上涨" in sig and ("见顶" in sig or "卖" in sig):
+                summary["上涨见顶关注"] += 1
+            elif "上涨" in sig or "买入" in sig or "抄底" in sig:
+                summary["即将上涨关注"] += 1
+            else:
+                summary["下跌观望"] += 1
+        else:
+            summary[sig] += 1
+    summary["count"] = len(stocks)
+    summary["free_preview"] = True
+
     data = {
         "success": True,
         "stocks": stocks,
@@ -862,7 +883,7 @@ async def watchlist_free_preview(refresh: bool = False):
         "free_preview": True,
         "updated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
         "notes": {},
-        "summary": {"count": len(stocks), "free_preview": True},
+        "summary": summary,
     }
     _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
     return JSONResponse(content=_to_jsonable(data),
