@@ -620,8 +620,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
     <div style="margin-top:12px;font-size:11px;color:var(--text-dim);text-align:center;line-height:1.5;">支付由 Waffo 安全处理 · 可随时在订阅管理中取消续费<br>研究工具，不构成投资建议</div>
   </div>
 </div>
-<div id="authModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;">
-  <div class="card" style="width:360px;max-width:92vw;">
+<div id="authModal" class="hidden glass-overlay" style="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;">
+  <div class="glass-dark card" style="width:360px;max-width:92vw;background:var(--glass-bg-solid);">
     <div class="card-title" id="authTitle">登录</div>
     <div id="authMsg" style="font-size:11px;margin-bottom:8px;min-height:14px;color:var(--orange);"></div>
 
