@@ -30,9 +30,41 @@
   --text: #e0e0e0; --text-dim: #888;
   --green: #2ecc71; --red: #e74c3c; --blue: #3498db;
   --orange: #e67e22; --purple: #9b59b6; --gold: #f1c40f;
+  /* 玻璃拟态（帮助 / 弹窗共用） */
+  --glass-bg: rgba(12, 16, 24, 0.78);
+  --glass-bg-solid: rgba(12, 16, 24, 0.94);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-blur: 22px;
+  --glass-shadow: 0 16px 48px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-overlay: rgba(0, 0, 0, 0.35);
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:var(--bg); color:var(--text); font-family:-apple-system,"Microsoft YaHei","Segoe UI",sans-serif; font-size:14px; overflow-x:hidden; }
+
+/* 统一玻璃拟态 */
+.glass-dark {
+  background: var(--glass-bg-solid);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 14px;
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .glass-dark {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  }
+}
+.glass-overlay {
+  background: rgba(0, 0, 0, 0.55);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .glass-overlay {
+    background: var(--glass-overlay);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+}
 .header {
   background:linear-gradient(135deg,#1a1d27,#252836);
   padding:10px 16px 10px 20px; border-bottom:1px solid var(--border);
@@ -221,20 +253,23 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .help-pop {
   display:none; z-index:10050;
   padding:14px 16px; border-radius:12px;
-  /* 半透明 + 强模糊：有玻璃感，背后文字不可辨认 */
-  background:rgba(12,16,24,0.78);
-  border:1px solid rgba(255,255,255,0.14);
-  box-shadow:0 16px 48px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
-  backdrop-filter: blur(22px) saturate(1.2);
-  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+  background: var(--glass-bg-solid);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
   color:var(--text); font-size:12px; font-weight:400; line-height:1.7;
   text-align:left; white-space:normal;
   overflow-x:hidden; overflow-y:auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  /* 默认：相对问号居中下方（桌面宽屏） */
   position:absolute; top:calc(100% + 10px); left:50%; transform:translateX(-50%);
   width:min(320px, 86vw); max-height:min(360px, 55vh);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .help-pop {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  }
 }
 .help-q.open .help-pop { display:block; }
 /* 手机/窄屏：固定屏幕正中，保证完整可见可滚动 */
@@ -254,16 +289,21 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 }
 .help-pop::before {
   content:''; position:absolute; top:-5px; left:50%; margin-left:-5px;
-  width:10px; height:10px; background:rgba(12,16,24,0.78);
+  width:10px; height:10px; background:var(--glass-bg);
   border-left:1px solid rgba(255,255,255,0.12);
   border-top:1px solid rgba(255,255,255,0.12);
   transform:rotate(45deg);
 }
 .help-backdrop {
   display:none; position:fixed; inset:0; z-index:10040;
-  background:rgba(0,0,0,0.35);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  background: rgba(0,0,0,0.55);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .help-backdrop {
+    background: var(--glass-overlay);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
 }
 .help-backdrop.show { display:block; }
 .help-pop b { color:var(--gold); font-weight:600; }
@@ -520,8 +560,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 
 
 <!-- 订阅管理弹窗 -->
-<div id="manageSubModal" style="display:none;position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:16px;">
-  <div style="background:var(--panel,#0f1c24);border:1px solid var(--border);border-radius:14px;max-width:400px;width:100%;padding:18px 16px 16px;position:relative;box-shadow:0 12px 40px rgba(0,0,0,.45);">
+<div id="manageSubModal" class="glass-overlay" style="display:none;position:fixed;inset:0;z-index:10001;align-items:center;justify-content:center;padding:16px;">
+  <div class="glass-dark" style="max-width:400px;width:100%;padding:18px 16px 16px;position:relative;">
     <button type="button" onclick="closeManageSub()" style="position:absolute;left:12px;top:10px;background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;line-height:1;">×</button>
     <div style="text-align:center;font-size:16px;font-weight:600;margin-bottom:14px;color:var(--text);">订阅管理</div>
     <div id="manageSubBody" style="font-size:13px;color:var(--text-dim);line-height:1.65;">
@@ -548,8 +588,8 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 <!-- 登录/注册 弹窗 -->
 
 <!-- 升级套餐弹窗 -->
-<div id="upgradeModal" class="modal hidden" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:16px;">
-  <div style="background:var(--panel,#0f1c24);border:1px solid var(--border);border-radius:14px;max-width:440px;width:100%;padding:20px 16px 16px;position:relative;box-shadow:0 12px 40px rgba(0,0,0,.45);">
+<div id="upgradeModal" class="modal hidden glass-overlay" style="display:none;position:fixed;inset:0;z-index:10000;align-items:center;justify-content:center;padding:16px;">
+  <div class="glass-dark" style="max-width:440px;width:100%;padding:20px 16px 16px;position:relative;">
     <button type="button" onclick="closeUpgradeModal()" aria-label="关闭" style="position:absolute;right:12px;top:10px;background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;line-height:1;">×</button>
     <div style="text-align:center;margin-bottom:6px;color:var(--gold);font-size:12px;font-weight:600;letter-spacing:.3px;">UNLOCK</div>
     <div style="text-align:center;font-size:17px;font-weight:700;margin-bottom:6px;color:var(--text);">解锁完整自选与任意标的分析</div>
