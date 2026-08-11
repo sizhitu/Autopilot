@@ -734,16 +734,19 @@ body.help-open { overflow: hidden; touch-action: none; }
           <button class="btn btn-gold btn-sm" onclick="searchStock().catch(()=>{})">搜索</button>
           <div class="search-results" id="searchResults"></div>
         </div>
-        <label>资金</label>
-        <input type="number" id="capital" value="100000" step="10000" style="width:80px;">
-        <label>持仓%</label>
-        <input type="number" id="position" value="0" step="5" style="width:50px;" min="0" max="100">
-        <label>建仓价</label>
-        <input type="number" id="entryPrice" value="" step="0.01" placeholder="可选" style="width:70px;">
         <button class="btn btn-gold btn-sm" onclick="runAnalysis()">▶分析</button>
         <button class="btn btn-outline btn-sm" onclick="loadSample()">模拟数据</button>
         <label class="btn btn-outline btn-sm">CSV<input type="file" id="csvFile" accept=".csv" onchange="runAnalysis()"></label>
+      </div>
+      <div class="toolbar" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+        <label>资金</label>
+        <input type="number" id="capital" value="100000" step="10000" style="width:88px;">
+        <label>持仓%</label>
+        <input type="number" id="position" value="0" step="5" style="width:48px;" min="0" max="100">
+        <label>建仓价</label>
+        <input type="number" id="entryPrice" value="" step="0.01" placeholder="可选" style="width:56px;">
         <button class="btn btn-orange btn-sm" onclick="runBacktest()">📊回测</button>
+        <span style="font-size:10px;color:var(--text-dim);">回测与策略仓位参数</span>
       </div>
       <div id="stockInfo" class="stock-info" style="margin-top:6px; display:none;"></div>
       <div id="industryTag" class="industry-tag" style="display:none;"></div>
@@ -3620,7 +3623,14 @@ async function calcLadder() {
 // === 回测 ===
 async function runBacktest() {
   const symbol = currentSymbol || '';
-  const capital = parseFloat(document.getElementById('btCapital').value) || 100000;
+  // 优先用工具栏资金/建仓价/持仓；回测配置 Tab 可覆盖
+  const capitalToolbar = parseFloat(document.getElementById('capital') && document.getElementById('capital').value);
+  const capitalTab = parseFloat(document.getElementById('btCapital') && document.getElementById('btCapital').value);
+  const capital = (!isNaN(capitalToolbar) && capitalToolbar > 0) ? capitalToolbar : (capitalTab || 100000);
+  const entryEl = document.getElementById('entryPrice');
+  const entryPrice = entryEl && entryEl.value !== '' ? parseFloat(entryEl.value) : null;
+  const posEl = document.getElementById('position');
+  const initialPos = posEl ? (parseFloat(posEl.value) || 0) / 100 : 0;
   const days = parseInt(document.getElementById('btDays').value) || 300;
   const risk = parseFloat(document.getElementById('btRisk').value) / 100 || 0.02;
   const maxPos = parseFloat(document.getElementById('btMaxPos').value) / 100 || 0.7;
@@ -3631,9 +3641,15 @@ async function runBacktest() {
   switchView('backtest');
 
   try {
+    const payload = {
+      symbol, days, initial_capital: capital, risk_per_trade: risk,
+      max_position: maxPos, commission, warmup,
+      initial_position_pct: initialPos > 0 ? initialPos : 0,
+    };
+    if (entryPrice != null && !isNaN(entryPrice) && entryPrice > 0) payload.entry_price = entryPrice;
     const res = await api('/api/backtest', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbol, days, initial_capital: capital, risk_per_trade: risk, max_position: maxPos, commission, warmup})
+      body: JSON.stringify(payload)
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '回测失败');

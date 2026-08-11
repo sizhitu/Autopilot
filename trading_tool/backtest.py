@@ -5,9 +5,9 @@
 
 核心逻辑：
   1. 遍历历史K线，逐日调用策略引擎分析
-  2. 根据三层信号模拟建仓/加仓/减仓
-  3. 记录每笔交易、资金曲线、回撤曲线
-  4. 计算收益率、最大回撤、胜率、夏普比率等指标
+  2. 交易决策与「三层一致性」信号对齐：BUY/ADD 才开加仓，SELL 才减仓，WAIT/HOLD 不交易
+  3. 藤本茂阶梯作为仓位参考融入策略引擎，回测不再单独用 RSI/空头反复减仓刷单
+  4. 记录交易、资金曲线、回撤，并计算收益与风险指标
 """
 
 import sys
@@ -83,13 +83,15 @@ class Backtester:
         self.commission = commission
         self.warmup = warmup
 
-    def run(self, df: pd.DataFrame, entry_price: Optional[float] = None) -> BacktestResult:
+    def run(self, df: pd.DataFrame, entry_price: Optional[float] = None,
+            initial_position_pct: float = 0.0) -> BacktestResult:
         """
         执行回测
 
         Args:
             df: OHLCV 数据
-            entry_price: 初始建仓参考价（None则自动用第一根K线收盘价）
+            entry_price: 初始建仓参考价（None则自动用预热结束日收盘价）
+            initial_position_pct: 起始仓位 0~1（如已持仓 10% 填 0.1）
         Returns:
             BacktestResult
         """
@@ -102,10 +104,20 @@ class Backtester:
             )
 
         # 初始化状态
-        cash = self.initial_capital
+        cash = float(self.initial_capital)
         shares = 0.0
         position_pct = 0.0
-        first_price = entry_price or df['close'].iloc[self.warmup]
+        first_price = float(entry_price) if entry_price and entry_price > 0 else float(df['close'].iloc[self.warmup])
+        # 可选：按用户给定持仓%与建仓价种子初始仓位
+        ip = float(initial_position_pct or 0)
+        if ip > 1.0:
+            ip = ip / 100.0
+        ip = max(0.0, min(ip, self.max_position))
+        if ip > 0.001 and first_price > 0:
+            invest = self.initial_capital * ip
+            shares = invest / first_price
+            cash = self.initial_capital - invest
+            position_pct = ip
 
         trades: List[Trade] = []
         equity_curve = []
@@ -118,6 +130,8 @@ class Backtester:
         last_trade_bar = -999  # 冷却期控制
         cooldown = 3            # 交易冷却K线数
         bear_trend_sold = False  # 空头趋势是否已减仓（避免反复触发）
+        sold_ladder_steps = set()  # 藤本茂上涨减仓档位只触发一次
+        timing_sell_done = False  # 时机卖侧每个空头/震荡阶段只减一次
         last_trend = None
 
         for i in range(self.warmup, n):
@@ -141,101 +155,92 @@ class Backtester:
             trade_shares = 0
             trade_reason = result.action[:50]
 
-            # --- 卖出逻辑（优先执行）---
-            # 1. 藤本茂阶梯触发卖出
-            # 2. 空头趋势 + 持仓 > 0
-            price_change = (close - first_price) / first_price if first_price > 0 else 0
+            # --- 与三层一致性对齐的交易（减少噪声卖出）---
+            # WAIT/HOLD：不交易；BUY/ADD：开仓或加仓；SELL：仅在有仓时减仓
+            # 藤本茂阶梯已在 strategy.analyze 中参与信号，此处不再单独用 RSI/空头刷单
+            sig = result.signal
+            trade_reason = (result.action or "")[:80] or trade_reason
+            layers = getattr(result, "layers_consistent", None) or {}
+            all_pass = False
+            try:
+                all_pass = bool(
+                    (layers.get("系统层") or {}).get("通过")
+                    and (layers.get("工具层") or {}).get("通过")
+                    and (layers.get("时机层") or {}).get("通过")
+                )
+            except Exception:
+                all_pass = False
 
-            sell_signal = False
-            sell_pct = 0
-
-            # 藤本茂阶梯卖出（最高优先级，不受冷却限制）
-            if price_change >= 0.25 and shares > 0:
-                _, delta = strategy._fujimoto_action(price_change, position_pct)
-                if delta < 0:
-                    sell_signal = True
-                    sell_pct = min(abs(delta), 1.0)
-
-            # 空头趋势减仓（需冷却，且每次空头趋势只减一次）
-            elif result.trend == TrendType.BEAR and shares > 0 and \
-                 not bear_trend_sold and (i - last_trade_bar) >= cooldown:
-                sell_signal = True
-                sell_pct = 0.3  # 减仓30%
-                trade_reason = "空头趋势减仓30%"
-                bear_trend_sold = True
-
-            # RSI极端超买（需冷却）
-            elif shares > 0 and (i - last_trade_bar) >= cooldown:
-                for ind in result.indicators:
-                    if ind.name == "RSI" and ind.value > 80:
-                        sell_signal = True
-                        sell_pct = 0.2
-                        trade_reason = f"RSI={ind.value:.0f}超买减仓20%"
-                        break
-
-            # 趋势转多时重置空头标记
+            # 趋势转多时重置空头标记（兼容旧字段）
             if result.trend == TrendType.BULL:
                 bear_trend_sold = False
+                timing_sell_done = False
 
-            if sell_signal and shares > 0:
-                trade_shares = shares * sell_pct
-                if trade_shares > 0:
-                    proceeds = trade_shares * close * (1 - self.commission)
-                    cash += proceeds
-                    shares -= trade_shares
-                    position_pct = max(0, position_pct - sell_pct)
-                    action = "SELL"
-                    last_trade_bar = i
+            if action is None and (i - last_trade_bar) >= cooldown:
+                # 卖：仅策略明确卖出且持仓>0；三层全多时禁止卖出
+                if sig == SignalType.SELL and shares > 0 and not all_pass:
+                    reason_l = trade_reason or ""
+                    is_ladder_sell = ("阶梯" in reason_l) or ("上涨" in reason_l and "卖出" in reason_l)
+                    is_timing_sell = ("时机" in reason_l and "卖" in reason_l) or ("卖侧" in reason_l)
+                    skip = False
+                    if is_timing_sell and timing_sell_done:
+                        skip = True
+                    if is_ladder_sell and first_price > 0:
+                        pc = (close - first_price) / first_price
+                        step = round(pc * 20) / 20.0  # ~5% 档
+                        if step in sold_ladder_steps or step < 0.20:
+                            skip = True
+                        else:
+                            sold_ladder_steps.add(step)
+                    if not skip:
+                        sell_pct = abs(float(result.position_pct or 0))
+                        if sell_pct < 0.05:
+                            sell_pct = 0.25
+                        sell_pct = min(max(sell_pct, 0.05), 0.5 if is_ladder_sell else 1.0)
+                        trade_shares = shares * sell_pct
+                        if trade_shares > 0:
+                            proceeds = trade_shares * close * (1 - self.commission)
+                            cash += proceeds
+                            shares -= trade_shares
+                            position_pct = max(0.0, position_pct * (1.0 - sell_pct))
+                            if shares < 1e-8 or position_pct < 0.005:
+                                shares = 0.0
+                                position_pct = 0.0
+                                first_price = close
+                                sold_ladder_steps = set()
+                            action = "SELL"
+                            last_trade_bar = i
+                            if is_timing_sell:
+                                timing_sell_done = True
 
-            # --- 买入逻辑 ---
-            # 1. 趋势多头 + 斐波那契有反应确认 → 初始建仓
-            # 2. 趋势多头 + 价格回撤到斐波那契位 → 加仓
-            # 3. 藤本茂阶梯触发加仓
-            elif position_pct < self.max_position and (i - last_trade_bar) >= cooldown:
-                buy_signal = False
-                buy_pct = 0
-
-                # 初始建仓：趋势多头 + 斐波那契确认
-                if position_pct == 0 and result.trend == TrendType.BULL:
-                    # 检查是否有斐波那契反应确认
-                    fib_confirmed = any(fl.reacted for fl in result.fib_levels)
-                    if fib_confirmed:
-                        buy_signal = True
-                        buy_pct = 0.20  # 初始20%仓位
-                        trade_reason = "多头趋势+斐波那契确认建仓"
-                    # 或者 RSI 超卖反弹
-                    elif any(ind.name == "RSI" and ind.value < 35 for ind in result.indicators):
-                        buy_signal = True
-                        buy_pct = 0.15
-                        trade_reason = "RSI超卖反弹建仓"
-
-                # 加仓：已持仓 + 藤本茂阶梯触发
-                elif position_pct > 0 and price_change < 0:
-                    _, delta = strategy._fujimoto_action(price_change, position_pct)
-                    if delta > 0:
-                        buy_signal = True
-                        buy_pct = min(delta, self.max_position - position_pct)
-                        trade_reason = f"藤本茂加仓(跌幅{price_change*100:.1f}%)"
-
-                # 加仓：趋势多头 + RSI从超卖回升
-                elif position_pct > 0 and position_pct < self.max_position * 0.6:
-                    for ind in result.indicators:
-                        if ind.name == "RSI" and 30 < ind.value < 45 and result.trend == TrendType.BULL:
-                            buy_signal = True
-                            buy_pct = 0.10
-                            trade_reason = f"RSI={ind.value:.0f}低位加仓"
-
-                if buy_signal and buy_pct > 0.01:
-                    invest = self.initial_capital * buy_pct
-                    trade_shares = invest / close
-                    cost = trade_shares * close * (1 + self.commission)
-                    if cost <= cash:
-                        cash -= cost
-                        shares += trade_shares
-                        position_pct += buy_pct
-                        action = "BUY" if position_pct == buy_pct else "ADD"
-                        buy_dates.append(i)
-                        last_trade_bar = i
+                # 买/加：策略买入或加仓；三层一致时优先建仓
+                elif (sig in (SignalType.BUY, SignalType.ADD) or (
+                    all_pass and position_pct < self.max_position - 0.01
+                )) and sig != SignalType.SELL:
+                    buy_pct = float(result.position_pct or 0)
+                    if buy_pct < 0.01:
+                        buy_pct = 0.15 if position_pct < 0.01 else 0.08
+                    if all_pass and position_pct < 0.01:
+                        buy_pct = max(buy_pct, 0.12)
+                        trade_reason = (trade_reason or "") + "｜三层一致建仓"
+                    room = max(0.0, self.max_position - position_pct)
+                    buy_pct = min(buy_pct, room)
+                    if buy_pct > 0.01 and cash > 0:
+                        invest = min(self.initial_capital * buy_pct, cash * 0.99)
+                        if invest > 1:
+                            trade_shares = invest / close
+                            cost = trade_shares * close * (1 + self.commission)
+                            if cost <= cash:
+                                cash -= cost
+                                shares += trade_shares
+                                was_flat = position_pct < 0.01
+                                position_pct = min(self.max_position, position_pct + buy_pct)
+                                if was_flat:
+                                    first_price = close
+                                    sold_ladder_steps = set()
+                                action = "BUY" if was_flat else "ADD"
+                                buy_dates.append(i)
+                                last_trade_bar = i
 
             if action:
                 trades.append(Trade(
