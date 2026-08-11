@@ -100,6 +100,28 @@ def _safe_volume_convergence(df):
 app = FastAPI(title="藤本茂融合策略 Web 工具 API", version="3.0")
 fetcher = DataFetcher()
 
+
+def _is_api_debug() -> bool:
+    return (os.getenv("API_DEBUG") or os.getenv("DEBUG") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _log_exc(context: str, exc: BaseException) -> None:
+    try:
+        import logging
+        logging.getLogger("autopilot").exception("%s: %s", context, exc)
+    except Exception:
+        pass
+
+
+def _client_http_error(status: int, public_msg: str, exc: BaseException = None) -> HTTPException:
+    """对客户端返回简短错误；完整异常仅写日志。API_DEBUG=1 时附带异常摘要。"""
+    if exc is not None:
+        _log_exc(public_msg, exc)
+        if _is_api_debug():
+            return HTTPException(status, f"{public_msg}: {type(exc).__name__}: {str(exc)[:200]}")
+    return HTTPException(status, public_msg)
+
+
 # ----------------------------------------------------------------------
 #  CORS：允许 Cloudflare Pages 前端跨域调用。
 #  通过 CORS_ORIGINS 环境变量配置（逗号分隔），默认放行所有来源。
@@ -730,7 +752,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         stored = cache.get_daily_cache(req.symbol)
         df = _df_from_stored(stored) if stored else None
         if df is None or len(df) < 5:
-            raise HTTPException(400, f"获取数据失败且无缓存，请稍后重试: {str(e)}")
+            raise _client_http_error(400, "获取数据失败且无缓存，请稍后重试", e)
         source = "cache"
         stale = True
 
@@ -974,7 +996,7 @@ async def get_watchlist(refresh: bool = False, user: Optional[dict] = Depends(_o
         return JSONResponse(content=_to_jsonable(data),
                             headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
     except Exception as e:
-        raise HTTPException(500, f"获取自选列表失败: {str(e)}")
+        raise _client_http_error(500, "获取自选列表失败，请稍后重试", e)
 
 
 class WatchAddRequest(BaseModel):
@@ -1168,8 +1190,7 @@ async def analyze_csv(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        raise HTTPException(500, f"分析失败: {str(e)}\n{traceback.format_exc()}")
+        raise _client_http_error(500, "分析失败，请稍后重试", e)
 
 
 class LadderRequest(BaseModel):
@@ -1271,7 +1292,7 @@ async def run_backtest(req: BacktestRequest, request: Request = None,
             "result": bt_to_dict(result)
         }))
     except Exception as e:
-        raise HTTPException(400, f"回测失败: {str(e)}")
+        raise _client_http_error(400, "回测失败，请检查参数后重试", e)
 
 
 @app.get("/api/profile")
@@ -1529,9 +1550,9 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
                     metadata={"userId": str(uid), "user_id": str(uid), "plan": want},
                 )
             except Exception as e:
-                raise HTTPException(status_code=502, detail=f"Waffo 创建结账失败: {e}")
+                raise _client_http_error(502, "创建结账失败，请稍后重试或联系客服", e)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Waffo 创建结账失败: {e}")
+            raise _client_http_error(502, "创建结账失败，请稍后重试或联系客服", e)
         url = session.get("checkoutUrl") or session.get("url")
         if not url:
             raise HTTPException(status_code=502, detail=f"Waffo 未返回 checkoutUrl: {session}")
@@ -1604,9 +1625,9 @@ async def billing_checkout(request: Request, user: dict = Depends(auth.get_curre
                 data = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")[:500]
-            raise HTTPException(status_code=502, detail=f"Polar 创建结账失败: {e.code} {err_body}")
+            raise _client_http_error(502, "创建结账失败，请稍后重试或联系客服", e)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Polar 请求失败: {e}")
+            raise _client_http_error(502, "支付服务暂时不可用，请稍后重试", e)
 
         url = data.get("url")
         if not url:
@@ -1722,7 +1743,7 @@ async def billing_cancel(user: dict = Depends(auth.get_current_user)):
                 {"orderId": order_id},
             )
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"取消订阅失败: {e}")
+            raise _client_http_error(502, "取消订阅失败，请稍后重试或联系客服", e)
         # 周期结束才降级；本地标记 canceling 仍保持 pro 直到 webhook canceled
         return {"success": True, "status": "canceling", "raw": res, "message": "已提交取消，权益保留至当前账期结束"}
     raise HTTPException(status_code=400, detail="当前订阅渠道暂不支持自助取消")
