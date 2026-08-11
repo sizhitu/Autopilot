@@ -2691,7 +2691,7 @@ async function fetchQuote(symbol, name, market) {
   try {
     const res = await api('/api/quote', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbol: symbol, days: 300, force: !!(typeof window !== 'undefined' && window._quoteForce)})
+      body: JSON.stringify({symbol: symbol, days: 300, force: !!(window._quoteForce || (lastChartData && lastChartData.candles && lastChartData.candles.length < 120))})
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
@@ -2835,7 +2835,9 @@ let _analysisLoadGuard = null;
 let _analysisLoadStarted = 0;
 
 async function ensureAnalysisSymbol() {
-  if (currentSymbol && lastChartData && lastChartData.candles && lastChartData.candles.length) {
+  const _n = (lastChartData && lastChartData.candles) ? lastChartData.candles.length : 0;
+  // K 线足够才跳过请求；过短（如旧缓存十几根）必须重拉
+  if (currentSymbol && _n >= 120) {
     try { drawChart(lastChartData); } catch (e) {}
     return;
   }
