@@ -2878,40 +2878,72 @@ async function ensureAnalysisSymbol() {
 
 // === 主Tab切换 ===
 function switchMainTab(tab) {
-  // 始终先切换视图，不依赖任何网络请求；并确保主导航可点
+  // 纯 UI 切换：不依赖网络；刷新行情与切 Tab 互不影响
   try {
     const ta = document.getElementById('tabAnalysis');
     const tw = document.getElementById('tabWatchlist');
     const av = document.getElementById('analysisView');
     const wv = document.getElementById('watchlistView');
-    if (ta) { ta.classList.remove('hidden'); ta.classList.toggle('active', tab === 'analysis');
+    if (ta) {
+      ta.classList.remove('hidden');
+      ta.classList.toggle('active', tab === 'analysis');
       ta.style.borderBottom = tab === 'analysis' ? '2px solid var(--gold)' : '2px solid transparent';
       ta.style.borderBottomColor = tab === 'analysis' ? 'var(--gold)' : 'transparent';
       ta.style.color = tab === 'analysis' ? 'var(--gold)' : 'var(--text-dim)';
       ta.style.fontWeight = tab === 'analysis' ? '600' : '400';
+      ta.style.pointerEvents = 'auto';
+      ta.style.cursor = 'pointer';
     }
-    if (tw) { tw.classList.remove('hidden'); tw.classList.toggle('active', tab === 'watchlist');
+    if (tw) {
+      tw.classList.remove('hidden');
+      tw.classList.toggle('active', tab === 'watchlist');
       tw.style.borderBottom = tab === 'watchlist' ? '2px solid var(--gold)' : '2px solid transparent';
       tw.style.borderBottomColor = tab === 'watchlist' ? 'var(--gold)' : 'transparent';
       tw.style.color = tab === 'watchlist' ? 'var(--gold)' : 'var(--text-dim)';
       tw.style.fontWeight = tab === 'watchlist' ? '600' : '400';
+      tw.style.pointerEvents = 'auto';
+      tw.style.cursor = 'pointer';
     }
     if (av) {
-      if (tab === 'analysis') av.classList.remove('hidden');
-      else av.classList.add('hidden');
+      if (tab === 'analysis') { av.classList.remove('hidden'); }
+      else { av.classList.add('hidden'); }
     }
     if (wv) {
-      if (tab === 'watchlist') wv.classList.remove('hidden');
-      else wv.classList.add('hidden');
+      if (tab === 'watchlist') { wv.classList.remove('hidden'); }
+      else { wv.classList.add('hidden'); }
     }
+    // 关掉可能挡住点击的帮助层
+    try {
+      document.querySelectorAll('.help-q.open').forEach(function (el) { el.classList.remove('open'); });
+      const hb = document.getElementById('helpBackdrop');
+      if (hb) hb.classList.remove('show');
+      document.body.classList.remove('help-open');
+    } catch (e) {}
   } catch (e) {}
+
   if (tab === 'watchlist') {
-    try { loadWatchlist(false); } catch (e) {}
+    // 仅在「尚无任何看板数据」时后台拉一次；已有数据不因切 Tab 触发刷新
+    try {
+      if (!_lastWatchRows || !_lastWatchRows.length) {
+        if (!_wlInflight) loadWatchlist(false);
+      } else {
+        // 已有缓存行：只重绘，不请求
+        try { renderWatchlist(_lastWatchRows); } catch (e2) {}
+      }
+    } catch (e) {}
   }
   if (tab === 'analysis') {
-    // 视图已切出；数据加载失败也不影响 Tab 可点
-    _analysisLoading = false;
-    ensureAnalysisSymbol().catch(function () {});
+    // 已有图：只重绘，不重新 fetch（避免与看板刷新抢请求/卡住）
+    try {
+      if (lastChartData && lastChartData.candles && lastChartData.candles.length) {
+        try { drawChart(lastChartData); } catch (e3) {}
+        return;
+      }
+    } catch (e) {}
+    // 无图时才补数；失败不影响 Tab 可再点
+    try {
+      ensureAnalysisSymbol().catch(function () {});
+    } catch (e) {}
   }
 }
 
@@ -3263,7 +3295,7 @@ function renderWatchlistSummary(summary) {
 · <b>美股 / 美股 ETF</b> — Yahoo Finance、Nasdaq 官方历史接口、Stooq 等公开源，取最近可用交易日收盘价<br>
 · <b>A 股 / 场内基金</b> — 腾讯、东方财富、新浪等公开行情接口（前复权口径优先）<br>
 · 强制刷新时会清空短时缓存并重拉；若某标的仍偏旧，现价下日期会标「·延」<br>
-· 现价为<strong>日线收盘价</strong>（非逐笔实时），仅供研究参考，不构成投资建议</p></div>
+· 现价为<strong>日线收盘价</strong>（非逐笔实时），仅供研究参考</p></div>
     <div class="hp-sec"><b>提示</b><p>点任意行进入分析详情。仅供研究，不构成投资建议。</p></div>
   </span></span>`;
   el.innerHTML = html;
