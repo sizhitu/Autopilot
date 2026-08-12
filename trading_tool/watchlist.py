@@ -428,13 +428,15 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.action_color = "gray"
             reasons.append("日/月九转方向冲突")
         elif timing_buy and trend == "空头趋势":
-            status.action = "轻仓观察"
+            # 背离：不单独标「轻仓观察」，统一观望
+            status.action = "观望"
             status.action_color = "gray"
-            reasons.append("九转买点与空头趋势背离，不宜重仓")
+            reasons.append("九转买点与空头趋势背离，观望")
         elif timing_sell and trend == "多头趋势":
-            status.action = "减仓观察"
-            status.action_color = "orange"
-            reasons.append("九转卖点与多头趋势背离，优先风控")
+            # 背离：不单独标「减仓观察」，统一观望
+            status.action = "观望"
+            status.action_color = "gray"
+            reasons.append("九转卖点与多头趋势背离，观望")
         elif timing_buy and trend == "多头趋势":
             status.action = "关注买入"
             status.action_color = "orange"
@@ -460,7 +462,6 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
             status.action_color = "red"
             reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂卖出档")
         else:
-            # 无九转/阶梯等明确时机时统一观望（不再单独标「策略偏多/偏空」）
             status.action = "观望"
             status.action_color = "gray"
             if nt_signal in ('买入', '加仓', '卖出', '持有'):
@@ -469,16 +470,13 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
                 reasons.append("无共振时机")
 
         status.action_reason = "；".join(reasons)
-        # 兼容旧看板汇总字段
+        # 汇总仅三类，与列表行一一对应
         if status.action in ("关注买入", "阶梯抄底关注"):
             status.signal = "即将上涨关注"
             status.signal_color = "orange"
-        elif status.action in ("关注卖出", "阶梯止盈关注", "减仓观察"):
+        elif status.action in ("关注卖出", "阶梯止盈关注"):
             status.signal = "上涨见顶关注"
             status.signal_color = "red"
-        elif status.action == "轻仓观察":
-            status.signal = "九转背离·观望"
-            status.signal_color = "gray"
         else:
             status.signal = "下跌观望"
             status.signal_color = "gray"
@@ -577,7 +575,7 @@ _CACHES = {}          # key -> {'data':..., 'ts':..., 'refreshing':...}
 _WATCHLIST_SOFT_TTL = 45    # 秒内纯内存命中，毫秒级返回
 _WATCHLIST_TTL = 600
 _STATUS_CACHE = {}
-_STATUS_TTL = 60
+_STATUS_TTL = 180
 _STATUS_CACHE_MAX = 64
 _CACHES_MAX = 12            # 最多保留多少套看板缓存
 _refresh_lock = threading.Lock()
@@ -811,9 +809,21 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
     for s in partial:
         if s.get('error'):
             summary['error'] += 1
+            # 错误行也计入观望侧，保证三类之和 ≈ 列表总数
+            summary['下跌观望'] += 1
+            continue
+        if s.get('pending') or s.get('signal') == '计算中':
+            summary['下跌观望'] += 1
+            continue
+        sig = (s.get('signal') or '').strip()
+        act = (s.get('action') or '').strip()
+        if sig == '即将上涨关注' or act in ('关注买入', '阶梯抄底关注', '轻仓试探', '轻仓加仓', '关注加仓'):
+            summary['即将上涨关注'] += 1
+        elif sig == '上涨见顶关注' or act in ('关注卖出', '阶梯止盈关注', '减仓观察'):
+            summary['上涨见顶关注'] += 1
         else:
-            sig = s.get('signal') or '观望'
-            summary[sig] = summary.get(sig, 0) + 1
+            # 观望 / 九转背离·观望 / 轻仓观察 / 持有 等一律进观望桶
+            summary['下跌观望'] += 1
 
     final = {
         'success': True, 'computing': False,
