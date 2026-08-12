@@ -87,7 +87,8 @@ class Backtester:
         self.commission = commission
         self.warmup = warmup
 
-    def run(self, df: pd.DataFrame, entry_price: Optional[float] = None) -> BacktestResult:
+    def run(self, df: pd.DataFrame, entry_price: Optional[float] = None,
+            initial_position_pct: float = 0.0) -> BacktestResult:
         """
         执行回测
 
@@ -110,6 +111,16 @@ class Backtester:
         shares = 0.0
         position_pct = 0.0
         first_price = entry_price or df['close'].iloc[self.warmup]
+        # 工具栏「持仓%」：作为起始仓位种子（0~max_position）
+        ip0 = float(initial_position_pct or 0.0)
+        if ip0 > 1.0:
+            ip0 = ip0 / 100.0
+        ip0 = max(0.0, min(ip0, self.max_position))
+        if ip0 > 0.001 and first_price > 0:
+            inv0 = self.initial_capital * ip0
+            shares = inv0 / first_price
+            cash = self.initial_capital - inv0
+            position_pct = ip0
 
         trades: List[Trade] = []
         equity_curve = []
@@ -264,21 +275,20 @@ class Backtester:
                 price_gap_ok = (last_add_price <= 0) or (abs(close - last_add_price) / last_add_price >= 0.05)
 
                 if is_flat:
-                    # 初始建仓：三层一致或策略 BUY
-                    if sig in (SignalType.BUY, SignalType.ADD) or all_pass:
+                    # 仅三层一致才建仓；震荡轻仓试探等一律观望不买
+                    if all_pass:
                         do_buy = True
-                        buy_pct = float(result.position_pct or 0) or 0.15
-                        buy_pct = max(min(buy_pct, 0.25), 0.12)
-                        trade_reason = action_txt or "三层/策略建仓"
+                        # 仓位受 max_position 约束，默认用上限的一部分，避免「轻仓」却很大
+                        buy_pct = min(float(result.position_pct or 0) or (self.max_position * 0.5), self.max_position)
+                        buy_pct = max(min(buy_pct, self.max_position), min(0.1, self.max_position))
+                        trade_reason = "三层一致关注买入·建仓"
                 else:
                     # 已有仓：三层一致 ≠ 自动加仓；须买点结构或成本下加仓
                     allow_add = price_gap_ok and (i - last_buy_bar) >= cooldown
                     if near_high and not below_cost:
                         allow_add = False
                     structural_add = nt_buy or below_cost or (deep_dip and off_high)
-                    if allow_add and structural_add and (
-                        sig in (SignalType.BUY, SignalType.ADD, SignalType.HOLD) or all_pass or nt_buy
-                    ):
+                    if allow_add and structural_add and (all_pass or nt_buy):
                         do_buy = True
                         buy_pct = min(float(result.position_pct or 0) or 0.08, 0.12)
                         if nt_buy:

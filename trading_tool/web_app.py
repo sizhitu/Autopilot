@@ -1298,16 +1298,22 @@ async def run_backtest(req: BacktestRequest, request: Request = None,
         if len(df) < req.warmup + 30:
             raise ValueError(f"数据不足: 需要{req.warmup+30}根，实际{len(df)}根")
 
+        _mp = float(req.max_position or 0.7)
+        if _mp > 1.0:
+            _mp = min(_mp / 100.0, 1.0)
+        _mp = max(0.05, min(_mp, 1.0))
         bt = Backtester(
             initial_capital=req.initial_capital,
             risk_per_trade=req.risk_per_trade,
-            max_position=req.max_position,
+            max_position=_mp,
             commission=req.commission,
             warmup=req.warmup
         )
-        # 回测算法回退：仅可选 entry_price；initial_position_pct 暂不接入
         _ep = float(getattr(req, "entry_price", 0) or 0) or None
-        result = bt.run(df, entry_price=_ep)
+        _ip = float(getattr(req, "initial_position_pct", 0) or 0)
+        if _ip > 1.0:
+            _ip = _ip / 100.0
+        result = bt.run(df, entry_price=_ep, initial_position_pct=_ip)
 
         if result.config.get("error"):
             raise ValueError(result.config["error"])

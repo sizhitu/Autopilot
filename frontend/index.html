@@ -656,10 +656,14 @@ body.help-open { overflow: hidden; touch-action: none; }
   </div>
 </div>
 
-<!-- 主Tab：自选看板 / 分析工具（自选看板前置） -->
-<div style="display:flex; gap:0; border-bottom:1px solid var(--border); background:var(--card);">
-  <div class="main-tab active" id="tabWatchlist" onclick="switchMainTab('watchlist')" style="padding:8px 24px; cursor:pointer; border-bottom:2px solid var(--gold); color:var(--gold); font-weight:600; font-size:13px;">📋 自选看板</div>
-  <div class="main-tab" id="tabAnalysis" onclick="switchMainTab('analysis')" style="padding:8px 24px; cursor:pointer; color:var(--text-dim); font-size:13px;">📊 分析工具</div>
+<!-- 主Tab：自选看板 / 分析工具（置顶可点，不依赖请求） -->
+<div id="mainTabBar" style="display:flex; gap:0; border-bottom:1px solid var(--border); background:var(--card); position:sticky; top:0; z-index:5000; isolation:isolate;">
+  <div class="main-tab active" id="tabWatchlist" role="button" tabindex="0"
+       onclick="switchMainTab('watchlist')" onmousedown="switchMainTab('watchlist')"
+       style="padding:8px 24px; cursor:pointer; border-bottom:2px solid var(--gold); color:var(--gold); font-weight:600; font-size:13px; pointer-events:auto; -webkit-user-select:none; user-select:none;">📋 自选看板</div>
+  <div class="main-tab" id="tabAnalysis" role="button" tabindex="0"
+       onclick="switchMainTab('analysis')" onmousedown="switchMainTab('analysis')"
+       style="padding:8px 24px; cursor:pointer; color:var(--text-dim); font-size:13px; pointer-events:auto; -webkit-user-select:none; user-select:none;">📊 分析工具</div>
 </div>
 
 <!-- 自选看板视图 -->
@@ -2887,13 +2891,18 @@ async function ensureAnalysisSymbol() {
 
 // === 主Tab切换 ===
 let _mainTab = 'watchlist';
+let _lastMainTabSwitch = 0;
 function switchMainTab(tab) {
-  // 纯 UI 切换：不依赖网络；看板轮询不得挡住分析 Tab
+  // 同步切换视图，任何网络/重绘不得阻塞
+  if (tab !== 'watchlist' && tab !== 'analysis') return;
+  const now = Date.now();
+  if (now - _lastMainTabSwitch < 120 && _mainTab === tab) return;
+  _lastMainTabSwitch = now;
   _mainTab = tab;
   try {
-    // 离开看板时立刻停掉轮询，避免 20+ 标的刷新占满主线程/请求
     if (tab === 'analysis') {
       try { clearTimeout(_wlPollTimer); _wlPollTimer = null; } catch (e0) {}
+      try { _analysisLoading = false; } catch (e1) {}
     }
     const ta = document.getElementById('tabAnalysis');
     const tw = document.getElementById('tabWatchlist');
@@ -2920,12 +2929,12 @@ function switchMainTab(tab) {
       tw.style.cursor = 'pointer';
     }
     if (av) {
-      if (tab === 'analysis') { av.classList.remove('hidden'); }
-      else { av.classList.add('hidden'); }
+      if (tab === 'analysis') { av.classList.remove('hidden'); av.style.display = ''; }
+      else { av.classList.add('hidden'); av.style.display = 'none'; }
     }
     if (wv) {
-      if (tab === 'watchlist') { wv.classList.remove('hidden'); }
-      else { wv.classList.add('hidden'); }
+      if (tab === 'watchlist') { wv.classList.remove('hidden'); wv.style.display = ''; }
+      else { wv.classList.add('hidden'); wv.style.display = 'none'; }
     }
     // 关掉可能挡住点击的帮助层
     try {
@@ -2952,8 +2961,9 @@ function switchMainTab(tab) {
         if (pending > 0) needResume = true;
       }
       if (needResume && !_wlInflight) {
-        // 不带 force：读服务端已算好的进度/结果，后台任务若还在会继续被轮询接到
-        loadWatchlist(false);
+        setTimeout(function () {
+          if (_mainTab === 'watchlist' && !_wlInflight) loadWatchlist(false);
+        }, 0);
       }
     } catch (e) {}
   }
@@ -3694,10 +3704,14 @@ async function runBacktest() {
   const entryEl = document.getElementById('entryPrice');
   const entryPrice = entryEl && entryEl.value !== '' ? parseFloat(entryEl.value) : null;
   const posEl = document.getElementById('position');
-  const initialPos = posEl ? (parseFloat(posEl.value) || 0) / 100 : 0;
+  // 工具栏「持仓%」：既作起始仓位，也作最大仓位上限（100% = 满仓回测）
+  let posPct = posEl ? (parseFloat(posEl.value) || 0) / 100 : 0;
+  if (posPct > 1) posPct = 1;
   const days = parseInt(document.getElementById('btDays').value) || 300;
   const risk = parseFloat(document.getElementById('btRisk').value) / 100 || 0.02;
-  const maxPos = parseFloat(document.getElementById('btMaxPos').value) / 100 || 0.7;
+  const maxPosTab = parseFloat(document.getElementById('btMaxPos') && document.getElementById('btMaxPos').value) / 100 || 0.7;
+  const maxPos = posPct > 0 ? Math.max(posPct, 0.05) : (maxPosTab || 0.7);
+  const initialPos = posPct;
   const commission = parseFloat(document.getElementById('btCommission').value) / 1000 || 0.0003;
   const warmup = parseInt(document.getElementById('btWarmup').value) || 60;
 
