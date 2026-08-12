@@ -115,10 +115,14 @@ class Backtester:
 
         # 用于计算平均持仓天数
         buy_dates = []
-        last_trade_bar = -999  # 冷却期控制
-        cooldown = 3            # 交易冷却K线数
-        bear_trend_sold = False  # 空头趋势是否已减仓（避免反复触发）
+        last_trade_bar = -999
+        last_buy_bar = -999     # 最近一次开/加仓
+        cooldown = 8            # 操作冷却（减少频繁交易）
+        min_hold_bars = 10      # 开/加仓后最少持有K线才允许减仓
+        bear_trend_sold = False
         sold_in_bear = False
+        ladder_sold_steps = set()
+        avg_cost = float(first_price) if first_price else 0.0  # 持仓成本
         last_trend = None
 
         for i in range(self.warmup, n):
@@ -133,11 +137,11 @@ class Backtester:
                 total_capital=self.initial_capital,
                 risk_per_trade=self.risk_per_trade,
                 max_position=self.max_position,
-                entry_price=first_price
+                entry_price=(avg_cost if shares > 0 and avg_cost > 0 else first_price)
             )
             result = strategy.analyze(current_df, current_position_pct=position_pct)
 
-            # 从策略结果提取；原因必须与最终 action 一致（禁止沿用「观望」文案却记成 SELL）
+            # --- 交易决策：降频 + 禁高位加仓 + 原因与操作一致 ---
             action = None
             trade_shares = 0
             trade_reason = ""
@@ -153,55 +157,66 @@ class Backtester:
                 )
             except Exception:
                 all_pass = False
-            # 宽松：文案含「三层一致」也视为通过
             if not all_pass and "三层一致" in action_txt:
                 all_pass = True
 
-            price_change = (close - first_price) / first_price if first_price > 0 else 0
+            # 相对成本的盈亏（阶梯/加仓一律用均价，避免高位加仓后仍按旧低成本「上涨45%卖出」）
+            cost_basis = avg_cost if (shares > 0 and avg_cost > 0) else first_price
+            pnl_from_cost = (close - cost_basis) / cost_basis if cost_basis and cost_basis > 0 else 0.0
+            # 近20日高点：用于禁止追高加仓
+            win = current_df['close'].iloc[-min(20, len(current_df)):]
+            recent_high = float(win.max()) if len(win) else close
+            near_high = recent_high > 0 and close >= recent_high * 0.97
 
-            # 趋势转多时重置空头减仓标记
             if result.trend == TrendType.BULL:
                 bear_trend_sold = False
                 sold_in_bear = False
 
-            # --- 1) 观望 / 等待：明确不交易 ---
+            cooled = (i - last_trade_bar) >= cooldown
+            can_sell = shares > 0 and cooled and (i - last_buy_bar) >= min_hold_bars
+
+            # 1) 观望：不交易
             if sig == SignalType.WAIT and not all_pass:
                 pass
 
-            # --- 2) 卖出：仅在有仓且策略卖出 / 阶梯减仓 / 空头风控 ---
-            elif shares > 0 and (i - last_trade_bar) >= cooldown:
+            # 2) 卖出（有仓 + 过冷却 + 过最短持有）
+            elif can_sell:
                 sell_pct = 0.0
                 do_sell = False
 
                 if sig == SignalType.SELL:
-                    # 同一空头阶段只减一次，避免连续 SELL 刷单
-                    if result.trend == TrendType.BEAR and sold_in_bear:
+                    # 策略文案是「阶梯减仓」但相对成本并无足够浮盈 → 忽略（避免高位加仓后误用旧低成本卖出）
+                    if ("阶梯" in action_txt) and pnl_from_cost < 0.22:
+                        do_sell = False
+                    elif result.trend == TrendType.BEAR and sold_in_bear:
                         do_sell = False
                     else:
                         do_sell = True
                         sell_pct = abs(float(result.position_pct or 0)) or 0.25
-                        sell_pct = min(max(sell_pct, 0.1), 0.5)
+                        sell_pct = min(max(sell_pct, 0.15), 0.4)
                         trade_reason = action_txt or "策略卖出/减仓"
                         if result.trend == TrendType.BEAR:
                             sold_in_bear = True
                             bear_trend_sold = True
                 elif all_pass:
-                    # 三层一致偏多：禁止因旧逻辑误卖
-                    do_sell = False
+                    do_sell = False  # 三层一致偏多：不主动卖
                 else:
-                    # 藤本茂上涨阶梯：仅仓位管理，原因写清
-                    if price_change >= 0.25:
-                        desc, delta = strategy._fujimoto_action(price_change, position_pct)
-                        if delta < 0:
-                            do_sell = True
-                            sell_pct = min(abs(delta), 0.4)
-                            trade_reason = f"藤本茂阶梯减仓：{desc}"
-                    # 空头趋势风控：三层价值在于避开下跌扩大亏损
+                    # 阶梯减仓：必须相对「成本」已有足够浮盈，且每档只触发一次
+                    if pnl_from_cost >= 0.25:
+                        step = round(pnl_from_cost * 20) / 20.0
+                        if step not in ladder_sold_steps:
+                            desc, delta = strategy._fujimoto_action(pnl_from_cost, position_pct)
+                            if delta < 0:
+                                do_sell = True
+                                sell_pct = min(abs(delta), 0.3)
+                                trade_reason = f"藤本茂阶梯减仓(相对成本{pnl_from_cost*100:.0f}%)：{desc}"
+                                ladder_sold_steps.add(step)
                     if (not do_sell) and result.trend == TrendType.BEAR and not bear_trend_sold:
                         do_sell = True
-                        sell_pct = 0.3
-                        trade_reason = "空头趋势风控减仓30%"
+                        sell_pct = 0.25
+                        trade_reason = "空头趋势风控减仓25%"
                         bear_trend_sold = True
+                        sold_in_bear = True
 
                 if do_sell and sell_pct > 0:
                     trade_shares = shares * min(sell_pct, 1.0)
@@ -214,39 +229,54 @@ class Backtester:
                             shares = 0.0
                             position_pct = 0.0
                             first_price = close
+                            avg_cost = close
+                            ladder_sold_steps = set()
                         action = "SELL"
                         last_trade_bar = i
 
-            # --- 3) 买入/加仓：三层一致或策略 BUY/ADD；观望不买 ---
-            if action is None and sig != SignalType.WAIT and (i - last_trade_bar) >= cooldown:
+            # 3) 买/加仓：冷却后；加仓禁止追近高，优先回调
+            if action is None and cooled and sig != SignalType.WAIT:
                 buy_pct = 0.0
                 do_buy = False
+                is_flat = position_pct < 0.01
 
-                if sig in (SignalType.BUY, SignalType.ADD) or all_pass:
+                allow_add = True
+                if not is_flat:
+                    # 已有仓：只允许在成本下方或明显回调时加仓（避免 54 高位连加）
+                    below_cost = cost_basis > 0 and close <= cost_basis * 0.98
+                    dipped = recent_high > 0 and close <= recent_high * 0.92
+                    if near_high and not below_cost:
+                        allow_add = False
+                    if not (below_cost or dipped or pnl_from_cost <= -0.10):
+                        allow_add = False
+                    # 距上次加仓至少 cooldown
+                    if (i - last_buy_bar) < cooldown:
+                        allow_add = False
+
+                if (sig in (SignalType.BUY, SignalType.ADD) or all_pass) and (is_flat or allow_add):
                     do_buy = True
                     buy_pct = float(result.position_pct or 0)
                     if buy_pct < 0.01:
-                        buy_pct = 0.15 if position_pct < 0.01 else 0.08
-                    if all_pass and position_pct < 0.01:
+                        buy_pct = 0.12 if is_flat else 0.08
+                    if all_pass and is_flat:
                         buy_pct = max(buy_pct, 0.12)
                         trade_reason = action_txt or "三层一致建仓"
                     elif all_pass:
-                        trade_reason = action_txt or "三层一致加仓"
+                        buy_pct = min(buy_pct, 0.1)
+                        trade_reason = (action_txt or "三层一致加仓") + "（回调加仓）"
                     else:
-                        trade_reason = action_txt or ("策略买入" if position_pct < 0.01 else "策略加仓")
-                    # 藤本茂下跌加仓：在已有仓且跌幅够时放大（收益最大化辅助）
-                    if position_pct > 0.01 and price_change <= -0.15:
-                        desc, delta = strategy._fujimoto_action(price_change, position_pct)
+                        trade_reason = action_txt or ("策略买入" if is_flat else "策略加仓")
+                    if not is_flat and pnl_from_cost <= -0.15:
+                        desc, delta = strategy._fujimoto_action(pnl_from_cost, position_pct)
                         if delta > 0:
-                            buy_pct = max(buy_pct, min(delta, 0.2))
-                            trade_reason = f"三层/策略买侧 + 藤本茂加仓：{desc}"
+                            buy_pct = max(buy_pct, min(delta, 0.15))
+                            trade_reason = f"回调+藤本茂加仓：{desc}"
 
-                # 兼容：策略 HOLD 且藤本茂明确加仓档
-                elif sig == SignalType.HOLD and position_pct > 0.01 and price_change <= -0.15:
-                    desc, delta = strategy._fujimoto_action(price_change, position_pct)
+                elif sig == SignalType.HOLD and not is_flat and allow_add and pnl_from_cost <= -0.15:
+                    desc, delta = strategy._fujimoto_action(pnl_from_cost, position_pct)
                     if delta > 0:
                         do_buy = True
-                        buy_pct = min(delta, self.max_position - position_pct)
+                        buy_pct = min(delta, self.max_position - position_pct, 0.15)
                         trade_reason = f"持有中藤本茂加仓：{desc}"
 
                 if do_buy and buy_pct > 0.01 and cash > 0:
@@ -257,15 +287,21 @@ class Backtester:
                         trade_shares = invest / close
                         cost = trade_shares * close * (1 + self.commission)
                         if cost <= cash:
+                            # 更新均价
+                            if shares > 0:
+                                avg_cost = (avg_cost * shares + close * trade_shares) / (shares + trade_shares)
+                            else:
+                                avg_cost = close
+                                first_price = close
+                                ladder_sold_steps = set()
                             cash -= cost
                             shares += trade_shares
-                            was_flat = position_pct < 0.01
+                            was_flat = is_flat
                             position_pct = min(self.max_position, position_pct + buy_pct)
-                            if was_flat:
-                                first_price = close
                             action = "BUY" if was_flat else "ADD"
                             buy_dates.append(i)
                             last_trade_bar = i
+                            last_buy_bar = i
 
             if action:
                 trades.append(Trade(
