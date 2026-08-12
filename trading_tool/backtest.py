@@ -5,9 +5,9 @@
 
 核心逻辑：
   1. 遍历历史K线，逐日调用策略引擎分析
-  2. 根据三层信号模拟建仓/加仓/减仓
-  3. 记录每笔交易、资金曲线、回撤曲线
-  4. 计算收益率、最大回撤、胜率、夏普比率等指标
+  2. 交易以策略 signal 为准：观望/等待不交易；三层一致才开/加仓；卖出原因与动作一致
+  3. 三层价值侧重：识别下跌与风险、减少逆势亏损；顺势加仓用藤本茂阶梯放大收益
+  4. 记录交易、资金曲线、回撤与收益风险指标
 """
 
 import sys
@@ -118,6 +118,7 @@ class Backtester:
         last_trade_bar = -999  # 冷却期控制
         cooldown = 3            # 交易冷却K线数
         bear_trend_sold = False  # 空头趋势是否已减仓（避免反复触发）
+        sold_in_bear = False
         last_trend = None
 
         for i in range(self.warmup, n):
@@ -136,106 +137,135 @@ class Backtester:
             )
             result = strategy.analyze(current_df, current_position_pct=position_pct)
 
-            # 从策略结果中提取信号
+            # 从策略结果提取；原因必须与最终 action 一致（禁止沿用「观望」文案却记成 SELL）
             action = None
             trade_shares = 0
-            trade_reason = result.action[:50]
+            trade_reason = ""
+            sig = result.signal
+            action_txt = (result.action or "")[:80]
+            layers = getattr(result, "layers_consistent", None) or {}
+            all_pass = False
+            try:
+                all_pass = bool(
+                    (layers.get("系统层（趋势+指标）") or layers.get("系统层") or {}).get("通过")
+                    and (layers.get("工具层（斐波那契）") or layers.get("工具层") or {}).get("通过")
+                    and (layers.get("时机层（九转序列）") or layers.get("时机层") or {}).get("通过")
+                )
+            except Exception:
+                all_pass = False
+            # 宽松：文案含「三层一致」也视为通过
+            if not all_pass and "三层一致" in action_txt:
+                all_pass = True
 
-            # --- 卖出逻辑（优先执行）---
-            # 1. 藤本茂阶梯触发卖出
-            # 2. 空头趋势 + 持仓 > 0
             price_change = (close - first_price) / first_price if first_price > 0 else 0
 
-            sell_signal = False
-            sell_pct = 0
-
-            # 藤本茂阶梯卖出（最高优先级，不受冷却限制）
-            if price_change >= 0.25 and shares > 0:
-                _, delta = strategy._fujimoto_action(price_change, position_pct)
-                if delta < 0:
-                    sell_signal = True
-                    sell_pct = min(abs(delta), 1.0)
-
-            # 空头趋势减仓（需冷却，且每次空头趋势只减一次）
-            elif result.trend == TrendType.BEAR and shares > 0 and \
-                 not bear_trend_sold and (i - last_trade_bar) >= cooldown:
-                sell_signal = True
-                sell_pct = 0.3  # 减仓30%
-                trade_reason = "空头趋势减仓30%"
-                bear_trend_sold = True
-
-            # RSI极端超买（需冷却）
-            elif shares > 0 and (i - last_trade_bar) >= cooldown:
-                for ind in result.indicators:
-                    if ind.name == "RSI" and ind.value > 80:
-                        sell_signal = True
-                        sell_pct = 0.2
-                        trade_reason = f"RSI={ind.value:.0f}超买减仓20%"
-                        break
-
-            # 趋势转多时重置空头标记
+            # 趋势转多时重置空头减仓标记
             if result.trend == TrendType.BULL:
                 bear_trend_sold = False
+                sold_in_bear = False
 
-            if sell_signal and shares > 0:
-                trade_shares = shares * sell_pct
-                if trade_shares > 0:
-                    proceeds = trade_shares * close * (1 - self.commission)
-                    cash += proceeds
-                    shares -= trade_shares
-                    position_pct = max(0, position_pct - sell_pct)
-                    action = "SELL"
-                    last_trade_bar = i
+            # --- 1) 观望 / 等待：明确不交易 ---
+            if sig == SignalType.WAIT and not all_pass:
+                pass
 
-            # --- 买入逻辑 ---
-            # 1. 趋势多头 + 斐波那契有反应确认 → 初始建仓
-            # 2. 趋势多头 + 价格回撤到斐波那契位 → 加仓
-            # 3. 藤本茂阶梯触发加仓
-            elif position_pct < self.max_position and (i - last_trade_bar) >= cooldown:
-                buy_signal = False
-                buy_pct = 0
+            # --- 2) 卖出：仅在有仓且策略卖出 / 阶梯减仓 / 空头风控 ---
+            elif shares > 0 and (i - last_trade_bar) >= cooldown:
+                sell_pct = 0.0
+                do_sell = False
 
-                # 初始建仓：趋势多头 + 斐波那契确认
-                if position_pct == 0 and result.trend == TrendType.BULL:
-                    # 检查是否有斐波那契反应确认
-                    fib_confirmed = any(fl.reacted for fl in result.fib_levels)
-                    if fib_confirmed:
-                        buy_signal = True
-                        buy_pct = 0.20  # 初始20%仓位
-                        trade_reason = "多头趋势+斐波那契确认建仓"
-                    # 或者 RSI 超卖反弹
-                    elif any(ind.name == "RSI" and ind.value < 35 for ind in result.indicators):
-                        buy_signal = True
-                        buy_pct = 0.15
-                        trade_reason = "RSI超卖反弹建仓"
+                if sig == SignalType.SELL:
+                    # 同一空头阶段只减一次，避免连续 SELL 刷单
+                    if result.trend == TrendType.BEAR and sold_in_bear:
+                        do_sell = False
+                    else:
+                        do_sell = True
+                        sell_pct = abs(float(result.position_pct or 0)) or 0.25
+                        sell_pct = min(max(sell_pct, 0.1), 0.5)
+                        trade_reason = action_txt or "策略卖出/减仓"
+                        if result.trend == TrendType.BEAR:
+                            sold_in_bear = True
+                            bear_trend_sold = True
+                elif all_pass:
+                    # 三层一致偏多：禁止因旧逻辑误卖
+                    do_sell = False
+                else:
+                    # 藤本茂上涨阶梯：仅仓位管理，原因写清
+                    if price_change >= 0.25:
+                        desc, delta = strategy._fujimoto_action(price_change, position_pct)
+                        if delta < 0:
+                            do_sell = True
+                            sell_pct = min(abs(delta), 0.4)
+                            trade_reason = f"藤本茂阶梯减仓：{desc}"
+                    # 空头趋势风控：三层价值在于避开下跌扩大亏损
+                    if (not do_sell) and result.trend == TrendType.BEAR and not bear_trend_sold:
+                        do_sell = True
+                        sell_pct = 0.3
+                        trade_reason = "空头趋势风控减仓30%"
+                        bear_trend_sold = True
 
-                # 加仓：已持仓 + 藤本茂阶梯触发
-                elif position_pct > 0 and price_change < 0:
-                    _, delta = strategy._fujimoto_action(price_change, position_pct)
-                    if delta > 0:
-                        buy_signal = True
-                        buy_pct = min(delta, self.max_position - position_pct)
-                        trade_reason = f"藤本茂加仓(跌幅{price_change*100:.1f}%)"
-
-                # 加仓：趋势多头 + RSI从超卖回升
-                elif position_pct > 0 and position_pct < self.max_position * 0.6:
-                    for ind in result.indicators:
-                        if ind.name == "RSI" and 30 < ind.value < 45 and result.trend == TrendType.BULL:
-                            buy_signal = True
-                            buy_pct = 0.10
-                            trade_reason = f"RSI={ind.value:.0f}低位加仓"
-
-                if buy_signal and buy_pct > 0.01:
-                    invest = self.initial_capital * buy_pct
-                    trade_shares = invest / close
-                    cost = trade_shares * close * (1 + self.commission)
-                    if cost <= cash:
-                        cash -= cost
-                        shares += trade_shares
-                        position_pct += buy_pct
-                        action = "BUY" if position_pct == buy_pct else "ADD"
-                        buy_dates.append(i)
+                if do_sell and sell_pct > 0:
+                    trade_shares = shares * min(sell_pct, 1.0)
+                    if trade_shares > 0:
+                        proceeds = trade_shares * close * (1 - self.commission)
+                        cash += proceeds
+                        shares -= trade_shares
+                        position_pct = max(0.0, position_pct * (1.0 - min(sell_pct, 1.0)))
+                        if shares < 1e-8 or position_pct < 0.005:
+                            shares = 0.0
+                            position_pct = 0.0
+                            first_price = close
+                        action = "SELL"
                         last_trade_bar = i
+
+            # --- 3) 买入/加仓：三层一致或策略 BUY/ADD；观望不买 ---
+            if action is None and sig != SignalType.WAIT and (i - last_trade_bar) >= cooldown:
+                buy_pct = 0.0
+                do_buy = False
+
+                if sig in (SignalType.BUY, SignalType.ADD) or all_pass:
+                    do_buy = True
+                    buy_pct = float(result.position_pct or 0)
+                    if buy_pct < 0.01:
+                        buy_pct = 0.15 if position_pct < 0.01 else 0.08
+                    if all_pass and position_pct < 0.01:
+                        buy_pct = max(buy_pct, 0.12)
+                        trade_reason = action_txt or "三层一致建仓"
+                    elif all_pass:
+                        trade_reason = action_txt or "三层一致加仓"
+                    else:
+                        trade_reason = action_txt or ("策略买入" if position_pct < 0.01 else "策略加仓")
+                    # 藤本茂下跌加仓：在已有仓且跌幅够时放大（收益最大化辅助）
+                    if position_pct > 0.01 and price_change <= -0.15:
+                        desc, delta = strategy._fujimoto_action(price_change, position_pct)
+                        if delta > 0:
+                            buy_pct = max(buy_pct, min(delta, 0.2))
+                            trade_reason = f"三层/策略买侧 + 藤本茂加仓：{desc}"
+
+                # 兼容：策略 HOLD 且藤本茂明确加仓档
+                elif sig == SignalType.HOLD and position_pct > 0.01 and price_change <= -0.15:
+                    desc, delta = strategy._fujimoto_action(price_change, position_pct)
+                    if delta > 0:
+                        do_buy = True
+                        buy_pct = min(delta, self.max_position - position_pct)
+                        trade_reason = f"持有中藤本茂加仓：{desc}"
+
+                if do_buy and buy_pct > 0.01 and cash > 0:
+                    room = max(0.0, self.max_position - position_pct)
+                    buy_pct = min(buy_pct, room)
+                    invest = min(self.initial_capital * buy_pct, cash * 0.99)
+                    if invest > 1 and buy_pct > 0.01:
+                        trade_shares = invest / close
+                        cost = trade_shares * close * (1 + self.commission)
+                        if cost <= cash:
+                            cash -= cost
+                            shares += trade_shares
+                            was_flat = position_pct < 0.01
+                            position_pct = min(self.max_position, position_pct + buy_pct)
+                            if was_flat:
+                                first_price = close
+                            action = "BUY" if was_flat else "ADD"
+                            buy_dates.append(i)
+                            last_trade_bar = i
 
             if action:
                 trades.append(Trade(
