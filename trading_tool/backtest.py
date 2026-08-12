@@ -121,8 +121,8 @@ class Backtester:
         buy_dates = []
         last_trade_bar = -999
         last_buy_bar = -999     # 最近一次开/加仓
-        cooldown = 8            # 操作冷却（减少频繁交易）
-        min_hold_bars = 10      # 开/加仓后最少持有K线才允许减仓
+        cooldown = 10           # 操作冷却（减少频繁交易）
+        min_hold_bars = 15      # 开/加仓后最少持有才允许兑现
         bear_trend_sold = False
         sold_in_bear = False
         ladder_sold_steps = set()
@@ -184,51 +184,44 @@ class Backtester:
             if sig == SignalType.WAIT and not all_pass:
                 pass
 
-            # 2) 卖出：多头/三层一致时以持有为主，少砍；空头才风控
+            # 2) 卖出纪律（针对「越改越低」）：
+            #    - 浮亏一律不卖（不割肉、不连续止损）
+            #    - 禁止「时机卖侧」在成本附近反复减仓
+            #    - 空头若曾有浮盈：最多一次性清仓一次；浮亏空头则继续持有等加仓
+            #    - 大浮盈才分批小幅兑现，留主力吃趋势
             elif can_sell:
                 sell_pct = 0.0
                 do_sell = False
-                bullish_hold = all_pass or result.trend == TrendType.BULL
 
-                if bullish_hold:
-                    # 趋势向上：仅在相对成本大浮盈时小幅阶梯兑现，不做时机层频繁减仓
-                    if pnl_from_cost >= 0.40:
-                        step = round(pnl_from_cost * 10) / 10.0  # 10% 一档
+                # 铁律：相对成本浮亏或几乎无盈利 → 不卖
+                if pnl_from_cost < 0.08:
+                    do_sell = False
+                elif all_pass or result.trend == TrendType.BULL:
+                    # 多头/三层一致：仅大浮盈兑现一小部分
+                    if pnl_from_cost >= 0.50:
+                        step = round(pnl_from_cost * 5) / 5.0  # 20% 一档
                         if step not in ladder_sold_steps:
                             do_sell = True
-                            sell_pct = 0.15  # 只减一成，留主力仓位吃趋势
-                            trade_reason = f"趋势持有中分批兑现(浮盈{pnl_from_cost*100:.0f}%)"
+                            sell_pct = 0.12
+                            trade_reason = f"趋势浮盈分批兑现({pnl_from_cost*100:.0f}%)"
                             ladder_sold_steps.add(step)
                 else:
-                    if sig == SignalType.SELL:
-                        if ("阶梯" in action_txt) and pnl_from_cost < 0.30:
-                            do_sell = False
-                        elif result.trend == TrendType.BEAR and sold_in_bear:
-                            do_sell = False
-                        else:
+                    # 非多头：有浮盈时，空头阶段最多「一次性」退出，避免 24→26→20 连砍
+                    if result.trend == TrendType.BEAR and not sold_in_bear and pnl_from_cost >= 0.08:
+                        do_sell = True
+                        sell_pct = 1.0  # 一次性出清，不再分批割
+                        trade_reason = f"空头一次退出(浮盈{pnl_from_cost*100:.0f}%)"
+                        sold_in_bear = True
+                        bear_trend_sold = True
+                    elif pnl_from_cost >= 0.50 and "阶梯" not in action_txt:
+                        # 非多头但大浮盈：小幅兑现一次
+                        step = round(pnl_from_cost * 5) / 5.0
+                        if step not in ladder_sold_steps:
                             do_sell = True
-                            sell_pct = abs(float(result.position_pct or 0)) or 0.2
-                            sell_pct = min(max(sell_pct, 0.15), 0.35)
-                            trade_reason = action_txt or "策略卖出/减仓"
-                            if result.trend == TrendType.BEAR:
-                                sold_in_bear = True
-                                bear_trend_sold = True
-                    else:
-                        if pnl_from_cost >= 0.30:
-                            step = round(pnl_from_cost * 20) / 20.0
-                            if step not in ladder_sold_steps:
-                                desc, delta = strategy._fujimoto_action(pnl_from_cost, position_pct)
-                                if delta < 0:
-                                    do_sell = True
-                                    sell_pct = min(abs(delta), 0.25)
-                                    trade_reason = f"藤本茂阶梯减仓(相对成本{pnl_from_cost*100:.0f}%)：{desc}"
-                                    ladder_sold_steps.add(step)
-                        if (not do_sell) and result.trend == TrendType.BEAR and not bear_trend_sold:
-                            do_sell = True
-                            sell_pct = 0.25
-                            trade_reason = "空头趋势风控减仓25%"
-                            bear_trend_sold = True
-                            sold_in_bear = True
+                            sell_pct = 0.15
+                            trade_reason = f"非趋势浮盈兑现({pnl_from_cost*100:.0f}%)"
+                            ladder_sold_steps.add(step)
+                    # 明确忽略：震荡时机卖侧、策略反复 SELL、浮亏空头减仓
 
                 if do_sell and sell_pct > 0:
                     trade_shares = shares * min(sell_pct, 1.0)
