@@ -2937,13 +2937,23 @@ function switchMainTab(tab) {
   } catch (e) {}
 
   if (tab === 'watchlist') {
-    // 仅在「尚无任何看板数据」时后台拉一次；已有数据不因切 Tab 触发刷新
+    // 切回看板：先重绘本地已有行；若仍在「刷新中」或行不完整，软请求进度（force=false，不重开全量）
     try {
-      if (!_lastWatchRows || !_lastWatchRows.length) {
-        if (!_wlInflight) loadWatchlist(false);
-      } else {
-        // 已有缓存行：只重绘，不请求
+      if (_lastWatchRows && _lastWatchRows.length) {
         try { renderWatchlist(_lastWatchRows); } catch (e2) {}
+      }
+      var needResume = false;
+      if (!_lastWatchRows || !_lastWatchRows.length) needResume = true;
+      else if (_watchWasComputing) needResume = true;
+      else {
+        var pending = (_lastWatchRows || []).filter(function (s) {
+          return s && (s.pending || s.price === '-' || s.signal === '计算中');
+        }).length;
+        if (pending > 0) needResume = true;
+      }
+      if (needResume && !_wlInflight) {
+        // 不带 force：读服务端已算好的进度/结果，后台任务若还在会继续被轮询接到
+        loadWatchlist(false);
       }
     } catch (e) {}
   }
