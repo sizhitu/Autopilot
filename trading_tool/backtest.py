@@ -6,7 +6,7 @@
 核心逻辑：
   1. 遍历历史K线，逐日调用策略引擎分析
   2. 交易以策略 signal 为准：观望/等待不交易；三层一致才开/加仓；卖出原因与动作一致
-  3. 三层价值侧重：识别下跌与风险、减少逆势亏损；顺势加仓用藤本茂阶梯放大收益
+  3. 加减仓偏好藤本茂第二档：跌约25%加约25%；涨约35%减约20%；三层一致才开仓
   4. 记录交易、资金曲线、回撤与收益风险指标
 """
 
@@ -195,46 +195,29 @@ class Backtester:
             if sig == SignalType.WAIT and not all_pass:
                 pass
 
-            # 2) 卖出纪律（针对「越改越低」）：
-            #    - 浮亏一律不卖（不割肉、不连续止损）
-            #    - 禁止「时机卖侧」在成本附近反复减仓
-            #    - 空头若曾有浮盈：最多一次性清仓一次；浮亏空头则继续持有等加仓
-            #    - 大浮盈才分批小幅兑现，留主力吃趋势
+            # 2) 减仓：藤本茂第二档为主（相对成本 +35% 卖约 20%）；浮亏不卖；忽略时机卖侧连砍
             elif can_sell:
                 sell_pct = 0.0
                 do_sell = False
 
-                # 铁律：相对成本浮亏或几乎无盈利 → 不卖
                 if pnl_from_cost < 0.08:
                     do_sell = False
-                elif all_pass or result.trend == TrendType.BULL:
-                    # 多头/三层一致：仅大浮盈兑现一小部分
-                    if pnl_from_cost >= 0.50:
-                        step = round(pnl_from_cost * 5) / 5.0  # 20% 一档
-                        if step not in ladder_sold_steps:
-                            do_sell = True
-                            sell_pct = 0.12
-                            trade_reason = f"趋势浮盈分批兑现({pnl_from_cost*100:.0f}%)"
-                            ladder_sold_steps.add(step)
-                else:
-                    # 非多头：有浮盈时，空头阶段最多「一次性」退出，避免 24→26→20 连砍
-                    if result.trend == TrendType.BEAR and not sold_in_bear and pnl_from_cost >= 0.08:
-                        do_sell = True
-                        sell_pct = 1.0  # 一次性出清，不再分批割
-                        trade_reason = f"空头一次退出(浮盈{pnl_from_cost*100:.0f}%)"
-                        sold_in_bear = True
-                        bear_trend_sold = True
-                    elif pnl_from_cost >= 0.50 and "阶梯" not in action_txt:
-                        # 非多头但大浮盈：小幅兑现一次
-                        step = round(pnl_from_cost * 5) / 5.0
-                        if step not in ladder_sold_steps:
-                            do_sell = True
-                            sell_pct = 0.15
-                            trade_reason = f"非趋势浮盈兑现({pnl_from_cost*100:.0f}%)"
-                            ladder_sold_steps.add(step)
-                    # 明确忽略：震荡时机卖侧、策略反复 SELL、浮亏空头减仓
+                elif pnl_from_cost >= 0.35 and 0.35 not in ladder_sold_steps:
+                    # 第二档：上涨约 35% 卖出约 20%（只触发一次）
+                    do_sell = True
+                    sell_pct = 0.20
+                    trade_reason = "藤本茂第二档减仓：上涨35%卖出20%"
+                    ladder_sold_steps.add(0.35)
+                elif pnl_from_cost >= 0.60 and 0.60 not in ladder_sold_steps:
+                    # 更深档可选：大趋势末端再减一成，避免过早清空
+                    do_sell = True
+                    sell_pct = 0.15
+                    trade_reason = "藤本茂加深兑现：上涨60%再减15%"
+                    ladder_sold_steps.add(0.60)
+                # 不再：+25%第一档、震荡时机卖侧、浮亏空头分批割
 
                 if do_sell and sell_pct > 0:
+
                     trade_shares = shares * min(sell_pct, 1.0)
                     if trade_shares > 0:
                         proceeds = trade_shares * close * (1 - self.commission)
@@ -283,24 +266,16 @@ class Backtester:
                         buy_pct = max(min(buy_pct, self.max_position), min(0.1, self.max_position))
                         trade_reason = "三层一致关注买入·建仓"
                 else:
-                    # 已有仓：三层一致 ≠ 自动加仓；须买点结构或成本下加仓
+                    # 已有仓：仅藤本茂第二档加仓（相对成本跌约 25% 增持约 25%）
+                    # 忽略 -15% 第一档；三层一致只表示可持有，不自动加仓
                     allow_add = price_gap_ok and (i - last_buy_bar) >= cooldown
-                    if near_high and not below_cost:
-                        allow_add = False
-                    structural_add = nt_buy or below_cost or (deep_dip and off_high)
-                    if allow_add and structural_add and (all_pass or nt_buy):
+                    second_tier_add = pnl_from_cost <= -0.25
+                    if allow_add and second_tier_add and not near_high:
                         do_buy = True
-                        buy_pct = min(float(result.position_pct or 0) or 0.08, 0.12)
-                        if nt_buy:
-                            trade_reason = "九转下跌买点加仓"
-                        elif below_cost or deep_dip:
-                            desc, delta = strategy._fujimoto_action(pnl_from_cost, position_pct)
-                            if delta > 0:
-                                buy_pct = max(buy_pct, min(delta, 0.15))
-                            trade_reason = f"成本下/深回调加仓" + (f"：{desc}" if delta > 0 else "")
-                        else:
-                            trade_reason = "结构回调加仓"
-                    # 否则：三层一致持有 → 不加不卖（让利润跑）
+                        room = max(0.0, self.max_position - position_pct)
+                        buy_pct = min(0.25, room)  # 第二档增持 25%
+                        trade_reason = "藤本茂第二档加仓：下跌25%增持25%"
+                    # 否则持有，不加
 
                 if do_buy and buy_pct > 0.01 and cash > 0:
                     room = max(0.0, self.max_position - position_pct)
