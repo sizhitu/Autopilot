@@ -773,8 +773,10 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
         })
 
     done_map = {}
-    # 小实例降低并行，减少峰值内存
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    # 并行计算；每完成一批（默认 5 个）才写一次进度缓存，供前端轮询渐进重绘
+    _batch = 5
+    _done_n = 0
+    with ThreadPoolExecutor(max_workers=min(5, max(2, len(items)))) as ex:
         futs = {ex.submit(_status_dict_cached, code, name, 160): code for code, name in items}
         for fut in as_completed(futs):
             code = futs[fut]
@@ -787,7 +789,9 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
                     'price': '-', 'signal': '观望', 'error': '获取失败', 'pending': False,
                 }
             done_map[str(code).upper()] = row
-            if key is not None:
+            _done_n += 1
+            # 每 5 个或全部完成时更新一次，减少缓存写抖动；轮询可见分批结果
+            if key is not None and (_done_n % _batch == 0 or _done_n >= total):
                 display = _assemble(done_map)
                 entry = _CACHES.get(key) or {}
                 entry['data'] = {
@@ -797,6 +801,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
                     'total': total, 'summary': {},
                     'stocks': display,
                     'symbols': [{'code': c, 'name': n} for c, n in items],
+                    'progress': {'done': _done_n, 'total': total},
                 }
                 entry['refreshing'] = True
                 _CACHES[key] = entry

@@ -3005,7 +3005,10 @@ function setWatchUpdatedLabel(json) {
   if (!el) return;
   const t = (json && (json.updated_at || json.prev_updated_at)) || _lastWatchUpdatedAt || '';
   if (json && json.computing) {
-    el.textContent = t ? (`更新于 ${t} · 刷新中…`) : '首次加载中…';
+    const pr = json.progress || {};
+    const d = pr.done, tot = pr.total;
+    const prog = (d != null && tot) ? (` ${d}/${tot}`) : '';
+    el.textContent = t ? (`更新于 ${t} · 刷新中${prog}…`) : (`首次加载中${prog}…`);
     return;
   }
   if (t) {
