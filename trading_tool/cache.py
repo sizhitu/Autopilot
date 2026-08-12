@@ -222,7 +222,7 @@ def set_quote_cache(symbol: str, payload: dict, ttl: int = None) -> None:
     """
     缓存完整分析结果（含 chart）。
     - 默认 TTL 按交易活跃度：活跃 15min / 休市与周末 24h
-    - candles 最多保留 80 根以控制体积
+    - candles 保留约 300 根（可 CACHE_QUOTE_CANDLES_MAX），供 MA120/MA250 展示
     - 同时写入远端（Supabase/Redis）与进程 L1
     """
     if ttl is None:
@@ -231,13 +231,26 @@ def set_quote_cache(symbol: str, payload: dict, ttl: int = None) -> None:
     if isinstance(data, dict) and isinstance(data.get("chart"), dict):
         ch = dict(data["chart"])
         candles = ch.get("candles")
-        max_n = 80
+        # 历史曾截断为 80/更短，导致分析页只见十几～几十根 K 线
+        max_n = int(os.getenv("CACHE_QUOTE_CANDLES_MAX", "320") or "320")
+        max_n = max(max_n, 300)
         if isinstance(candles, list) and len(candles) > max_n:
             ch = dict(ch)
+            n0 = len(candles)
             for k, v in list(ch.items()):
-                if isinstance(v, list) and len(v) == len(candles):
+                if isinstance(v, list) and len(v) == n0:
                     ch[k] = v[-max_n:]
+            # mas 为 {period: {data, color}}
+            if isinstance(ch.get("mas"), dict):
+                mas2 = {}
+                for pk, pv in ch["mas"].items():
+                    if isinstance(pv, dict) and isinstance(pv.get("data"), list) and len(pv["data"]) == n0:
+                        mas2[pk] = {**pv, "data": pv["data"][-max_n:]}
+                    else:
+                        mas2[pk] = pv
+                ch["mas"] = mas2
             ch["candles"] = candles[-max_n:]
+            ch["count"] = len(ch["candles"])
         data = dict(data)
         data["chart"] = ch
         data.pop("chart_omitted", None)

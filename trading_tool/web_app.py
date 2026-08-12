@@ -738,7 +738,8 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             and isinstance(cached_hit.get("chart"), dict)
             and (cached_hit.get("chart") or {}).get("candles")):
         _nc = len((cached_hit.get("chart") or {}).get("candles") or [])
-        if _nc >= 120:
+        # 低于 250 根视为旧截断缓存，强制重拉
+        if _nc >= 250:
             cached_hit = dict(cached_hit)
             cached_hit["stale"] = False
             cached_hit["cache_hit"] = True
@@ -750,7 +751,15 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         except Exception:
             pass
     try:
-        df = fetcher.fetch(req.symbol, req.days)
+        _days = max(int(req.days or 300), 300)
+        df = fetcher.fetch(req.symbol, _days)
+        if df is None or len(df) < 200:
+            try:
+                from data_fetcher import invalidate_kline_cache
+                invalidate_kline_cache(req.symbol)
+            except Exception:
+                pass
+            df = fetcher.fetch(req.symbol, max(_days, 400))
         source = "live"
         stale = False
     except Exception as e:
