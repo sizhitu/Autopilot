@@ -3134,9 +3134,7 @@ async function verifyWatchlistFreshness(stocks) {
     const staleN = (json.stale_count != null) ? json.stale_count : 0;
     const freshN = (json.fresh_count != null) ? json.fresh_count : 0;
     if (staleN > 0) {
-      try { showToast('仍有 ' + staleN + ' 只未到最新交易日（数据源延迟），已尽量更新', 'info'); } catch (e1) {}
-    } else if (freshN > 0) {
-      try { showToast('已校验：行情日期均为最新', 'ok'); } catch (e2) {}
+      try { showToast('现价日期：仍有 ' + staleN + ' 只未到最新交易日', 'info'); } catch (e1) {}
     }
     return merged;
   } catch (e) {

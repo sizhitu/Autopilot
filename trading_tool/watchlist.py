@@ -741,11 +741,59 @@ def _status_dict_cached(code: str, name: str, days: int = 200, force_live: bool 
     return d
 
 
-def verify_and_refresh_symbols(symbols_with_names: list) -> dict:
-    """刷新后二次校验：对未达最新交易日的代码强制实拉并返回。"""
+def _patch_row_price_date(row: dict, code: str, name: str = "") -> dict:
+    """仅更新现价/交易日/日涨幅，不重算九转/趋势/三层等指标。"""
     import time as _time
+    from data_fetcher import invalidate_kline_cache, _df_last_date, _bar_is_stale
+    out = dict(row) if isinstance(row, dict) else {}
+    out.setdefault("code", code)
+    if name:
+        out["name"] = name
+    mkt = "cn" if str(code).isdigit() or str(code).upper()[:2] in ("SH", "SZ", "BJ") else "us"
+    df = None
+    last_d = None
+    for days in (30, 60):
+        try:
+            invalidate_kline_cache(code)
+            invalidate_kline_cache(str(code).upper())
+        except Exception:
+            pass
+        try:
+            df = fetcher.fetch(code, days)
+        except Exception:
+            df = None
+        if df is None or len(df) < 2:
+            _time.sleep(0.15)
+            continue
+        last_d = _df_last_date(df)
+        if last_d is not None and not _bar_is_stale(last_d, market=mkt, grace_days=1):
+            break
+        _time.sleep(0.15)
+    if df is None or len(df) < 1:
+        out["data_source"] = "price_fetch_fail"
+        return out
+    try:
+        last_close = float(df["close"].iloc[-1])
+        out["price"] = round(last_close, 2)
+        if len(df) >= 2:
+            prev = float(df["close"].iloc[-2])
+            if prev:
+                out["change_1d"] = round((last_close - prev) / prev * 100, 2)
+        if last_d is None:
+            last_d = _df_last_date(df)
+        if last_d is not None:
+            out["bar_date"] = last_d.strftime("%Y-%m-%d") if hasattr(last_d, "strftime") else str(last_d)[:10]
+        out["bar_stale"] = bool(_bar_is_stale(last_d, market=mkt, grace_days=1))
+        out["data_source"] = "price_date_only"
+        out["pending"] = False
+    except Exception as e:
+        out["data_source"] = f"price_patch_err:{(str(e))[:40]}"
+    return out
+
+
+def verify_and_refresh_symbols(symbols_with_names: list) -> dict:
+    """仅校验现价对应交易日是否最新；过旧则只补价/日期，不重算指标。"""
     fixed = []
-    still_stale = []
     details = []
     for item in symbols_with_names or []:
         if isinstance(item, (list, tuple)):
@@ -762,13 +810,33 @@ def verify_and_refresh_symbols(symbols_with_names: list) -> dict:
         hit = _STATUS_CACHE.get(code)
         if hit and isinstance(hit.get("data"), dict):
             before = dict(hit["data"])
-        need = not before or not _row_is_date_fresh(before, code)
-        row = _status_dict_cached(code, name, days=300, force_live=bool(need))
-        # 仍旧再强拉一次
-        if not _row_is_date_fresh(row, code):
-            row = _status_dict_cached(code, name, days=400, force_live=True)
-            _time.sleep(0.2)
-        ok = _row_is_date_fresh(row, code)
+        if before is None and isinstance(item, dict) and item.get("price") not in (None, "", "-"):
+            before = dict(item)
+        # 已是最新交易日：原样返回，不打行情、不重算
+        if before and _row_is_date_fresh(before, code):
+            row = dict(before)
+            row["data_source"] = row.get("data_source") or "already_fresh"
+            row["pending"] = False
+            ok = True
+        else:
+            base = dict(before) if before else {
+                "code": code, "name": name,
+                "market": "A股" if code.isdigit() else "美股",
+                "price": "-", "pending": False,
+            }
+            row = _patch_row_price_date(base, code, name)
+            ok = _row_is_date_fresh(row, code)
+            # 写回状态缓存：只合并价/日期字段，保留原有指标
+            try:
+                merged = dict(base)
+                for k in ("price", "bar_date", "bar_stale", "change_1d", "data_source", "pending"):
+                    if k in row:
+                        merged[k] = row[k]
+                if _row_usable(merged) or _bar_date_str(merged):
+                    _status_cache_put(code, merged)
+                row = merged
+            except Exception:
+                pass
         details.append({
             "code": code,
             "bar_date": _bar_date_str(row),
@@ -777,17 +845,14 @@ def verify_and_refresh_symbols(symbols_with_names: list) -> dict:
             "data_source": row.get("data_source"),
             "bar_stale": bool(row.get("bar_stale")),
         })
-        if ok:
-            fixed.append(row)
-        else:
-            still_stale.append(row)
-            fixed.append(row)
+        fixed.append(row)
     return {
         "success": True,
         "stocks": fixed,
         "details": details,
         "fresh_count": sum(1 for d in details if d.get("fresh")),
         "stale_count": sum(1 for d in details if not d.get("fresh")),
+        "mode": "price_date_only",
     }
 
 
