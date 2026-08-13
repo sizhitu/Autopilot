@@ -450,11 +450,41 @@ class Backtester:
             sharpe = 0
 
         # 平均持仓天数
+        # 平均持仓：从「空仓→有仓」到「有仓→空仓」的交易日数；期末仍持有则计到最后一根
         hold_days_list = []
-        if len(buy_dates) >= 2:
-            for j in range(1, len(buy_dates)):
-                hold_days_list.append(buy_dates[j] - buy_dates[j-1])
-        avg_hold = np.mean(hold_days_list) if hold_days_list else 0
+        in_pos = False
+        entry_i = None
+        # 用成交序列还原持仓生命周期（比 buy_dates 间隔更准确）
+        bar_by_date = {}
+        if 'date' in df.columns:
+            for bi in range(len(df)):
+                d = df['date'].iloc[bi]
+                if hasattr(d, 'strftime'):
+                    d = d.strftime('%Y-%m-%d')
+                bar_by_date[str(d)] = bi
+        pos_shares = 0.0
+        entry_i = None
+        for t in trades:
+            bi = bar_by_date.get(str(t.date))
+            if bi is None:
+                continue
+            if t.action in ("BUY", "ADD"):
+                if pos_shares <= 1e-8:
+                    entry_i = bi
+                pos_shares += float(t.shares or 0)
+            elif t.action == "SELL":
+                pos_shares = max(0.0, pos_shares - float(t.shares or 0))
+                if pos_shares <= 1e-6 and entry_i is not None:
+                    hold_days_list.append(max(1, bi - entry_i))
+                    entry_i = None
+                    pos_shares = 0.0
+        # 期末仍持有
+        if entry_i is not None and pos_shares > 1e-8:
+            hold_days_list.append(max(1, (n - 1) - entry_i))
+        # 兜底：仅有买入、无完整卖出周期时，用最后买到期末
+        if not hold_days_list and buy_dates:
+            hold_days_list.append(max(1, (n - 1) - int(buy_dates[0])))
+        avg_hold = float(np.mean(hold_days_list)) if hold_days_list else 0.0
 
         return BacktestResult(
             total_return=round(total_return, 2),
