@@ -252,8 +252,8 @@ def result_to_dict(result) -> dict:
 
 
 def df_to_chart_json(df: pd.DataFrame, result, show_last=300) -> dict:
-    """提取K线+均线数据供前端绘图。默认约 300 根，便于观察 MA120/MA250。"""
-    show_last = max(int(show_last or 300), 120)
+    """提取K线+均线数据供前端绘图。全库统一默认 300 根，便于观察 MA120/MA250。"""
+    show_last = max(int(show_last or 300), 300)
     # 有多少展示多少，上限 show_last
     recent = df.tail(min(show_last, len(df))).copy().reset_index(drop=True)
 
@@ -739,17 +739,20 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             and (cached_hit.get("chart") or {}).get("candles")):
         _nc = len((cached_hit.get("chart") or {}).get("candles") or [])
         # 低于 250 根视为旧截断缓存，强制重拉
-        if _nc >= 250:
+        if _nc >= 300:
             cached_hit = dict(cached_hit)
             cached_hit["stale"] = False
             cached_hit["cache_hit"] = True
             return JSONResponse(content=_to_jsonable(cached_hit),
                                 headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
-        # 短 K 线缓存作废
+        # 短 K 线缓存作废（含历史 15/80 根污染）
         try:
-            cache.set_quote_cache(req.symbol, None)  # may no-op
+            cache.delete_quote_cache(req.symbol)
         except Exception:
-            pass
+            try:
+                cache.set_quote_cache(req.symbol, None)
+            except Exception:
+                pass
     try:
         _days = max(int(req.days or 300), 300)
         df = fetcher.fetch(req.symbol, _days)
@@ -765,11 +768,17 @@ async def get_quote(req: QuoteRequest, request: Request = None,
     except Exception as e:
         # 第一层兜底：直接用此前缓存的完整行情分析结果
         cached = cache.get_quote_cache(req.symbol)
-        if cached:
-            cached = dict(cached)
-            cached["stale"] = True
-            return JSONResponse(content=_to_jsonable(cached),
-                                headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+        if cached and isinstance(cached, dict):
+            _nc2 = len(((cached.get("chart") or {}).get("candles")) or [])
+            if _nc2 >= 300:
+                cached = dict(cached)
+                cached["stale"] = True
+                return JSONResponse(content=_to_jsonable(cached),
+                                    headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+            try:
+                cache.delete_quote_cache(req.symbol)
+            except Exception:
+                pass
         # 第二层兜底：用缓存的每日 K 线重建 DataFrame
         stored = cache.get_daily_cache(req.symbol)
         df = _df_from_stored(stored) if stored else None
@@ -780,6 +789,20 @@ async def get_quote(req: QuoteRequest, request: Request = None,
 
     if len(df) < 5:
         raise HTTPException(400, f"数据不足: 仅{len(df)}根K线，无法分析")
+    # 统一目标 ≥300 根；不足再强拉一次
+    if len(df) < 250:
+        try:
+            from data_fetcher import invalidate_kline_cache
+            invalidate_kline_cache(req.symbol)
+            cache.delete_quote_cache(req.symbol)
+        except Exception:
+            pass
+        try:
+            df2 = fetcher.fetch(req.symbol, 400)
+            if df2 is not None and len(df2) > len(df):
+                df = df2
+        except Exception:
+            pass
 
     # 实时成功时，把每日 K 线写入缓存层（供回测 / 指标分析 / 容错）
     if source == "live":
@@ -830,10 +853,14 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         }
     })
 
-    # 实时成功时，把完整行情分析结果写入缓存层（短时 TTL，供失败兜底）
+    # 仅当 chart≥300 根才写入 quote 缓存，杜绝 15 根污染全站
     if source == "live":
         try:
-            cache.set_quote_cache(req.symbol, payload)
+            _cn = len(((payload.get("chart") or {}).get("candles")) or [])
+            if _cn >= 300:
+                cache.set_quote_cache(req.symbol, payload)
+            else:
+                cache.delete_quote_cache(req.symbol)
         except Exception:
             pass
 
@@ -1178,7 +1205,7 @@ async def analyze_csv(
         response_data = {
             "success": True,
             "data": result_to_dict(result),
-            "chart": df_to_chart_json(df, result),
+            "chart": df_to_chart_json(df, result, show_last=300),
             "nine_turn": nine_turn,
             "high_low": extra["high_low"],
             "valuation": extra["valuation"],

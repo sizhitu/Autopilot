@@ -218,6 +218,14 @@ def get_quote_cache(symbol: str) -> Optional[dict]:
     return val
 
 
+def delete_quote_cache(symbol: str) -> None:
+    """删除某标的 quote 分析结果缓存（短 K 线污染时强制清掉）"""
+    try:
+        delete(f"quote:{str(symbol).strip().upper()}")
+    except Exception:
+        pass
+
+
 def set_quote_cache(symbol: str, payload: dict, ttl: int = None) -> None:
     """
     缓存完整分析结果（含 chart）。
@@ -231,6 +239,9 @@ def set_quote_cache(symbol: str, payload: dict, ttl: int = None) -> None:
     if isinstance(data, dict) and isinstance(data.get("chart"), dict):
         ch = dict(data["chart"])
         candles = ch.get("candles")
+        # 过短 chart 不入库，避免分析页长期 15 根
+        if isinstance(candles, list) and len(candles) < 250:
+            return
         # 历史曾截断为 80/更短，导致分析页只见十几～几十根 K 线
         max_n = int(os.getenv("CACHE_QUOTE_CANDLES_MAX", "320") or "320")
         max_n = max(max_n, 300)

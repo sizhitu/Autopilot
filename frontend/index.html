@@ -2721,6 +2721,18 @@ async function fetchQuote(symbol, name, market) {
       switchMainTab('analysis');
     }
     if (json.chart && json.chart.candles && json.chart.candles.length) {
+      // 短 K 线（历史缓存污染）自动 force 再拉一次，目标 300 根
+      if (json.chart.candles.length < 250 && !window._quoteShortRetry) {
+        window._quoteShortRetry = true;
+        window._quoteForce = true;
+        try {
+          await fetchQuote(symbol);
+        } finally {
+          window._quoteShortRetry = false;
+          window._quoteForce = false;
+        }
+        return;
+      }
       lastChartData = json.chart;
       drawChart(json.chart);
       const nBar = json.chart.candles.length;
