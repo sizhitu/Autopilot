@@ -162,3 +162,51 @@ def set_note(uid: str, symbol: str, note: str, access_token: str = None) -> bool
     else:
         _sql_set_note(uid, symbol, note or "")
     return True
+
+
+def list_all_distinct_symbols(limit: int = 500) -> list:
+    """汇总全站用户自选中的去重代码（service 角色；供收盘后预热缓存）。"""
+    limit = max(1, min(int(limit or 500), 2000))
+    out = []
+    seen = set()
+    try:
+        if supabase_client.using_supabase():
+            client = supabase_client.get_service_client()
+            # 分页拉取，避免一次过大
+            start = 0
+            page = 1000
+            while start < 5000 and len(out) < limit:
+                end = start + page - 1
+                res = client.table("watchlists").select("symbol").range(start, end).execute()
+                rows = getattr(res, "data", None) or []
+                if not rows:
+                    break
+                for r in rows:
+                    sym = str((r or {}).get("symbol") or "").strip().upper()
+                    if not sym or sym in seen:
+                        continue
+                    seen.add(sym)
+                    out.append(sym)
+                    if len(out) >= limit:
+                        break
+                if len(rows) < page:
+                    break
+                start += page
+    except Exception:
+        pass
+    if not out:
+        try:
+            conn = db.get_conn()
+            with db.db_lock():
+                rows = conn.execute(
+                    "SELECT DISTINCT symbol FROM user_watchlist ORDER BY symbol LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            for r in rows:
+                sym = str(r[0] if not isinstance(r, dict) else r.get("symbol") or "").strip().upper()
+                if sym and sym not in seen:
+                    seen.add(sym)
+                    out.append(sym)
+        except Exception:
+            pass
+    return out[:limit]

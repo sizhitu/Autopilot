@@ -654,6 +654,138 @@ async def cron_reports_generate(
     return {"success": True, **stats}
 
 
+@app.post("/api/cron/prewarm-cache")
+async def cron_prewarm_cache(
+    market: str = Query("all", description="us | cn | all"),
+    limit: int = Query(200, description="最多预热标的数"),
+    x_cron_secret: str = Header(None, alias="X-Cron-Secret"),
+):
+    """收盘后预热：拉取用户自选最新行情并写入 quote/状态缓存，降低用户访问等待。
+
+    鉴权：X-Cron-Secret == CRON_SECRET
+    建议：A股收盘后约 1h（UTC 08:00）、美股收盘后约 1h（UTC 22:00）由 GitHub Actions 触发。
+    """
+    expected = (os.getenv("CRON_SECRET") or "").strip()
+    if not expected:
+        raise HTTPException(503, "服务端未配置 CRON_SECRET")
+    if not x_cron_secret or x_cron_secret.strip() != expected:
+        raise HTTPException(401, "无效的 Cron 密钥")
+
+    market = (market or "all").strip().lower()
+    if market not in ("us", "cn", "all"):
+        raise HTTPException(400, "market 仅支持 us / cn / all")
+    limit = max(1, min(int(limit or 200), 500))
+
+    # 1) 全站自选去重 + 默认看板代码
+    symbols = []
+    try:
+        symbols.extend(watchlist_store.list_all_distinct_symbols(limit=limit * 2))
+    except Exception:
+        pass
+    try:
+        from watchlist import WATCHLIST_USER_DEFAULT, WATCHLIST_ADMIN_DEFAULT
+        for d in (WATCHLIST_USER_DEFAULT, WATCHLIST_ADMIN_DEFAULT):
+            for c in (d or {}).keys():
+                symbols.append(str(c).strip().upper())
+    except Exception:
+        pass
+
+    # 去重并按市场过滤
+    seen = set()
+    ordered = []
+    for s in symbols:
+        s = str(s or "").strip().upper()
+        if not s or s in seen:
+            continue
+        is_cn = s.isdigit() or s.startswith(("SH", "SZ", "BJ")) or (len(s) == 6 and s[:1] in "036")
+        # 粗分：6位数字/带市场前缀 → A股，其余美股/ETF
+        if market == "cn" and not (s.isdigit() or s[:2] in ("SH", "SZ", "BJ") or (len(s) >= 6 and s[-6:].isdigit())):
+            # 也接受纯 6 位
+            if not (len(s) == 6 and s.isdigit()):
+                continue
+        if market == "us" and (s.isdigit() or (len(s) == 6 and s.isdigit()) or s[:2] in ("SH", "SZ", "BJ")):
+            continue
+        seen.add(s)
+        ordered.append(s)
+        if len(ordered) >= limit:
+            break
+
+    ok, fail, skipped = 0, 0, 0
+    errors = []
+    t0 = time.time()
+    for sym in ordered:
+        if time.time() - t0 > 240:
+            # 留给网关余量，未完成的下次再跑
+            skipped = len(ordered) - ok - fail
+            break
+        try:
+            df = fetcher.fetch(sym, 300)
+            if df is None or len(df) < 60:
+                try:
+                    from data_fetcher import invalidate_kline_cache
+                    invalidate_kline_cache(sym)
+                    df = fetcher.fetch(sym, 400)
+                except Exception:
+                    pass
+            if df is None or len(df) < 30:
+                fail += 1
+                errors.append({"symbol": sym, "error": f"bars={0 if df is None else len(df)}"})
+                continue
+            strategy = FujimotoStrategy(total_capital=100000)
+            result = strategy.analyze(df)
+            nine_turn = calc_nine_turn_display(df)
+            extra = _extra_metrics(df, sym)
+            payload = _to_jsonable({
+                "success": True,
+                "symbol": sym,
+                "stale": False,
+                "prewarm": True,
+                "data": result_to_dict(result),
+                "chart": df_to_chart_json(df, result, show_last=300),
+                "nine_turn": nine_turn,
+                "high_low": extra.get("high_low"),
+                "valuation": extra.get("valuation"),
+                "meta": {
+                    "rows": len(df),
+                    "last_close": round(float(df["close"].iloc[-1]), 2),
+                    "end_date": df["date"].iloc[-1].strftime("%Y-%m-%d") if "date" in df.columns else "",
+                },
+            })
+            _nc = len(((payload.get("chart") or {}).get("candles")) or [])
+            if _nc >= 250:
+                cache.set_quote_cache(sym, payload)
+            # 看板状态缓存
+            try:
+                from watchlist import get_stock_status, _status_to_dict, _status_cache_put
+                st = get_stock_status(sym, sym, days=200)
+                _status_cache_put(sym, _status_to_dict(st))
+            except Exception:
+                pass
+            # 落每日 K 线
+            try:
+                daily_store.store_daily_bars(sym, df, source="prewarm")
+            except Exception:
+                pass
+            ok += 1
+            time.sleep(0.25)
+        except Exception as e:
+            fail += 1
+            if len(errors) < 20:
+                errors.append({"symbol": sym, "error": str(e)[:120]})
+
+    return {
+        "success": True,
+        "market": market,
+        "total": len(ordered),
+        "ok": ok,
+        "fail": fail,
+        "skipped": skipped,
+        "seconds": round(time.time() - t0, 1),
+        "errors": errors,
+    }
+
+
+
 @app.post("/api/contact")
 async def api_contact(req: ContactRequest, request: Request):
     """公开咨询入口：收集 姓名/邮箱/国家/问题，落库并立即转发到 support 邮箱（自动建单）。"""

@@ -1,0 +1,76 @@
+name: Prewarm quote cache after market close
+
+# A股收盘 15:00 CST ≈ 07:00 UTC → +1h = 08:00 UTC
+# 美股收盘 16:00 ET ≈ 20:00–21:00 UTC → +1h ≈ 22:00 UTC（与夏令时略有偏差，可接受）
+on:
+  schedule:
+    - cron: "0 8 * * 1-5"   # 工作日 08:00 UTC → A股侧预热
+    - cron: "0 22 * * 1-5"  # 工作日 22:00 UTC → 美股侧预热
+  workflow_dispatch:
+    inputs:
+      market:
+        description: "预热市场 us / cn / all"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - us
+          - cn
+      limit:
+        description: "最多预热标的数"
+        required: false
+        default: "200"
+
+jobs:
+  prewarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Trigger prewarm API
+        env:
+          API_BASE: ${{ secrets.DIGEST_API_BASE }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          MARKET: ${{ github.event.inputs.market || '' }}
+          LIMIT: ${{ github.event.inputs.limit || '200' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${API_BASE:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "Missing secrets: DIGEST_API_BASE and/or CRON_SECRET"
+            exit 1
+          fi
+          BASE="${API_BASE%/}"
+          # schedule 无 inputs：按 UTC 小时选择市场
+          HOUR=$(date -u +%H)
+          if [ -n "${MARKET}" ]; then
+            MKT="${MARKET}"
+          elif [ "${HOUR}" = "08" ]; then
+            MKT="cn"
+          elif [ "${HOUR}" = "22" ]; then
+            MKT="us"
+          else
+            MKT="all"
+          fi
+          URL="${BASE}/api/cron/prewarm-cache?market=${MKT}&limit=${LIMIT}"
+          echo "Calling ${URL}"
+          ok=0
+          for i in 1 2 3 4 5; do
+            code=$(curl -sS -o /tmp/prewarm.json -w "%{http_code}" \
+              -X POST \
+              -H "X-Cron-Secret: ${CRON_SECRET}" \
+              -H "Content-Type: application/json" \
+              --max-time 300 \
+              "${URL}" || true)
+            echo "Attempt $i → HTTP $code"
+            cat /tmp/prewarm.json || true
+            echo
+            if [ "$code" = "200" ]; then
+              ok=1
+              break
+            fi
+            sleep 20
+          done
+          if [ "$ok" != "1" ]; then
+            echo "Prewarm failed"
+            exit 1
+          fi
