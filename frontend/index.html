@@ -2905,21 +2905,30 @@ async function ensureAnalysisSymbol() {
 let _mainTab = 'watchlist';
 let _lastMainTabSwitch = 0;
 function switchMainTab(tab) {
-  // 同步切换视图，任何网络/重绘不得阻塞
+  // 同步切换视图，任何网络/重绘不得阻塞（含未登录刷新中）
   if (tab !== 'watchlist' && tab !== 'analysis') return;
   const now = Date.now();
-  if (now - _lastMainTabSwitch < 120 && _mainTab === tab) return;
+  // 仅防连点抖到同一 tab；切到另一 tab 永远放行
+  if (now - _lastMainTabSwitch < 80 && _mainTab === tab) return;
   _lastMainTabSwitch = now;
   _mainTab = tab;
   try {
     if (tab === 'analysis') {
       try { clearTimeout(_wlPollTimer); _wlPollTimer = null; } catch (e0) {}
+      try { _wlPollCount = 0; } catch (e0b) {}
       try { _analysisLoading = false; } catch (e1) {}
+      // 刷新中也不挡分析：释放看板 inflight 锁（请求仍在后台跑完）
+      try { /* 不中断 fetch，只允许再次点看板 */ } catch (e1b) {}
     }
     const ta = document.getElementById('tabAnalysis');
     const tw = document.getElementById('tabWatchlist');
     const av = document.getElementById('analysisView');
     const wv = document.getElementById('watchlistView');
+    const bar = document.getElementById('mainTabBar');
+    if (bar) {
+      bar.style.pointerEvents = 'auto';
+      bar.style.zIndex = '5000';
+    }
     if (ta) {
       ta.classList.remove('hidden');
       ta.classList.toggle('active', tab === 'analysis');
@@ -2980,17 +2989,16 @@ function switchMainTab(tab) {
     } catch (e) {}
   }
   if (tab === 'analysis') {
-    // 已有图：只重绘，不重新 fetch（避免与看板刷新抢请求/卡住）
+    // 视图已在上面打开；补数异步，绝不阻塞再次点击
     try {
       if (lastChartData && lastChartData.candles && lastChartData.candles.length) {
         try { drawChart(lastChartData); } catch (e3) {}
-        return;
+      } else {
+        try { ensureAnalysisSymbol().catch(function () {}); } catch (e4) {}
       }
-    } catch (e) {}
-    // 无图时才补数；失败不影响 Tab 可再点
-    try {
-      ensureAnalysisSymbol().catch(function () {});
-    } catch (e) {}
+    } catch (e) {
+      try { ensureAnalysisSymbol().catch(function () {}); } catch (e5) {}
+    }
   }
 }
 
@@ -3091,16 +3099,22 @@ async function verifyWatchlistFreshness(stocks) {
   try {
     const list = (stocks || []).filter(function (s) { return s && s.code && !s.pending; });
     if (!list.length) return stocks;
+    // 未登录只校验两只，并限制等待，避免拖死页面
+    const limited = isDemoMode() ? list.slice(0, 2) : list.slice(0, 30);
     const payload = {
-      symbols: list.map(function (s) {
+      symbols: limited.map(function (s) {
         return { code: s.code, name: s.name || s.code };
       })
     };
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, isDemoMode() ? 6000 : 15000) : null;
     const res = await api('/api/watchlist/verify-fresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: ctrl ? ctrl.signal : undefined
     });
+    if (timer) clearTimeout(timer);
     const json = await res.json();
     if (!json || !json.success || !Array.isArray(json.stocks)) return stocks;
     // 控制台可定位：缓存 vs 实拉
@@ -3216,9 +3230,12 @@ async function loadWatchlist(forceRefresh = false) {
   }
   _wlInflight = _loadWatchlistBody(forceRefresh).finally(function () {
     _wlInflight = null;
-    if (_wlPendingForce) {
+    // 未登录不连打第二次 force，避免刷新队列占住体验
+    if (_wlPendingForce && !isDemoMode()) {
       _wlPendingForce = false;
       loadWatchlist(true);
+    } else {
+      _wlPendingForce = false;
     }
   });
   return _wlInflight;
@@ -3269,16 +3286,20 @@ async function _loadWatchlistBody(forceRefresh) {
         renderWatchlistSummary(sum);
         setWatchUpdatedLabel({ computing: false, updated_at: (json && json.updated_at) || '免费体验·真实行情', demo: true });
         loading.classList.add('hidden');
-        // 二次校验最新交易日
+        // 未登录二次校验：低优先级、可失败；不阻塞 Tab
         try {
-          verifyWatchlistFreshness(stocks).then(function (vrows) {
-            if (!vrows || !vrows.length) return;
-            const vmerged = mergeWatchRows(vrows, _lastWatchRows);
-            _lastWatchRows = vmerged.slice();
-            _lastWatchSig = '';
-            try { renderWatchlist(vmerged); } catch (e) {}
-            try { renderWatchlistSummary(buildWatchlistSummaryFromStocks(vmerged)); } catch (e) {}
-          });
+          setTimeout(function () {
+            if (_mainTab !== 'watchlist') return; // 已去分析页则不再改看板
+            verifyWatchlistFreshness(stocks).then(function (vrows) {
+              if (!vrows || !vrows.length) return;
+              if (_mainTab !== 'watchlist') return;
+              const vmerged = mergeWatchRows(vrows, _lastWatchRows);
+              _lastWatchRows = vmerged.slice();
+              _lastWatchSig = '';
+              try { renderWatchlist(vmerged); } catch (e) {}
+              try { renderWatchlistSummary(buildWatchlistSummaryFromStocks(vmerged)); } catch (e) {}
+            }).catch(function () {});
+          }, 0);
         } catch (e) {}
         return;
       } catch (e) {

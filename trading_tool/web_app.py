@@ -1125,7 +1125,6 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
     import time as _time
     from watchlist import (
         _status_dict_cached, _row_is_date_fresh, _row_fresher, _bar_date_str,
-        verify_and_refresh_symbols,
     )
 
     items = [
@@ -1189,22 +1188,7 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
                     "price": "-", "error": str(e)[:40], "pending": False, "free_fixed": True,
                 })
 
-    # 二次校验：仍旧则再实拉
-    try:
-        v = verify_and_refresh_symbols([(c, n) for c, n in items])
-        by = {str(s.get("code")).upper(): s for s in (v.get("stocks") or []) if s and s.get("code")}
-        fixed = []
-        for s in stocks:
-            cu = str((s or {}).get("code") or "").upper()
-            n = by.get(cu)
-            if n:
-                fixed.append(dict(_row_fresher(n, s)))
-            else:
-                fixed.append(s)
-        stocks = fixed
-    except Exception:
-        pass
-
+    # 轻量：未最新已在上面 force_live；不再同步跑完整 verify（避免未登录刷新卡住）
     def _sum_stocks(stocks_list):
         summary = {"即将上涨关注": 0, "上涨见顶关注": 0, "下跌观望": 0, "error": 0}
         for s in stocks_list:
