@@ -6,7 +6,7 @@
 核心逻辑：
   1. 遍历历史K线，逐日调用策略引擎分析
   2. 交易以策略 signal 为准：观望/等待不交易；三层一致才开/加仓；卖出原因与动作一致
-  3. 加减仓偏好藤本茂第二档：跌约25%加约25%；涨约35%减约20%；三层一致才开仓
+  3. 开仓：三层/九转；持仓加减：藤本茂阶梯为主，叠加九转与三层高权重确认
   4. 记录交易、资金曲线、回撤与收益风险指标
 """
 
@@ -225,6 +225,27 @@ class Backtester:
             recent_high = float(win.max()) if len(win) else close
             near_high = recent_high > 0 and close >= recent_high * 0.97
 
+            # 九转买卖侧（持仓加减仓叠加用）
+            nt_buy = False
+            nt_sell = False
+            try:
+                if calc_nine_turn_display is not None:
+                    _nt = calc_nine_turn_display(current_df)
+                    _dir = _nt.get("direction")
+                    _done = bool(_nt.get("is_complete") or _nt.get("is_completing"))
+                    if _done and _dir == "down":
+                        nt_buy = True
+                    if _done and _dir == "up":
+                        nt_sell = True
+            except Exception:
+                pass
+            # 三层/策略卖侧确认（有浮盈才参与减仓，避免观望乱砍）
+            layer_sell = bool(
+                (sig == SignalType.SELL and not _wait_txt)
+                or ("卖" in action_txt and "观望" not in action_txt and pnl_from_cost >= 0.12)
+            )
+            signal_sell_confirm = (nt_sell or layer_sell or (not sys_ok and time_ok and "卖" in action_txt)) and pnl_from_cost >= 0.12
+
             if result.trend == TrendType.BULL:
                 bear_trend_sold = False
                 sold_in_bear = False
@@ -254,26 +275,43 @@ class Backtester:
                         (0.45, 0.30, "藤本茂阶梯减仓：上涨45%卖出30%"),
                         (0.35, 0.20, "藤本茂第二档减仓：上涨35%卖出20%"),
                     )
-                    max_tier_done = max(ladder_sold_steps) if ladder_sold_steps else 0.0
-                    # 加仓后不得低于最近加仓价卖出
+                    # 仅数值档参与 max（信号减仓标记 0.25 也计入，避免重复）
+                    _num_steps = [x for x in ladder_sold_steps if isinstance(x, (int, float))]
+                    max_tier_done = max(_num_steps) if _num_steps else 0.0
                     below_last_add = (
                         last_add_price > 0 and close < last_add_price * 0.998
                     )
+                    # 九转/三层卖侧：相当于浮盈判定上浮约 8%，可提前一档阶梯
+                    eff_pnl = pnl_from_cost + (0.08 if signal_sell_confirm else 0.0)
                     if below_last_add:
                         do_sell = False
                     else:
                         for thr, pct, reason in _sell_ladder:
                             if thr <= max_tier_done + 1e-9:
-                                continue  # 已走过的档及更低档一律跳过
-                            if pnl_from_cost >= thr:
+                                continue
+                            if eff_pnl >= thr:
                                 do_sell = True
                                 sell_pct = pct
+                                extra = ""
+                                if signal_sell_confirm and pnl_from_cost < thr:
+                                    extra = "·九转/三层卖侧提前确认"
                                 trade_reason = (
-                                    f"{reason}（成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
+                                    f"{reason}{extra}（成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
                                 )
                                 ladder_sold_steps.add(thr)
                                 break
-                        # 主档齐且现价不低于最近加仓价：余仓清仓
+                        # 有浮盈 + 九转/三层卖侧，但未到任何阶梯：小幅减仓一次
+                        if (
+                            not do_sell and signal_sell_confirm
+                            and pnl_from_cost >= 0.18 and 0.25 not in ladder_sold_steps
+                        ):
+                            do_sell = True
+                            sell_pct = 0.15
+                            tag = "九转卖点" if nt_sell else "三层/策略卖侧"
+                            trade_reason = (
+                                f"{tag}确认减仓15%（成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
+                            )
+                            ladder_sold_steps.add(0.25)
                         main_done = all(x in ladder_sold_steps for x in (0.35, 0.45, 0.60))
                         if (
                             main_done and 0.999 not in ladder_sold_steps
@@ -390,14 +428,40 @@ class Backtester:
                         and room > 0.02 and below_last_sell
                     )
 
+                    # 九转/三层买侧加仓：需回调或低于成本附近，且低于最近卖价
+                    layer_buy_add = (
+                        (nt_buy or (time_ok and high_weight_buy) or all_pass)
+                        and below_last_sell
+                        and not near_high
+                        and (pnl_from_cost <= -0.08 or pullback_from_high)
+                    )
                     if allow_add and room > 0.02:
                         if second_tier_add:
                             do_buy = True
                             buy_pct = min(0.25, room)
-                            trade_reason = f"藤本茂第二档加仓：下跌25%增持（成本{cost_basis:.2f}）"
+                            tag = "·叠加九转买点" if nt_buy else ""
+                            trade_reason = (
+                                f"藤本茂第二档加仓：下跌25%增持{tag}（成本{cost_basis:.2f}）"
+                            )
+                        elif layer_buy_add:
+                            do_buy = True
+                            buy_pct = min(0.12, room)
+                            parts = []
+                            if nt_buy:
+                                parts.append("九转买点")
+                            if time_ok:
+                                parts.append("时机层")
+                            if all_pass:
+                                parts.append("三层一致")
+                            elif high_weight_buy:
+                                parts.append("高权重因子")
+                            trade_reason = (
+                                f"{'+'.join(parts) or '买侧信号'}加仓"
+                                f"（成本{cost_basis:.2f}，现价相对成本{pnl_from_cost*100:.0f}%）"
+                            )
                         elif readd_ok:
                             do_buy = True
-                            buy_pct = min(0.15, room)  # 回撤加回略保守
+                            buy_pct = min(0.15, room)
                             if revisit_35:
                                 trade_reason = (
                                     f"高位减仓后回落至+35%区加回（成本{cost_basis:.2f}，"
