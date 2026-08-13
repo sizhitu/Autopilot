@@ -843,12 +843,21 @@ class DataFetcher:
             pd.DataFrame with columns: date, open, high, low, close, volume
         """
         symbol = symbol.strip()
+        days = int(days or 300)
         key = (symbol, days)
         market = "cn" if self._is_cn_stock(symbol) and not self._is_us_index(symbol) else "us"
+        # 回测/均线至少需要足够根数；过短缓存（如15根）一律作废
+        min_ok = max(90, min(days, int(days * 0.6)))
+
+        def _enough(frame) -> bool:
+            try:
+                return frame is not None and len(frame) >= min_ok
+            except Exception:
+                return False
+
         cached = _kline_cache_get(key)
         if cached is not None:
-            # 缓存若已明显落后，丢弃并重拉，避免看板长期显示「上周价」
-            if not _bar_is_stale(_df_last_date(cached), market=market):
+            if _enough(cached) and not _bar_is_stale(_df_last_date(cached), market=market):
                 return cached.copy()
             try:
                 invalidate_kline_cache(symbol)
@@ -860,14 +869,26 @@ class DataFetcher:
         else:
             df = self.fetch_cn_stock(symbol, days)
 
-        # 仍旧时缩短缓存时间：写入后立刻标旧 ts 一半 TTL，促使下次再试
-        _kline_cache_set(key, df)
-        if _bar_is_stale(_df_last_date(df), market=market):
+        # 过短结果：再试一次更大窗口（常见于源站截断/临时失败）
+        if not _enough(df):
             try:
-                # 缩短为 30s，避免整页一直钉死旧数据
-                _KLINE_CACHE_TS[key] = time.time() - max(0, _KLINE_TTL - 30)
+                if self._is_us_index(symbol) or not self._is_cn_stock(symbol):
+                    df2 = self.fetch_us_stock(symbol, max(days, 400))
+                else:
+                    df2 = self.fetch_cn_stock(symbol, max(days, 400))
+                if _enough(df2):
+                    df = df2
             except Exception:
                 pass
+
+        # 仅缓存足够长的序列，避免 15 根污染回测/分析
+        if _enough(df):
+            _kline_cache_set(key, df)
+            if _bar_is_stale(_df_last_date(df), market=market):
+                try:
+                    _KLINE_CACHE_TS[key] = time.time() - max(0, _KLINE_TTL - 30)
+                except Exception:
+                    pass
         return df
 
     def search(self, keyword: str) -> list:

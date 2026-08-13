@@ -1286,7 +1286,21 @@ async def run_backtest(req: BacktestRequest, request: Request = None,
     _rate_check(authorization, request, "backtest", 10, 60)
     try:
         if req.symbol:
-            df = fetcher.fetch(req.symbol, req.days)
+            need = int(req.warmup or 60) + 30
+            days = max(int(req.days or 300), need + 30, 200)
+            try:
+                from data_fetcher import invalidate_kline_cache
+                invalidate_kline_cache(req.symbol)
+            except Exception:
+                pass
+            df = fetcher.fetch(req.symbol, days)
+            # 仍过短则再清缓存拉一次
+            if df is None or len(df) < need:
+                try:
+                    invalidate_kline_cache(req.symbol)
+                except Exception:
+                    pass
+                df = fetcher.fetch(req.symbol, max(days, 400))
             # 回测同样落库每日数据
             try:
                 daily_store.store_daily_bars(req.symbol, df, source="backtest")
@@ -1295,8 +1309,11 @@ async def run_backtest(req: BacktestRequest, request: Request = None,
         else:
             df = generate_sample_data(req.days)
 
-        if len(df) < req.warmup + 30:
-            raise ValueError(f"数据不足: 需要{req.warmup+30}根，实际{len(df)}根")
+        if df is None or len(df) < req.warmup + 30:
+            raise ValueError(
+                f"数据不足: 需要{req.warmup+30}根，实际{0 if df is None else len(df)}根。"
+                f"可能是行情源临时截断或缓存过短，请稍后重试或更换代码。"
+            )
 
         _mp = float(req.max_position or 0.7)
         if _mp > 1.0:
