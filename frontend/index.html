@@ -3057,43 +3057,59 @@ function _barDateKey(row) {
   const d = String(row.bar_date || '').trim();
   return d.length >= 10 ? d.slice(0, 10) : d;
 }
-function _preferFresherRow(newer, older) {
-  // 占位/无效 → 用另一份；都可用则取 bar_date 更新的；同日偏好非 bar_stale
-  if (!newer) return older;
-  if (!older) return newer;
-  const nBad = !!(newer.pending || newer.price === '-' || newer.signal === '计算中');
-  const oBad = !!(older.pending || older.price === '-' || older.signal === '计算中');
-  if (nBad && !oBad) return { ...older, pending: false };
-  if (oBad && !nBad) return newer;
-  const nd = _barDateKey(newer), od = _barDateKey(older);
-  if (od && nd && od > nd) return older;
-  if (nd && od && nd > od) return newer;
-  if (od && !nd) return older;
-  if (nd && !od) return newer;
-  if (newer.bar_stale && !older.bar_stale) return older;
-  if (older.bar_stale && !newer.bar_stale) return newer;
-  return newer;
+// 会话级「历史最新」：同一代码 bar_date 只升不降（跨多次刷新）
+const _bestWatchByCode = Object.create(null);
+function _preferFresherRow(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const aBad = !!(a.pending || a.price === '-' || a.signal === '计算中');
+  const bBad = !!(b.pending || b.price === '-' || b.signal === '计算中');
+  if (aBad && !bBad) return Object.assign({}, b, { pending: false });
+  if (bBad && !aBad) return a;
+  const da = _barDateKey(a), db = _barDateKey(b);
+  if (db && da && db > da) return b;
+  if (da && db && da > db) return a;
+  if (db && !da) return b;
+  if (da && !db) return a;
+  if (a.bar_stale && !b.bar_stale) return b;
+  if (b.bar_stale && !a.bar_stale) return a;
+  return a;
+}
+function _lockFresherRow(row) {
+  if (!row || !row.code) return row;
+  const code = String(row.code).toUpperCase();
+  const prev = _bestWatchByCode[code];
+  const chosen = _preferFresherRow(row, prev || null);
+  // 仅当有可用价格时锁定
+  if (chosen && !chosen.pending && chosen.price !== '-' && chosen.signal !== '计算中') {
+    _bestWatchByCode[code] = Object.assign({}, chosen);
+  }
+  return chosen;
 }
 function mergeWatchRows(incoming, previous) {
-  // 按代码合并；禁止用更旧 bar_date 覆盖页面上已展示的更新行情
-  if (!previous || !previous.length) return incoming || [];
-  if (!incoming || !incoming.length) return previous;
+  if (!previous || !previous.length) {
+    return (incoming || []).map(function (s) { return _lockFresherRow(s); });
+  }
+  if (!incoming || !incoming.length) {
+    return previous.map(function (s) { return _lockFresherRow(s); });
+  }
   const prevMap = {};
-  previous.forEach(s => { if (s && s.code) prevMap[String(s.code).toUpperCase()] = s; });
+  previous.forEach(function (s) {
+    if (s && s.code) prevMap[String(s.code).toUpperCase()] = s;
+  });
   const seen = {};
-  const out = (incoming || []).map(s => {
+  const out = (incoming || []).map(function (s) {
     if (!s) return s;
     const code = String(s.code || '').toUpperCase();
     seen[code] = true;
     const old = prevMap[code];
-    if (!old) return s;
-    return _preferFresherRow(s, old);
+    const best = _lockFresherRow(_preferFresherRow(s, old || null));
+    return best;
   });
-  // 保留上一轮有、本轮未返回的代码
-  previous.forEach(s => {
+  previous.forEach(function (s) {
     if (!s || !s.code) return;
     const code = String(s.code).toUpperCase();
-    if (!seen[code]) out.push(s);
+    if (!seen[code]) out.push(_lockFresherRow(s));
   });
   return out;
 }
@@ -3248,8 +3264,8 @@ async function _loadWatchlistBody(forceRefresh) {
           renderWatchlist(stocks);
           _lastWatchSig = sig;
           _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
-          // 若已有完整可用行，记下作为稳定底图
-          if (usable.length >= Math.max(total, 1) * 0.8) {
+          // 始终用合并后的结果更新底图（禁止计算中途用旧日期覆盖）
+          if (usable.length > 0) {
             _lastWatchRows = stocks.slice();
           }
         }

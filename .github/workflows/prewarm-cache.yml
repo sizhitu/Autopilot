@@ -1,11 +1,12 @@
 name: Prewarm quote cache after market close
 
-# A股收盘 15:00 CST ≈ 07:00 UTC → +1h = 08:00 UTC
-# 美股收盘 16:00 ET ≈ 20:00–21:00 UTC → +1h ≈ 22:00 UTC（与夏令时略有偏差，可接受）
+# 盘后每 2 小时拉一次，直到接口回报 stale≈0 或达到轮次上限
+# A股：UTC 08/10/12/14（约 CST 16–22 点）
+# 美股：UTC 22/00/02/04（约 ET 收盘后）
 on:
   schedule:
-    - cron: "0 8 * * 1-5"   # 工作日 08:00 UTC → A股侧预热
-    - cron: "0 22 * * 1-5"  # 工作日 22:00 UTC → 美股侧预热
+    - cron: "0 8,10,12,14 * * 1-5"
+    - cron: "0 22,0,2,4 * * 1-5"
   workflow_dispatch:
     inputs:
       market:
@@ -25,9 +26,9 @@ on:
 jobs:
   prewarm:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - name: Trigger prewarm API
+      - name: Trigger prewarm until fresh
         env:
           API_BASE: ${{ secrets.DIGEST_API_BASE }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -40,37 +41,50 @@ jobs:
             exit 1
           fi
           BASE="${API_BASE%/}"
-          # schedule 无 inputs：按 UTC 小时选择市场
           HOUR=$(date -u +%H)
           if [ -n "${MARKET}" ]; then
             MKT="${MARKET}"
-          elif [ "${HOUR}" = "08" ]; then
+          elif echo "08 10 12 14" | grep -qw "${HOUR}"; then
             MKT="cn"
-          elif [ "${HOUR}" = "22" ]; then
+          elif echo "22 00 02 04" | grep -qw "${HOUR}"; then
             MKT="us"
           else
             MKT="all"
           fi
           URL="${BASE}/api/cron/prewarm-cache?market=${MKT}&limit=${LIMIT}"
           echo "Calling ${URL}"
-          ok=0
-          for i in 1 2 3 4 5; do
-            code=$(curl -sS -o /tmp/prewarm.json -w "%{http_code}" \
-              -X POST \
-              -H "X-Cron-Secret: ${CRON_SECRET}" \
-              -H "Content-Type: application/json" \
-              --max-time 300 \
-              "${URL}" || true)
-            echo "Attempt $i → HTTP $code"
-            cat /tmp/prewarm.json || true
-            echo
-            if [ "$code" = "200" ]; then
-              ok=1
-              break
+          # 同一 job 内最多 3 轮，间隔 90s，直到 stale=0
+          for round in 1 2 3; do
+            ok=0
+            for i in 1 2 3; do
+              code=$(curl -sS -o /tmp/prewarm.json -w "%{http_code}" \
+                -X POST \
+                -H "X-Cron-Secret: ${CRON_SECRET}" \
+                -H "Content-Type: application/json" \
+                --max-time 300 \
+                "${URL}" || true)
+              echo "Round $round attempt $i → HTTP $code"
+              cat /tmp/prewarm.json || true
+              echo
+              if [ "$code" = "200" ]; then
+                ok=1
+                break
+              fi
+              sleep 15
+            done
+            if [ "$ok" != "1" ]; then
+              echo "Prewarm HTTP failed"
+              exit 1
             fi
-            sleep 20
+            STALE=$(python3 -c "import json;d=json.load(open('/tmp/prewarm.json'));print(int(d.get('stale') or 0))" 2>/dev/null || echo 99)
+            echo "stale_count=$STALE"
+            if [ "$STALE" = "0" ]; then
+              echo "All symbols fresh"
+              exit 0
+            fi
+            if [ "$round" -lt 3 ]; then
+              echo "Still stale, sleep 90s and retry..."
+              sleep 90
+            fi
           done
-          if [ "$ok" != "1" ]; then
-            echo "Prewarm failed"
-            exit 1
-          fi
+          echo "Finished with remaining stale (will retry next 2h schedule)"

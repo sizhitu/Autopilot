@@ -879,6 +879,18 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
                 _CACHES[key] = entry
 
     partial = _assemble(done_map)
+    # 再与 base 逐行取更新，双保险
+    try:
+        fixed = []
+        for s in partial:
+            if not s or not s.get("code"):
+                fixed.append(s)
+                continue
+            cu = str(s.get("code")).upper()
+            fixed.append(_row_fresher(s, base.get(cu)) if cu in base else s)
+        partial = fixed
+    except Exception:
+        pass
     summary = {'即将上涨关注': 0, '上涨见顶关注': 0, '下跌观望': 0, 'error': 0}
     for s in partial:
         if s.get('error'):
@@ -1064,7 +1076,36 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         prev_ts = out.get('updated_at') or out.get('prev_updated_at') or ''
         out['prev_updated_at'] = prev_ts
         out['updated_at'] = prev_ts  # 刷新完成前不改展示时间
-        need_refresh = force or out['stale'] or (
+        # force 时若全部行 bar_date 已是目标交易日且非 stale，跳过重算（避免拉回 T-1）
+        force_needed = bool(force)
+        if force_needed:
+            try:
+                from data_fetcher import _expected_session_date
+                all_fresh = True
+                for s in (out.get('stocks') or []):
+                    if not s or s.get('pending'):
+                        all_fresh = False
+                        break
+                    bd = str(s.get('bar_date') or '')[:10]
+                    if not bd or s.get('bar_stale'):
+                        all_fresh = False
+                        break
+                    mkt = 'cn' if str(s.get('code') or '').isdigit() else 'us'
+                    exp = _expected_session_date(mkt)
+                    exp_s = exp.strftime('%Y-%m-%d') if exp else ''
+                    if exp_s and bd < exp_s:
+                        # 周五 vs 周一特殊：bar 为周五且今天周一/二可接受
+                        all_fresh = False
+                        break
+                if all_fresh and (out.get('stocks') or []):
+                    force_needed = False
+                    out['computing'] = False
+                    out['cache_hit'] = True
+                    out['skipped_force'] = True
+                    return out
+            except Exception:
+                pass
+        need_refresh = force_needed or out['stale'] or (
             {str(s.get('code')).upper() for s in out['stocks'] if s and s.get('pending')}
         )
         if need_refresh:
