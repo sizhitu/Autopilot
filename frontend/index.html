@@ -3255,9 +3255,11 @@ async function _loadWatchlistBody(forceRefresh) {
         const res = await api('/api/watchlist/free-preview' + (forceRefresh ? '?refresh=1' : ''));
         const json = await res.json();
         let stocks = (json && json.stocks) ? json.stocks : [];
-        if (!stocks.length) stocks = getDemoWatchlistRows(); // 极端失败时兜底
+        if (!stocks.length) stocks = getDemoWatchlistRows();
         watchNotes = {};
-        _lastWatchRows = stocks;
+        // 与登录看板一致：merge + 会话锁，禁止旧日期覆盖
+        stocks = mergeWatchRows(stocks, _lastWatchRows);
+        _lastWatchRows = stocks.slice();
         _lastWatchSig = _watchRowsSig(stocks);
         setDemoBanner(true);
         renderWatchlist(stocks);
@@ -3267,6 +3269,17 @@ async function _loadWatchlistBody(forceRefresh) {
         renderWatchlistSummary(sum);
         setWatchUpdatedLabel({ computing: false, updated_at: (json && json.updated_at) || '免费体验·真实行情', demo: true });
         loading.classList.add('hidden');
+        // 二次校验最新交易日
+        try {
+          verifyWatchlistFreshness(stocks).then(function (vrows) {
+            if (!vrows || !vrows.length) return;
+            const vmerged = mergeWatchRows(vrows, _lastWatchRows);
+            _lastWatchRows = vmerged.slice();
+            _lastWatchSig = '';
+            try { renderWatchlist(vmerged); } catch (e) {}
+            try { renderWatchlistSummary(buildWatchlistSummaryFromStocks(vmerged)); } catch (e) {}
+          });
+        } catch (e) {}
         return;
       } catch (e) {
         const stocks = getDemoWatchlistRows();

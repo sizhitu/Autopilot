@@ -1120,16 +1120,18 @@ async def get_daily(symbol: str, limit: int = Query(0, description="0=全部，>
 
 @app.get("/api/watchlist/free-preview")
 async def watchlist_free_preview(request: Request, refresh: bool = False):
-    """免费用户固定两只真实行情（服务端缓存），避免静态假数据。"""
+    """免费/未登录固定两只真实行情；与登录看板同一套日期新鲜度与防回退逻辑。"""
     _rate_check(None, request, "free_preview", 30, 60)
     import time as _time
-    from watchlist import _status_dict_cached
+    from watchlist import (
+        _status_dict_cached, _row_is_date_fresh, _row_fresher, _bar_date_str,
+        verify_and_refresh_symbols,
+    )
 
     items = [
         ("AAPL", "苹果"),
         ("TSLA", "特斯拉"),
     ]
-    # 进程内缓存 6 小时；refresh=1 强制重算
     global _FREE_PREVIEW_CACHE
     try:
         _FREE_PREVIEW_CACHE
@@ -1137,63 +1139,94 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
         _FREE_PREVIEW_CACHE = {"ts": 0, "data": None}
 
     now = _time.time()
+    # 短缓存命中：若两只均已最新则直接返回；否则当作未命中重算
     if (not refresh) and _FREE_PREVIEW_CACHE.get("data") and (now - float(_FREE_PREVIEW_CACHE.get("ts") or 0) < 6 * 3600):
         payload = dict(_FREE_PREVIEW_CACHE["data"])
-        payload["cached"] = True
-        return JSONResponse(content=_to_jsonable(payload),
-                            headers={"Cache-Control": "public, max-age=300"})
+        stocks0 = payload.get("stocks") or []
+        all_fresh = bool(stocks0) and all(
+            isinstance(s, dict) and _row_is_date_fresh(s, s.get("code") or "")
+            for s in stocks0
+        )
+        if all_fresh:
+            payload["cached"] = True
+            payload["data_source"] = "free_preview_cache"
+            return JSONResponse(content=_to_jsonable(payload),
+                                headers={"Cache-Control": "no-store, max-age=0"})
+        # 缓存里有旧日期 → 继续往下强制刷新
 
-    if refresh:
-        try:
-            from data_fetcher import invalidate_kline_cache
-            from watchlist import _STATUS_CACHE
-            for code, _name in items:
-                cu = str(code).strip().upper()
-                _STATUS_CACHE.pop(cu, None)
-                try:
-                    invalidate_kline_cache(code)
-                    invalidate_kline_cache(cu)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+    # 逐只：未最新则 force_live；与旧缓存行比日期防回退
+    prev_by = {}
+    try:
+        for s in ((_FREE_PREVIEW_CACHE.get("data") or {}).get("stocks") or []):
+            if isinstance(s, dict) and s.get("code"):
+                prev_by[str(s["code"]).upper()] = dict(s)
+    except Exception:
+        prev_by = {}
 
     stocks = []
     for code, name in items:
         try:
-            row = _status_dict_cached(code, name, 160)
+            need_live = refresh or not _row_is_date_fresh(prev_by.get(str(code).upper()) or {}, code)
+            row = _status_dict_cached(code, name, 300, force_live=bool(need_live))
             if isinstance(row, dict):
                 row = dict(row)
+                prev = prev_by.get(str(code).upper())
+                if prev:
+                    row = _row_fresher(row, prev)
                 row["pending"] = False
                 row["demo"] = False
                 row["free_fixed"] = True
                 stocks.append(row)
         except Exception as e:
-            stocks.append({
-                "code": code, "name": name, "market": "美股" if not str(code).isdigit() else "A股",
-                "price": "-", "error": str(e)[:40], "pending": False, "free_fixed": True,
-            })
-    summary = {"即将上涨关注": 0, "上涨见顶关注": 0, "下跌观望": 0, "error": 0}
-    for s in stocks:
-        if not isinstance(s, dict):
-            continue
-        if s.get("error"):
-            summary["error"] += 1
-            continue
-        sig = (s.get("signal") or "").strip() or "下跌观望"
-        if sig not in summary:
-            # 兼容其它标签，归入观望
-            if "上涨" in sig and ("见顶" in sig or "卖" in sig):
-                summary["上涨见顶关注"] += 1
-            elif "上涨" in sig or "买入" in sig or "抄底" in sig:
+            prev = prev_by.get(str(code).upper())
+            if prev and prev.get("price") not in (None, "", "-", "…"):
+                p = dict(prev)
+                p["free_fixed"] = True
+                stocks.append(p)
+            else:
+                stocks.append({
+                    "code": code, "name": name, "market": "美股",
+                    "price": "-", "error": str(e)[:40], "pending": False, "free_fixed": True,
+                })
+
+    # 二次校验：仍旧则再实拉
+    try:
+        v = verify_and_refresh_symbols([(c, n) for c, n in items])
+        by = {str(s.get("code")).upper(): s for s in (v.get("stocks") or []) if s and s.get("code")}
+        fixed = []
+        for s in stocks:
+            cu = str((s or {}).get("code") or "").upper()
+            n = by.get(cu)
+            if n:
+                fixed.append(dict(_row_fresher(n, s)))
+            else:
+                fixed.append(s)
+        stocks = fixed
+    except Exception:
+        pass
+
+    def _sum_stocks(stocks_list):
+        summary = {"即将上涨关注": 0, "上涨见顶关注": 0, "下跌观望": 0, "error": 0}
+        for s in stocks_list:
+            if not isinstance(s, dict):
+                continue
+            if s.get("error"):
+                summary["error"] += 1
+                summary["下跌观望"] += 1
+                continue
+            sig = (s.get("signal") or "").strip()
+            act = (s.get("action") or "").strip()
+            if sig == "即将上涨关注" or act in ("关注买入", "阶梯抄底关注"):
                 summary["即将上涨关注"] += 1
+            elif sig == "上涨见顶关注" or act in ("关注卖出", "阶梯止盈关注"):
+                summary["上涨见顶关注"] += 1
             else:
                 summary["下跌观望"] += 1
-        else:
-            summary[sig] += 1
-    summary["count"] = len(stocks)
-    summary["free_preview"] = True
+        summary["count"] = len(stocks_list)
+        summary["free_preview"] = True
+        return summary
 
+    # 仅当整体不比旧缓存更旧时才写入进程缓存
     data = {
         "success": True,
         "stocks": stocks,
@@ -1203,11 +1236,25 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
         "free_preview": True,
         "updated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
         "notes": {},
-        "summary": summary,
+        "summary": _sum_stocks(stocks),
+        "cached": False,
     }
-    _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
+    try:
+        old_stocks = ((_FREE_PREVIEW_CACHE.get("data") or {}).get("stocks") or [])
+        # 逐行防回退后再存
+        merged_store = []
+        old_map = {str(s.get("code")).upper(): s for s in old_stocks if isinstance(s, dict)}
+        for s in stocks:
+            cu = str((s or {}).get("code") or "").upper()
+            merged_store.append(_row_fresher(s, old_map.get(cu)) if cu in old_map else s)
+        data["stocks"] = merged_store
+        data["summary"] = _sum_stocks(merged_store)
+        _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
+    except Exception:
+        _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
+
     return JSONResponse(content=_to_jsonable(data),
-                        headers={"Cache-Control": "public, max-age=300"})
+                        headers={"Cache-Control": "no-store, max-age=0"})
 
 
 
