@@ -3216,23 +3216,26 @@ async function _loadWatchlistBody(forceRefresh) {
         body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">正在准备自选列表…</td></tr>`;
       }
       clearTimeout(_wlPollTimer);
-      // 已展示接近完整数据时放慢轮询；次数仍有上限
-      const nearlyDone = total > 0 && usable.length >= total;
+      const pr = json.progress || {};
+      const progDone = (pr.done != null && pr.total) ? (pr.done >= pr.total) : false;
+      const nearlyDone = (total > 0 && usable.length >= total) || progDone;
       if (nearlyDone) {
-        // 再确认一次即可，避免连环闪
         if (_wlPollCount < 2) {
           _wlPollCount += 1;
-          _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 3000);
+          _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 2000);
         } else {
           _wlPollCount = 0;
           _watchWasComputing = false;
+          setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt });
         }
       } else if (_wlPollCount < _WL_MAX_POLL) {
         _wlPollCount += 1;
         _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 2500);
       } else {
+        // 熔断：停止「刷新中」，避免最后不足5只一直转
         _wlPollCount = 0;
         _watchWasComputing = false;
+        setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt || '' });
       }
       return;
     }
@@ -3735,7 +3738,11 @@ async function runBacktest() {
     drawBacktest(json.result);
     document.getElementById('chartMeta').textContent = `回测完成: ${json.symbol} | ${json.result.config.trading_days}个交易日`;
   } catch(e) {
-    document.getElementById('chartMeta').textContent = '回测错误: ' + e.message;
+    var msg = (e && e.message) ? String(e.message) : String(e);
+    if (/Failed to fetch|NetworkError|Load failed|network/i.test(msg)) {
+      msg = '网络失败或请求超时（回测较耗时）。请确认已登录 Pro、网络正常后重试；若刚部署请稍等服务就绪。';
+    }
+    document.getElementById('chartMeta').textContent = '回测错误: ' + msg;
   }
 }
 

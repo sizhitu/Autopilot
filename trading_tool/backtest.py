@@ -142,7 +142,9 @@ class Backtester:
         last_trend = None
 
         for i in range(self.warmup, n):
-            current_df = df.iloc[:i+1]
+            # 仅用最近窗口做策略分析，显著降低回测耗时，避免网关 Failed to fetch 超时
+            _w0 = max(0, i + 1 - max(self.warmup + 40, 180))
+            current_df = df.iloc[_w0:i+1].reset_index(drop=True)
             close = df['close'].iloc[i]
             date_str = df['date'].iloc[i] if 'date' in df.columns else str(i)
             if hasattr(date_str, 'strftime'):

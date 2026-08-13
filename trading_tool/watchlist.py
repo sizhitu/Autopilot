@@ -848,19 +848,35 @@ def _background_refresh(key, items, user_id, bust_status_cache: bool = False):
         _compute_watchlist(items=items, user_id=user_id, key=key,
                            bust_status_cache=bust_status_cache)
     except Exception:
-        # 兜底：确保刷新标记被清除，避免前端一直轮询却永远算不完
+        pass
+    finally:
+        # 无论成功失败：必须结束 refreshing / computing，避免「最后一只」一直刷新中
         entry = _CACHES.get(key)
-        if entry:
-            entry['refreshing'] = False
-            if entry['data'] is None:
-                entry['data'] = {'success': True, 'computing': False, 'updated_at': '',
-                                 'count': 0, 'total': len(items) if items else 0,
-                                 'summary': {}, 'stocks': []}
+        if not entry:
+            _CACHES[key] = {
+                'data': {
+                    'success': True, 'computing': False,
+                    'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'count': 0, 'total': len(items) if items else 0,
+                    'summary': {}, 'stocks': [],
+                    'progress': {'done': len(items) if items else 0, 'total': len(items) if items else 0},
+                },
+                'ts': time.time(), 'refreshing': False,
+            }
         else:
-            _CACHES[key] = {'data': {'success': True, 'computing': False, 'updated_at': '',
-                                     'count': 0, 'total': len(items) if items else 0,
-                                     'summary': {}, 'stocks': []},
-                            'ts': 0, 'refreshing': False}
+            entry['refreshing'] = False
+            data = entry.get('data')
+            if not isinstance(data, dict):
+                data = {}
+                entry['data'] = data
+            data['computing'] = False
+            data.setdefault('total', len(items) if items else 0)
+            if not data.get('updated_at'):
+                data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # 进度标满，前端可停轮询
+            tot = int(data.get('total') or (len(items) if items else 0) or 0)
+            data['progress'] = {'done': tot, 'total': tot}
+            entry['ts'] = time.time()
 
 
 def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = False,
@@ -948,15 +964,20 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         if need_refresh:
             with _refresh_lock:
                 c2 = _CACHES.get(key)
-                if c2 and not c2.get('refreshing'):
+                # force：即使标记在刷新中也允许重开（避免卡死在「最后1只」）
+                stuck = bool(c2 and c2.get('refreshing') and force)
+                if c2 and (not c2.get('refreshing') or stuck):
                     c2['refreshing'] = True
-                    # 启动刷新时不要清空 updated_at
                     if isinstance(c2.get('data'), dict):
                         c2['data']['computing'] = True
                         c2['data']['prev_updated_at'] = prev_ts
                         c2['data']['updated_at'] = prev_ts
+                        c2['data']['progress'] = {
+                            'done': 0,
+                            'total': len(items),
+                        }
                     threading.Thread(
-                        target=_background_refresh, args=(key, items, user_id, force), daemon=True
+                        target=_background_refresh, args=(key, items, user_id, bool(force)), daemon=True
                     ).start()
             out['computing'] = True
         else:
