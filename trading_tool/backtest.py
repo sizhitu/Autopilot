@@ -136,6 +136,7 @@ class Backtester:
                 amount=round(shares * float(first_price), 2),
                 reason=f"建仓价入场·持仓{ip0*100:.0f}%（待三层/九转信号后再加仓）"
             ))
+
         equity_curve = []
         drawdown_curve = []
         position_curve = []
@@ -151,7 +152,7 @@ class Backtester:
         sold_in_bear = False
         ladder_sold_steps = set()
         avg_cost = float(first_price) if first_price else 0.0  # 持仓成本
-        last_add_price = 0.0  # 上次加仓价，防止同价±5%连加
+        last_add_price = float(first_price) if (position_pct > 0.001 and first_price) else 0.0
         last_trend = None
 
         for i in range(self.warmup, n):
@@ -243,7 +244,8 @@ class Backtester:
                 if pnl_from_cost < 0.08:
                     do_sell = False
                 else:
-                    # 从高到低匹配当前应触发的最高未用档（通用，与标的无关）
+                    # 阶梯只允许「向上」：已在 45% 卖过，则不能再走 35%
+                    # 浮盈一律相对当前均价 cost_basis（加仓后已重算）
                     _sell_ladder = (
                         (1.00, 1.00, "藤本茂阶梯清仓：上涨100%清仓"),
                         (0.80, 0.50, "藤本茂阶梯减仓：上涨80%卖出50%"),
@@ -251,23 +253,38 @@ class Backtester:
                         (0.45, 0.30, "藤本茂阶梯减仓：上涨45%卖出30%"),
                         (0.35, 0.20, "藤本茂第二档减仓：上涨35%卖出20%"),
                     )
-                    for thr, pct, reason in _sell_ladder:
-                        if pnl_from_cost >= thr and thr not in ladder_sold_steps:
+                    max_tier_done = max(ladder_sold_steps) if ladder_sold_steps else 0.0
+                    # 加仓后不得低于最近加仓价卖出
+                    below_last_add = (
+                        last_add_price > 0 and close < last_add_price * 0.998
+                    )
+                    if below_last_add:
+                        do_sell = False
+                    else:
+                        for thr, pct, reason in _sell_ladder:
+                            if thr <= max_tier_done + 1e-9:
+                                continue  # 已走过的档及更低档一律跳过
+                            if pnl_from_cost >= thr:
+                                do_sell = True
+                                sell_pct = pct
+                                trade_reason = (
+                                    f"{reason}（成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
+                                )
+                                ladder_sold_steps.add(thr)
+                                break
+                        # 主档齐且现价不低于最近加仓价：余仓清仓
+                        main_done = all(x in ladder_sold_steps for x in (0.35, 0.45, 0.60))
+                        if (
+                            main_done and 0.999 not in ladder_sold_steps
+                            and pnl_from_cost >= 0.20 and not below_last_add
+                        ):
                             do_sell = True
-                            sell_pct = pct
-                            trade_reason = f"{reason}（成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
-                            ladder_sold_steps.add(thr)
-                            break
-                    # 主档 35/45/60 均已触发：当笔直接余仓清仓（不等下一根，避免挂尾仓）
-                    main_done = all(x in ladder_sold_steps for x in (0.35, 0.45, 0.60))
-                    if main_done and 0.999 not in ladder_sold_steps and pnl_from_cost >= 0.20:
-                        do_sell = True
-                        sell_pct = 1.0
-                        trade_reason = (
-                            f"藤本茂阶梯收尾清仓（主档已兑现，余仓出清；"
-                            f"成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
-                        )
-                        ladder_sold_steps.add(0.999)
+                            sell_pct = 1.0
+                            trade_reason = (
+                                f"藤本茂阶梯收尾清仓（主档已兑现，余仓出清；"
+                                f"成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
+                            )
+                            ladder_sold_steps.add(0.999)
 
                 if do_sell and sell_pct > 0:
 
