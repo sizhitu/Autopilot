@@ -258,17 +258,16 @@ class Backtester:
                             trade_reason = f"{reason}（成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
                             ladder_sold_steps.add(thr)
                             break
-                    # 主要档位（35/45/60）都已兑现且仍有余仓：收尾清仓，避免长期残留
-                    if (not do_sell) and shares > 0:
-                        main_done = all(x in ladder_sold_steps for x in (0.35, 0.45, 0.60))
-                        if main_done and pnl_from_cost >= 0.25 and 0.999 not in ladder_sold_steps:
-                            do_sell = True
-                            sell_pct = 1.0
-                            trade_reason = (
-                                f"藤本茂阶梯收尾清仓（主档已兑现，余仓出清；"
-                                f"成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
-                            )
-                            ladder_sold_steps.add(0.999)
+                    # 主档 35/45/60 均已触发：当笔直接余仓清仓（不等下一根，避免挂尾仓）
+                    main_done = all(x in ladder_sold_steps for x in (0.35, 0.45, 0.60))
+                    if main_done and 0.999 not in ladder_sold_steps and pnl_from_cost >= 0.20:
+                        do_sell = True
+                        sell_pct = 1.0
+                        trade_reason = (
+                            f"藤本茂阶梯收尾清仓（主档已兑现，余仓出清；"
+                            f"成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
+                        )
+                        ladder_sold_steps.add(0.999)
 
                 if do_sell and sell_pct > 0:
 
