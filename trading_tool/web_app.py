@@ -1210,6 +1210,41 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
                         headers={"Cache-Control": "public, max-age=300"})
 
 
+
+class VerifyFreshRequest(BaseModel):
+    symbols: list = []  # [{code,name}] 或 ["AAPL",...]
+
+
+@app.post("/api/watchlist/verify-fresh")
+async def watchlist_verify_fresh(req: VerifyFreshRequest, request: Request = None,
+                                 authorization: Optional[str] = Header(None)):
+    """刷新完成后二次校验：未达最新交易日的代码强制实拉，并返回 data_source 便于定位缓存/接口。"""
+    if not _is_free_preview_symbol(""):  # always rate-limit lightly
+        pass
+    _rate_check(authorization, request, "verify_fresh", 30, 60)
+    from watchlist import verify_and_refresh_symbols
+    items = []
+    for s in (req.symbols or []):
+        if isinstance(s, dict):
+            items.append((s.get("code") or s.get("symbol"), s.get("name") or ""))
+        else:
+            items.append((s, str(s)))
+    # 未传则用当前用户自选
+    if not items:
+        user = auth.get_optional_user(authorization)
+        if user:
+            try:
+                token = _bearer(authorization) if authorization else ""
+                for it in watchlist_store.get_all(user["id"], token or None):
+                    items.append((it.get("symbol"), it.get("name") or ""))
+            except Exception:
+                pass
+    if not items:
+        return {"success": True, "stocks": [], "details": [], "fresh_count": 0, "stale_count": 0}
+    out = verify_and_refresh_symbols(items[:80])
+    return out
+
+
 @app.get("/api/watchlist")
 async def get_watchlist(refresh: bool = False, user: Optional[dict] = Depends(_optional_user),
                         authorization: Optional[str] = Header(None)):

@@ -663,29 +663,132 @@ def _caches_put(key, entry: dict) -> None:
         _CACHES.pop(k, None)
 
 
-def _status_dict_cached(code: str, name: str, days: int = 200) -> dict:
+def _expected_bar_date_str(code: str) -> str:
+    try:
+        from data_fetcher import _expected_session_date
+        mkt = "cn" if str(code).isdigit() or str(code).upper()[:2] in ("SH", "SZ", "BJ") else "us"
+        exp = _expected_session_date(mkt)
+        return exp.strftime("%Y-%m-%d") if exp else ""
+    except Exception:
+        return ""
+
+
+def _row_is_date_fresh(row: dict, code: str = "") -> bool:
+    """相对该市场应有交易日是否够新。"""
+    if not row or not isinstance(row, dict):
+        return False
+    if row.get("bar_stale"):
+        return False
+    bd = _bar_date_str(row)
+    if not bd:
+        return False
+    exp = _expected_bar_date_str(code or row.get("code") or "")
+    if not exp:
+        return True
+    if bd >= exp:
+        return True
+    # 周五收盘后周末/周一仍可能只到周五
+    try:
+        from datetime import datetime as _dt
+        d = _dt.strptime(bd[:10], "%Y-%m-%d").date()
+        e = _dt.strptime(exp[:10], "%Y-%m-%d").date()
+        if d.weekday() == 4 and e.weekday() <= 1 and (e - d).days <= 3:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _status_dict_cached(code: str, name: str, days: int = 200, force_live: bool = False) -> dict:
     k = str(code).strip().upper()
     hit = _STATUS_CACHE.get(k)
     now = time.time()
     cached_row = None
-    if hit and (now - hit["ts"]) < _STATUS_TTL and isinstance(hit.get("data"), dict):
+    if (not force_live) and hit and (now - hit["ts"]) < _STATUS_TTL and isinstance(hit.get("data"), dict):
         cached_row = dict(hit["data"])
         if name:
             cached_row["name"] = name
         cached_row["pending"] = False
-        # 缓存仍新鲜且 bar_date 较新时直接返回，避免无意义重算变旧
-        if _bar_date_str(cached_row):
-            # 仍走一次轻量比较：仅当调用方刚 bust 后 hit 不存在
+        cached_row["data_source"] = "status_cache"
+        # 缓存日期已是最新 → 直接返回；否则继续实拉
+        if _bar_date_str(cached_row) and _row_is_date_fresh(cached_row, k):
             return cached_row
+    # 实盘拉取
+    if force_live:
+        try:
+            from data_fetcher import invalidate_kline_cache
+            invalidate_kline_cache(code)
+            invalidate_kline_cache(k)
+        except Exception:
+            pass
     st = get_stock_status(code, name, days=days)
     d = _status_to_dict(st)
     d["pending"] = False
+    d["data_source"] = "live_fetch"
     if name:
         d["name"] = name
+    # 与缓存比：取更新的，但标注最终来源
     if cached_row:
-        d = _row_fresher(d, cached_row)
+        picked = _row_fresher(d, cached_row)
+        if picked is cached_row or _bar_date_str(picked) == _bar_date_str(cached_row) and _bar_date_str(d) < _bar_date_str(cached_row):
+            picked = dict(cached_row)
+            picked["data_source"] = "status_cache_kept_fresher"
+        else:
+            picked = dict(d)
+            picked["data_source"] = "live_fetch"
+        d = picked
     _status_cache_put(k, dict(d))
     return d
+
+
+def verify_and_refresh_symbols(symbols_with_names: list) -> dict:
+    """刷新后二次校验：对未达最新交易日的代码强制实拉并返回。"""
+    import time as _time
+    fixed = []
+    still_stale = []
+    details = []
+    for item in symbols_with_names or []:
+        if isinstance(item, (list, tuple)):
+            code, name = item[0], (item[1] if len(item) > 1 else item[0])
+        elif isinstance(item, dict):
+            code, name = item.get("code") or item.get("symbol"), item.get("name") or ""
+        else:
+            code, name = item, str(item)
+        code = str(code or "").strip().upper()
+        if not code:
+            continue
+        name = name or code
+        before = None
+        hit = _STATUS_CACHE.get(code)
+        if hit and isinstance(hit.get("data"), dict):
+            before = dict(hit["data"])
+        need = not before or not _row_is_date_fresh(before, code)
+        row = _status_dict_cached(code, name, days=300, force_live=bool(need))
+        # 仍旧再强拉一次
+        if not _row_is_date_fresh(row, code):
+            row = _status_dict_cached(code, name, days=400, force_live=True)
+            _time.sleep(0.2)
+        ok = _row_is_date_fresh(row, code)
+        details.append({
+            "code": code,
+            "bar_date": _bar_date_str(row),
+            "expected": _expected_bar_date_str(code),
+            "fresh": ok,
+            "data_source": row.get("data_source"),
+            "bar_stale": bool(row.get("bar_stale")),
+        })
+        if ok:
+            fixed.append(row)
+        else:
+            still_stale.append(row)
+            fixed.append(row)
+    return {
+        "success": True,
+        "stocks": fixed,
+        "details": details,
+        "fresh_count": sum(1 for d in details if d.get("fresh")),
+        "stale_count": sum(1 for d in details if not d.get("fresh")),
+    }
 
 
 def _has_usable_stocks(data: dict) -> bool:
@@ -849,7 +952,15 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
     _batch = 5
     _done_n = 0
     with ThreadPoolExecutor(max_workers=min(5, max(2, len(items)))) as ex:
-        futs = {ex.submit(_status_dict_cached, code, name, 160): code for code, name in items}
+        def _one(code, name):
+            cu = str(code).upper()
+            prev = base.get(cu) if base else None
+            # 已最新则读缓存；否则强制实拉
+            fl = True
+            if prev and _row_is_date_fresh(prev, cu):
+                fl = False
+            return _status_dict_cached(code, name, 300, force_live=fl)
+        futs = {ex.submit(_one, code, name): code for code, name in items}
         for fut in as_completed(futs):
             code = futs[fut]
             try:

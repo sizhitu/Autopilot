@@ -3086,6 +3086,51 @@ function _lockFresherRow(row) {
   }
   return chosen;
 }
+async function verifyWatchlistFreshness(stocks) {
+  // 刷新绘制后二次校验：未到最新交易日的强制重拉并回写展示
+  try {
+    const list = (stocks || []).filter(function (s) { return s && s.code && !s.pending; });
+    if (!list.length) return stocks;
+    const payload = {
+      symbols: list.map(function (s) {
+        return { code: s.code, name: s.name || s.code };
+      })
+    };
+    const res = await api('/api/watchlist/verify-fresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (!json || !json.success || !Array.isArray(json.stocks)) return stocks;
+    // 控制台可定位：缓存 vs 实拉
+    try {
+      console.info('[watchlist-verify]', json.details || json);
+    } catch (e0) {}
+    const by = {};
+    (json.stocks || []).forEach(function (s) {
+      if (s && s.code) by[String(s.code).toUpperCase()] = s;
+    });
+    const merged = (stocks || []).map(function (s) {
+      if (!s || !s.code) return s;
+      const n = by[String(s.code).toUpperCase()];
+      if (!n) return s;
+      return _lockFresherRow(_preferFresherRow(n, s));
+    });
+    const staleN = (json.stale_count != null) ? json.stale_count : 0;
+    const freshN = (json.fresh_count != null) ? json.fresh_count : 0;
+    if (staleN > 0) {
+      try { showToast('仍有 ' + staleN + ' 只未到最新交易日（数据源延迟），已尽量更新', 'info'); } catch (e1) {}
+    } else if (freshN > 0) {
+      try { showToast('已校验：行情日期均为最新', 'ok'); } catch (e2) {}
+    }
+    return merged;
+  } catch (e) {
+    try { console.warn('[watchlist-verify] failed', e); } catch (e3) {}
+    return stocks;
+  }
+}
+
 function mergeWatchRows(incoming, previous) {
   if (!previous || !previous.length) {
     return (incoming || []).map(function (s) { return _lockFresherRow(s); });
@@ -3312,17 +3357,28 @@ async function _loadWatchlistBody(forceRefresh) {
       return;
     }
 
-    // 全部就绪：与本地已展示行按 bar_date 合并，禁止回退前一天
+    // 全部就绪：合并 → 展示 → 后台二次校验最新交易日
     setWatchUpdatedLabel(json);
-    const merged = mergeWatchRows(stocks, _lastWatchRows);
+    let merged = mergeWatchRows(stocks, _lastWatchRows);
     renderWatchlistSummary(json.summary || {});
     renderWatchlist(merged);
     _lastWatchRows = merged.slice();
     _lastWatchSkeleton = merged.map(s => ({ code: s.code, name: s.name, market: s.market }));
     if (_watchWasComputing && forceRefresh && json.updated_at) {
-      showToast('看板已更新至 ' + json.updated_at, 'ok');
+      showToast('看板已更新至 ' + json.updated_at + '，正在校验日期…', 'ok');
     }
     _watchWasComputing = false;
+    // 二次校验（不阻塞首屏；完成后若有更新再重绘）
+    try {
+      verifyWatchlistFreshness(merged).then(function (vrows) {
+        if (!vrows || !vrows.length) return;
+        const vmerged = mergeWatchRows(vrows, _lastWatchRows);
+        _lastWatchRows = vmerged.slice();
+        _lastWatchSig = '';
+        try { renderWatchlist(vmerged); } catch (e) {}
+        try { renderWatchlistSummary(buildWatchlistSummaryFromStocks(vmerged)); } catch (e) {}
+      });
+    } catch (e) {}
   } catch(e) {
     // 失败时尽量保留旧表，只改文案
     if (_lastWatchRows && _lastWatchRows.length) {
