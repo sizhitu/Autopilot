@@ -153,6 +153,7 @@ class Backtester:
         ladder_sold_steps = set()
         avg_cost = float(first_price) if first_price else 0.0  # 持仓成本
         last_add_price = float(first_price) if (position_pct > 0.001 and first_price) else 0.0
+        last_sell_price = 0.0  # 最近减仓价：加回必须明显低于此价
         last_trend = None
 
         for i in range(self.warmup, n):
@@ -300,8 +301,10 @@ class Backtester:
                             first_price = close
                             avg_cost = close
                             ladder_sold_steps = set()
+                            last_add_price = 0.0
                         action = "SELL"
                         last_trade_bar = i
+                        last_sell_price = float(close)
 
             # 3) 买/加仓：空仓可用三层建仓；已有仓默认持有，仅九转买点或成本下/深回调才加
             if action is None and cooled and (sig != SignalType.WAIT or high_weight_buy or all_pass):
@@ -369,7 +372,7 @@ class Backtester:
                     allow_add = price_gap_ok and (i - last_buy_bar) >= cooldown and not near_high
                     room = max(0.0, self.max_position - position_pct)
                     second_tier_add = pnl_from_cost <= -0.25
-                    had_ladder_sell = bool(ladder_sold_steps)
+                    had_ladder_sell = bool(ladder_sold_steps) or last_sell_price > 0
                     pullback_from_high = recent_high > 0 and close <= recent_high * 0.85
                     # 回落到成本 +35% 一带（从更高位置回来）
                     zone35 = cost_basis * 1.35 if cost_basis > 0 else 0
@@ -377,7 +380,15 @@ class Backtester:
                         zone35 > 0 and recent_high >= cost_basis * 1.50
                         and close <= zone35 * 1.08 and close >= zone35 * 0.90
                     )
-                    readd_ok = had_ladder_sell and (pullback_from_high or revisit_35) and room > 0.02
+                    # 关键：加回价必须低于最近减仓价（禁止 426 卖完 429 再加）
+                    below_last_sell = (
+                        last_sell_price <= 0
+                        or close <= last_sell_price * 0.98
+                    )
+                    readd_ok = (
+                        had_ladder_sell and (pullback_from_high or revisit_35)
+                        and room > 0.02 and below_last_sell
+                    )
 
                     if allow_add and room > 0.02:
                         if second_tier_add:
