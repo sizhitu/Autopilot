@@ -116,22 +116,35 @@ class Backtester:
         if ip0 > 1.0:
             ip0 = ip0 / 100.0
         ip0 = max(0.0, min(ip0, self.max_position))
+        trades: List[Trade] = []
+        seed_bar = self.warmup
         if ip0 > 0.001 and first_price > 0:
             inv0 = self.initial_capital * ip0
             shares = inv0 / first_price
             cash = self.initial_capital - inv0
             position_pct = ip0
-
-        trades: List[Trade] = []
+            avg_cost_seed = float(first_price)
+            # 写入初始 BUY，便于交易记录完整（价格=建仓价，金额=回测资金×持仓%）
+            d0 = df['date'].iloc[seed_bar] if 'date' in df.columns else str(seed_bar)
+            if hasattr(d0, 'strftime'):
+                d0 = d0.strftime('%Y-%m-%d')
+            trades.append(Trade(
+                date=str(d0),
+                action="BUY",
+                price=round(float(first_price), 2),
+                shares=round(shares, 2),
+                amount=round(shares * float(first_price), 2),
+                reason=f"建仓价入场·持仓{ip0*100:.0f}%（待三层/九转信号后再加仓）"
+            ))
         equity_curve = []
         drawdown_curve = []
         position_curve = []
         peak_equity = self.initial_capital
 
         # 用于计算平均持仓天数
-        buy_dates = []
-        last_trade_bar = -999
-        last_buy_bar = -999     # 最近一次开/加仓
+        buy_dates = [seed_bar] if position_pct > 0.001 else []
+        last_trade_bar = seed_bar if position_pct > 0.001 else -999
+        last_buy_bar = seed_bar if position_pct > 0.001 else -999
         cooldown = 10           # 操作冷却（减少频繁交易）
         min_hold_bars = 15      # 开/加仓后最少持有才允许兑现
         bear_trend_sold = False
@@ -168,11 +181,17 @@ class Backtester:
             layers = getattr(result, "layers_consistent", None) or {}
             all_pass = False
             try:
-                all_pass = bool(
-                    (layers.get("系统层（趋势+指标）") or layers.get("系统层") or {}).get("通过")
-                    and (layers.get("工具层（斐波那契）") or layers.get("工具层") or {}).get("通过")
-                    and (layers.get("时机层（九转序列）") or layers.get("时机层") or {}).get("通过")
-                )
+                def _layer_ok(substrs):
+                    for k, v in (layers or {}).items():
+                        if not isinstance(v, dict):
+                            continue
+                        if any(s in str(k) for s in substrs) and v.get("通过"):
+                            return True
+                    return False
+                sys_ok = _layer_ok(("系统层",))
+                tool_ok = _layer_ok(("工具层", "斐波那契"))
+                time_ok = _layer_ok(("时机层", "九转"))
+                all_pass = bool(sys_ok and tool_ok and time_ok)
             except Exception:
                 all_pass = False
             if not all_pass and "三层一致" in action_txt:
@@ -236,7 +255,7 @@ class Backtester:
                         last_trade_bar = i
 
             # 3) 买/加仓：空仓可用三层建仓；已有仓默认持有，仅九转买点或成本下/深回调才加
-            if action is None and cooled and sig != SignalType.WAIT:
+            if action is None and cooled and (sig != SignalType.WAIT or all_pass):
                 buy_pct = 0.0
                 do_buy = False
                 is_flat = position_pct < 0.01
@@ -260,13 +279,24 @@ class Backtester:
                 price_gap_ok = (last_add_price <= 0) or (abs(close - last_add_price) / last_add_price >= 0.05)
 
                 if is_flat:
-                    # 仅三层一致才建仓；震荡轻仓试探等一律观望不买
+                    # 仅三层一致（或策略买侧+三层/九转文案）才建仓
                     if all_pass:
                         do_buy = True
-                        # 仓位受 max_position 约束，默认用上限的一部分，避免「轻仓」却很大
-                        buy_pct = min(float(result.position_pct or 0) or (self.max_position * 0.5), self.max_position)
-                        buy_pct = max(min(buy_pct, self.max_position), min(0.1, self.max_position))
-                        trade_reason = "三层一致关注买入·建仓"
+                        buy_pct = float(result.position_pct or 0)
+                        if buy_pct < 0.05:
+                            buy_pct = min(self.max_position, max(0.15, self.max_position * 0.5))
+                        buy_pct = min(max(buy_pct, 0.05), self.max_position)
+                        # 原因体现三层 + 信号价时点
+                        parts = []
+                        try:
+                            for k, v in (layers or {}).items():
+                                if isinstance(v, dict) and v.get("通过"):
+                                    parts.append(str(k).split("（")[0])
+                        except Exception:
+                            parts = []
+                        layer_txt = "+".join(parts) if parts else "三层"
+                        base_reason = action_txt if ("三层" in action_txt or "九转" in action_txt) else "三层一致关注买入"
+                        trade_reason = f"{base_reason}·建仓({layer_txt}|信号价{close:.2f})"
                 else:
                     # 已有仓：仅藤本茂第二档加仓（相对成本跌约 25% 增持约 25%）
                     # 忽略 -15% 第一档；三层一致只表示可持有，不自动加仓
