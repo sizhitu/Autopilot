@@ -243,9 +243,10 @@ class Backtester:
                 if pnl_from_cost < 0.08:
                     do_sell = False
                 else:
-                    # 从高到低匹配当前应触发的最高未用档
+                    # 从高到低匹配当前应触发的最高未用档（通用，与标的无关）
                     _sell_ladder = (
                         (1.00, 1.00, "藤本茂阶梯清仓：上涨100%清仓"),
+                        (0.80, 0.50, "藤本茂阶梯减仓：上涨80%卖出50%"),
                         (0.60, 0.40, "藤本茂阶梯减仓：上涨60%卖出40%"),
                         (0.45, 0.30, "藤本茂阶梯减仓：上涨45%卖出30%"),
                         (0.35, 0.20, "藤本茂第二档减仓：上涨35%卖出20%"),
@@ -257,6 +258,17 @@ class Backtester:
                             trade_reason = f"{reason}（成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
                             ladder_sold_steps.add(thr)
                             break
+                    # 主要档位（35/45/60）都已兑现且仍有余仓：收尾清仓，避免长期残留
+                    if (not do_sell) and shares > 0:
+                        main_done = all(x in ladder_sold_steps for x in (0.35, 0.45, 0.60))
+                        if main_done and pnl_from_cost >= 0.25 and 0.999 not in ladder_sold_steps:
+                            do_sell = True
+                            sell_pct = 1.0
+                            trade_reason = (
+                                f"藤本茂阶梯收尾清仓（主档已兑现，余仓出清；"
+                                f"成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
+                            )
+                            ladder_sold_steps.add(0.999)
 
                 if do_sell and sell_pct > 0:
 
