@@ -825,15 +825,36 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
             # 观望 / 九转背离·观望 / 轻仓观察 / 持有 等一律进观望桶
             summary['下跌观望'] += 1
 
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     final = {
         'success': True, 'computing': False,
-        'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'updated_at': now_str,
         'count': len(partial), 'total': total,
         'summary': summary, 'stocks': partial,
         'symbols': [{'code': c, 'name': n} for c, n in items],
+        'progress': {'done': total, 'total': total},
+        'cache_flushed': True,
     }
+    # 刷新完成：强制把最新行写回单标的状态缓存 + 看板缓存，避免下次仍命中旧 STATUS/看板
+    try:
+        for s in partial:
+            if not s or not s.get('code'):
+                continue
+            if s.get('pending') or s.get('signal') == '计算中':
+                continue
+            cu = str(s['code']).strip().upper()
+            row = dict(s)
+            row['pending'] = False
+            _status_cache_put(cu, row)
+    except Exception:
+        pass
     if key is not None:
         _caches_put(key, {'data': final, 'ts': time.time(), 'refreshing': False})
+        # 再写一次，防止 put 过程中被并发覆盖回 computing 中态
+        try:
+            _CACHES[key] = {'data': dict(final), 'ts': time.time(), 'refreshing': False}
+        except Exception:
+            pass
     try:
         import gc
         gc.collect()
@@ -871,12 +892,23 @@ def _background_refresh(key, items, user_id, bust_status_cache: bool = False):
                 entry['data'] = data
             data['computing'] = False
             data.setdefault('total', len(items) if items else 0)
-            if not data.get('updated_at'):
-                data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            # 进度标满，前端可停轮询
+            # 若计算已写入新 updated_at 则保留；否则补时间戳
+            if not data.get('updated_at') or data.get('updated_at') == data.get('prev_updated_at'):
+                # 有可用 stocks 时用当前时间，保证「刷新完成」可见
+                stocks = data.get('stocks') or []
+                usable = any(
+                    s and not s.get('pending') and s.get('price') not in (None, '', '-', '…')
+                    for s in stocks
+                )
+                if usable:
+                    data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                elif not data.get('updated_at'):
+                    data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             tot = int(data.get('total') or (len(items) if items else 0) or 0)
             data['progress'] = {'done': tot, 'total': tot}
             entry['ts'] = time.time()
+            # 强制固化看板缓存引用
+            _CACHES[key] = entry
 
 
 def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = False,
