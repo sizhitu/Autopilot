@@ -228,26 +228,29 @@ class Backtester:
             if sig == SignalType.WAIT and not all_pass:
                 pass
 
-            # 2) 减仓：藤本茂第二档为主（相对成本 +35% 卖约 20%）；浮亏不卖；忽略时机卖侧连砍
+            # 2) 减仓：藤本茂阶梯（相对成本），每档只触发一次；浮亏不卖
+            #    +35%/-20% 第二档 → +45%/-30% → +60%/-40% → +100%清仓
             elif can_sell:
                 sell_pct = 0.0
                 do_sell = False
 
                 if pnl_from_cost < 0.08:
                     do_sell = False
-                elif pnl_from_cost >= 0.35 and 0.35 not in ladder_sold_steps:
-                    # 第二档：上涨约 35% 卖出约 20%（只触发一次）
-                    do_sell = True
-                    sell_pct = 0.20
-                    trade_reason = "藤本茂第二档减仓：上涨35%卖出20%"
-                    ladder_sold_steps.add(0.35)
-                elif pnl_from_cost >= 0.60 and 0.60 not in ladder_sold_steps:
-                    # 更深档可选：大趋势末端再减一成，避免过早清空
-                    do_sell = True
-                    sell_pct = 0.15
-                    trade_reason = "藤本茂加深兑现：上涨60%再减15%"
-                    ladder_sold_steps.add(0.60)
-                # 不再：+25%第一档、震荡时机卖侧、浮亏空头分批割
+                else:
+                    # 从高到低匹配当前应触发的最高未用档
+                    _sell_ladder = (
+                        (1.00, 1.00, "藤本茂阶梯清仓：上涨100%清仓"),
+                        (0.60, 0.40, "藤本茂阶梯减仓：上涨60%卖出40%"),
+                        (0.45, 0.30, "藤本茂阶梯减仓：上涨45%卖出30%"),
+                        (0.35, 0.20, "藤本茂第二档减仓：上涨35%卖出20%"),
+                    )
+                    for thr, pct, reason in _sell_ladder:
+                        if pnl_from_cost >= thr and thr not in ladder_sold_steps:
+                            do_sell = True
+                            sell_pct = pct
+                            trade_reason = reason
+                            ladder_sold_steps.add(thr)
+                            break
 
                 if do_sell and sell_pct > 0:
 
