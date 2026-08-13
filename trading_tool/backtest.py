@@ -344,16 +344,41 @@ class Backtester:
                         base_reason = action_txt or ("九转下跌买点建仓" if nt_entry else "高权重因子建仓")
                         trade_reason = f"{base_reason}·建仓({layer_txt}|信号价{close:.2f})"
                 else:
-                    # 已有仓：仅藤本茂第二档加仓（相对成本跌约 25% 增持约 25%）
-                    # 忽略 -15% 第一档；三层一致只表示可持有，不自动加仓
-                    allow_add = price_gap_ok and (i - last_buy_bar) >= cooldown
+                    # 已有仓加仓（通用逻辑，非单标特例）：
+                    # A) 藤本茂第二档：相对成本 -25%
+                    # B) 高位减仓后回撤加回：曾触发过阶梯卖，且较近高回撤≥15%，
+                    #    或价格从更高回落至约 +35% 成本区
+                    # 注意：满仓(100%)时 room=0 无法加，须先卖出腾出仓位/现金
+                    allow_add = price_gap_ok and (i - last_buy_bar) >= cooldown and not near_high
+                    room = max(0.0, self.max_position - position_pct)
                     second_tier_add = pnl_from_cost <= -0.25
-                    if allow_add and second_tier_add and not near_high:
-                        do_buy = True
-                        room = max(0.0, self.max_position - position_pct)
-                        buy_pct = min(0.25, room)  # 第二档增持 25%
-                        trade_reason = "藤本茂第二档加仓：下跌25%增持25%"
-                    # 否则持有，不加
+                    had_ladder_sell = bool(ladder_sold_steps)
+                    pullback_from_high = recent_high > 0 and close <= recent_high * 0.85
+                    # 回落到成本 +35% 一带（从更高位置回来）
+                    zone35 = cost_basis * 1.35 if cost_basis > 0 else 0
+                    revisit_35 = (
+                        zone35 > 0 and recent_high >= cost_basis * 1.50
+                        and close <= zone35 * 1.08 and close >= zone35 * 0.90
+                    )
+                    readd_ok = had_ladder_sell and (pullback_from_high or revisit_35) and room > 0.02
+
+                    if allow_add and room > 0.02:
+                        if second_tier_add:
+                            do_buy = True
+                            buy_pct = min(0.25, room)
+                            trade_reason = f"藤本茂第二档加仓：下跌25%增持（成本{cost_basis:.2f}）"
+                        elif readd_ok:
+                            do_buy = True
+                            buy_pct = min(0.15, room)  # 回撤加回略保守
+                            if revisit_35:
+                                trade_reason = (
+                                    f"高位减仓后回落至+35%区加回（成本{cost_basis:.2f}，"
+                                    f"现价相对成本{pnl_from_cost*100:.0f}%）"
+                                )
+                            else:
+                                trade_reason = (
+                                    f"高位减仓后回撤加回（近高回撤≥15%，成本{cost_basis:.2f}）"
+                                )
 
                 if do_buy and buy_pct > 0.01 and cash > 0:
                     room = max(0.0, self.max_position - position_pct)
