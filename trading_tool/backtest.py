@@ -180,6 +180,7 @@ class Backtester:
             action_txt = (result.action or "")[:80]
             layers = getattr(result, "layers_consistent", None) or {}
             all_pass = False
+            sys_ok = tool_ok = time_ok = False
             try:
                 def _layer_ok(substrs):
                     for k, v in (layers or {}).items():
@@ -196,6 +197,17 @@ class Backtester:
                 all_pass = False
             if not all_pass and "三层一致" in action_txt:
                 all_pass = True
+            # 宽松建仓：九转/时机层、系统+工具、策略买侧信号均可（不要求三层全过）
+            high_weight_buy = bool(
+                all_pass
+                or time_ok
+                or (sys_ok and tool_ok)
+                or (sys_ok and time_ok)
+                or (tool_ok and time_ok)
+                or (sig in (SignalType.BUY, SignalType.ADD) and any(
+                    k in action_txt for k in ("买入", "加仓", "建仓", "九转", "三层", "时机主导", "试探")
+                ))
+            )
 
             # 相对成本的盈亏（阶梯/加仓一律用均价，避免高位加仓后仍按旧低成本「上涨45%卖出」）
             cost_basis = avg_cost if (shares > 0 and avg_cost > 0) else first_price
@@ -255,7 +267,7 @@ class Backtester:
                         last_trade_bar = i
 
             # 3) 买/加仓：空仓可用三层建仓；已有仓默认持有，仅九转买点或成本下/深回调才加
-            if action is None and cooled and (sig != SignalType.WAIT or all_pass):
+            if action is None and cooled and (sig != SignalType.WAIT or high_weight_buy or all_pass):
                 buy_pct = 0.0
                 do_buy = False
                 is_flat = position_pct < 0.01
@@ -279,14 +291,26 @@ class Backtester:
                 price_gap_ok = (last_add_price <= 0) or (abs(close - last_add_price) / last_add_price >= 0.05)
 
                 if is_flat:
-                    # 仅三层一致（或策略买侧+三层/九转文案）才建仓
-                    if all_pass:
+                    # 九转买入、时机层、或三层中任意高权重组合通过即可建仓
+                    nt_entry = False
+                    try:
+                        if calc_nine_turn_display is not None:
+                            _nt0 = calc_nine_turn_display(current_df)
+                            nt_entry = bool(
+                                _nt0.get("direction") == "down"
+                                and (_nt0.get("is_complete") or _nt0.get("is_completing"))
+                            )
+                    except Exception:
+                        nt_entry = False
+                    if high_weight_buy or nt_entry:
                         do_buy = True
                         buy_pct = float(result.position_pct or 0)
                         if buy_pct < 0.05:
-                            buy_pct = min(self.max_position, max(0.15, self.max_position * 0.5))
+                            buy_pct = min(self.max_position, max(0.12, self.max_position * 0.4))
+                        # 震荡/时机主导略减仓
+                        if "时机主导" in action_txt or "轻仓" in action_txt:
+                            buy_pct = min(buy_pct, self.max_position * 0.35)
                         buy_pct = min(max(buy_pct, 0.05), self.max_position)
-                        # 原因体现三层 + 信号价时点
                         parts = []
                         try:
                             for k, v in (layers or {}).items():
@@ -294,8 +318,10 @@ class Backtester:
                                     parts.append(str(k).split("（")[0])
                         except Exception:
                             parts = []
-                        layer_txt = "+".join(parts) if parts else "三层"
-                        base_reason = action_txt if ("三层" in action_txt or "九转" in action_txt) else "三层一致关注买入"
+                        if nt_entry and "九转" not in "".join(parts):
+                            parts.append("九转买点")
+                        layer_txt = "+".join(parts) if parts else ("九转买点" if nt_entry else "策略买侧")
+                        base_reason = action_txt or ("九转下跌买点建仓" if nt_entry else "高权重因子建仓")
                         trade_reason = f"{base_reason}·建仓({layer_txt}|信号价{close:.2f})"
                 else:
                     # 已有仓：仅藤本茂第二档加仓（相对成本跌约 25% 增持约 25%）
