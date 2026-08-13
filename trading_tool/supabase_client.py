@@ -46,6 +46,38 @@ def get_jwt_secret() -> str:
     return SUPABASE_JWT_SECRET
 
 
+def _create_supabase(url: str, key: str) -> "Client":
+    """创建客户端；兼容新版 SDK，并抑制 timeout/verify 弃用告警。"""
+    import warnings
+    opts = None
+    try:
+        from supabase import ClientOptions  # type: ignore
+        # 新版优先用 ClientOptions，避免把 timeout/verify 直接塞进 PostgREST
+        try:
+            opts = ClientOptions()
+        except Exception:
+            opts = None
+    except Exception:
+        opts = None
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*timeout.*deprecated.*",
+            category=DeprecationWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*verify.*deprecated.*",
+            category=DeprecationWarning,
+        )
+        if opts is not None:
+            try:
+                return create_client(url, key, options=opts)
+            except TypeError:
+                pass
+        return create_client(url, key)
+
+
 @lru_cache(maxsize=1)
 def _service_client() -> "Client":
     """管理态客户端（单例，service_role 绕过 RLS）。"""
@@ -53,7 +85,7 @@ def _service_client() -> "Client":
         raise RuntimeError("supabase SDK 未安装")
     if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
         raise RuntimeError("缺少 SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY")
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    return _create_supabase(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 def get_service_client() -> "Client":
@@ -71,7 +103,7 @@ def get_user_client(access_token: str) -> "Client":
     if not SUPABASE_URL:
         raise RuntimeError("缺少 SUPABASE_URL")
     key = SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY
-    client = create_client(SUPABASE_URL, key)
+    client = _create_supabase(SUPABASE_URL, key)
     if access_token:
         # 让后续所有 PostgREST 请求携带用户 JWT，从而命中 RLS 策略
         try:

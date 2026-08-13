@@ -710,27 +710,62 @@ async def cron_prewarm_cache(
         if len(ordered) >= limit:
             break
 
-    ok, fail, skipped = 0, 0, 0
+    ok, fail, skipped, stale_n = 0, 0, 0, 0
     errors = []
+    stale_syms = []
     t0 = time.time()
+
+    def _mkt_of(code: str) -> str:
+        c = str(code or "").strip().upper()
+        if c.isdigit() or c[:2] in ("SH", "SZ", "BJ") or (len(c) == 6 and c.isdigit()):
+            return "cn"
+        return "us"
+
+    def _fetch_fresh(sym: str):
+        """强制清缓存多源拉取，返回尽量新的 df；过旧则 None。"""
+        from data_fetcher import invalidate_kline_cache, _df_last_date, _bar_is_stale
+        mkt = _mkt_of(sym)
+        best = None
+        for attempt, days in enumerate((300, 400, 500)):
+            try:
+                invalidate_kline_cache(sym)
+            except Exception:
+                pass
+            try:
+                df = fetcher.fetch(sym, days)
+            except Exception:
+                df = None
+            if df is None or len(df) < 30:
+                time.sleep(0.35 + attempt * 0.2)
+                continue
+            last_d = _df_last_date(df)
+            is_stale = _bar_is_stale(last_d, market=mkt, grace_days=1)
+            if best is None or len(df) > len(best):
+                best = df
+            if not is_stale:
+                return df, False, last_d
+            time.sleep(0.4 + attempt * 0.25)
+        # 仍旧：返回最长的一版并标记 stale
+        if best is not None:
+            return best, True, _df_last_date(best)
+        return None, True, None
+
     for sym in ordered:
-        if time.time() - t0 > 240:
-            # 留给网关余量，未完成的下次再跑
-            skipped = len(ordered) - ok - fail
+        if time.time() - t0 > 260:
+            skipped = len(ordered) - ok - fail - stale_n
             break
         try:
-            df = fetcher.fetch(sym, 300)
-            if df is None or len(df) < 60:
-                try:
-                    from data_fetcher import invalidate_kline_cache
-                    invalidate_kline_cache(sym)
-                    df = fetcher.fetch(sym, 400)
-                except Exception:
-                    pass
+            df, is_stale, last_d = _fetch_fresh(sym)
             if df is None or len(df) < 30:
                 fail += 1
-                errors.append({"symbol": sym, "error": f"bars={0 if df is None else len(df)}"})
+                errors.append({"symbol": sym, "error": "fetch empty/short"})
                 continue
+            end_s = ""
+            try:
+                if last_d is not None:
+                    end_s = last_d.strftime("%Y-%m-%d") if hasattr(last_d, "strftime") else str(last_d)[:10]
+            except Exception:
+                end_s = ""
             strategy = FujimotoStrategy(total_capital=100000)
             result = strategy.analyze(df)
             nine_turn = calc_nine_turn_display(df)
@@ -738,7 +773,7 @@ async def cron_prewarm_cache(
             payload = _to_jsonable({
                 "success": True,
                 "symbol": sym,
-                "stale": False,
+                "stale": bool(is_stale),
                 "prewarm": True,
                 "data": result_to_dict(result),
                 "chart": df_to_chart_json(df, result, show_last=300),
@@ -748,30 +783,76 @@ async def cron_prewarm_cache(
                 "meta": {
                     "rows": len(df),
                     "last_close": round(float(df["close"].iloc[-1]), 2),
-                    "end_date": df["date"].iloc[-1].strftime("%Y-%m-%d") if "date" in df.columns else "",
+                    "end_date": end_s or (
+                        df["date"].iloc[-1].strftime("%Y-%m-%d") if "date" in df.columns else ""
+                    ),
                 },
             })
             _nc = len(((payload.get("chart") or {}).get("candles")) or [])
-            if _nc >= 250:
+            # 仅新鲜且足够长的写入长期 quote 缓存；陈旧不覆盖已有好缓存
+            if _nc >= 250 and not is_stale:
                 cache.set_quote_cache(sym, payload)
-            # 看板状态缓存
+            elif is_stale:
+                stale_n += 1
+                if len(stale_syms) < 30:
+                    stale_syms.append({"symbol": sym, "end_date": end_s})
+                # 不 delete 已有缓存，避免把旧好数据清掉后又写更差的
             try:
                 from watchlist import get_stock_status, _status_to_dict, _status_cache_put
-                st = get_stock_status(sym, sym, days=200)
-                _status_cache_put(sym, _status_to_dict(st))
+                # 状态也尽量用新数据：仅非 stale 强刷 STATUS
+                if not is_stale:
+                    st = get_stock_status(sym, sym, days=200)
+                    _status_cache_put(sym, _status_to_dict(st))
             except Exception:
                 pass
-            # 落每日 K 线
-            try:
-                daily_store.store_daily_bars(sym, df, source="prewarm")
-            except Exception:
-                pass
-            ok += 1
-            time.sleep(0.25)
+            if not is_stale:
+                try:
+                    daily_store.store_daily_bars(sym, df, source="prewarm")
+                except Exception:
+                    pass
+                ok += 1
+            time.sleep(0.3)
         except Exception as e:
             fail += 1
             if len(errors) < 20:
                 errors.append({"symbol": sym, "error": str(e)[:120]})
+
+    # 对陈旧标的再快速重试一轮（数据源瞬时延迟常见）
+    if stale_syms and time.time() - t0 < 250:
+        time.sleep(1.0)
+        for item in list(stale_syms)[:40]:
+            if time.time() - t0 > 280:
+                break
+            sym = item.get("symbol")
+            try:
+                df, is_stale, last_d = _fetch_fresh(sym)
+                if df is None or is_stale or len(df) < 30:
+                    continue
+                strategy = FujimotoStrategy(total_capital=100000)
+                result = strategy.analyze(df)
+                nine_turn = calc_nine_turn_display(df)
+                extra = _extra_metrics(df, sym)
+                end_s = last_d.strftime("%Y-%m-%d") if last_d is not None and hasattr(last_d, "strftime") else ""
+                payload = _to_jsonable({
+                    "success": True, "symbol": sym, "stale": False, "prewarm": True,
+                    "data": result_to_dict(result),
+                    "chart": df_to_chart_json(df, result, show_last=300),
+                    "nine_turn": nine_turn,
+                    "high_low": extra.get("high_low"),
+                    "valuation": extra.get("valuation"),
+                    "meta": {
+                        "rows": len(df),
+                        "last_close": round(float(df["close"].iloc[-1]), 2),
+                        "end_date": end_s,
+                    },
+                })
+                if len(((payload.get("chart") or {}).get("candles")) or []) >= 250:
+                    cache.set_quote_cache(sym, payload)
+                    ok += 1
+                    stale_n = max(0, stale_n - 1)
+                time.sleep(0.3)
+            except Exception:
+                pass
 
     return {
         "success": True,
@@ -779,8 +860,10 @@ async def cron_prewarm_cache(
         "total": len(ordered),
         "ok": ok,
         "fail": fail,
+        "stale": stale_n,
         "skipped": skipped,
         "seconds": round(time.time() - t0, 1),
+        "stale_symbols": stale_syms[:20],
         "errors": errors,
     }
 
