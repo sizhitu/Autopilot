@@ -525,17 +525,20 @@ class FujimotoStrategy:
     #  三层融合
     # ================================================================
 
-    def analyze(self, df: pd.DataFrame, current_position_pct: float = 0) -> StrategyResult:
+    def analyze(self, df: pd.DataFrame, current_position_pct: float = 0,
+                _no_copy: bool = False) -> StrategyResult:
         """
         完整三层分析
 
         Args:
             df: OHLCV 数据 (columns: open, high, low, close, volume)
             current_position_pct: 当前持仓比例
+            _no_copy: 回测热路径可 True（只读、调用方保证不共享可变状态）
         Returns:
             StrategyResult
         """
-        df = df.copy()
+        if not _no_copy:
+            df = df.copy()
         MIN_BARS = 10
         if len(df) < MIN_BARS:
             return StrategyResult(

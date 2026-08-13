@@ -156,66 +156,99 @@ class Backtester:
         last_sell_price = 0.0  # 最近减仓价：加回必须明显低于此价
         last_trend = None
 
+        # 预计算：避免循环内重复 to_datetime/strftime 与反复 new Strategy
+        _closes = df["close"].to_numpy(dtype=float, copy=False)
+        if "date" in df.columns:
+            _dates = df["date"]
+            _date_strs = []
+            for _j in range(n):
+                _d = _dates.iloc[_j]
+                if hasattr(_d, "strftime"):
+                    _date_strs.append(_d.strftime("%Y-%m-%d"))
+                else:
+                    _date_strs.append(str(_d)[:10])
+        else:
+            _date_strs = [str(j) for j in range(n)]
+
+        strategy = FujimotoStrategy(
+            total_capital=self.initial_capital,
+            risk_per_trade=self.risk_per_trade,
+            max_position=self.max_position,
+            entry_price=first_price,
+        )
+        _win = max(self.warmup + 40, 180)
+
         for i in range(self.warmup, n):
-            # 仅用最近窗口做策略分析，显著降低回测耗时，避免网关 Failed to fetch 超时
-            _w0 = max(0, i + 1 - max(self.warmup + 40, 180))
-            current_df = df.iloc[_w0:i+1].reset_index(drop=True)
-            close = df['close'].iloc[i]
-            date_str = df['date'].iloc[i] if 'date' in df.columns else str(i)
-            if hasattr(date_str, 'strftime'):
-                date_str = date_str.strftime('%Y-%m-%d')
+            # 仅用最近窗口做策略分析（视图，不 reset_index，配合 analyze(_no_copy=True)）
+            _w0 = max(0, i + 1 - _win)
+            current_df = df.iloc[_w0:i + 1]
+            close = float(_closes[i])
+            date_str = _date_strs[i]
 
-            # 调用策略引擎
-            strategy = FujimotoStrategy(
-                total_capital=self.initial_capital,
-                risk_per_trade=self.risk_per_trade,
-                max_position=self.max_position,
-                entry_price=(avg_cost if shares > 0 and avg_cost > 0 else first_price)
-            )
-            result = strategy.analyze(current_df, current_position_pct=position_pct)
-
-            # --- 交易决策：降频 + 禁高位加仓 + 原因与操作一致 ---
+            # 冷却期内不可能成交：跳过昂贵 analyze（与成交结果无关，仅省时）
+            cooled_early = (i - last_trade_bar) >= cooldown
             action = None
             trade_shares = 0
             trade_reason = ""
-            sig = result.signal
-            action_txt = (result.action or "")[:80]
-            layers = getattr(result, "layers_consistent", None) or {}
-            all_pass = False
-            sys_ok = tool_ok = time_ok = False
-            try:
-                def _layer_ok(substrs):
-                    for k, v in (layers or {}).items():
-                        if not isinstance(v, dict):
-                            continue
-                        if any(s in str(k) for s in substrs) and v.get("通过"):
-                            return True
-                    return False
-                sys_ok = _layer_ok(("系统层",))
-                tool_ok = _layer_ok(("工具层", "斐波那契"))
-                time_ok = _layer_ok(("时机层", "九转"))
-                all_pass = bool(sys_ok and tool_ok and time_ok)
-            except Exception:
+            if not cooled_early:
+                class _Wait:
+                    signal = SignalType.WAIT
+                    action = "冷却中"
+                    trend = last_trend if last_trend is not None else TrendType.RANGE
+                    layers_consistent = {}
+                    position_pct = 0.0
+                result = _Wait()
+                sig = SignalType.WAIT
+                action_txt = ""
+                layers = {}
                 all_pass = False
-            if not all_pass and "三层一致" in action_txt:
-                all_pass = True
-            # 宽松建仓：九转/时机层、系统+工具、策略买侧信号均可（不要求三层全过）
-            high_weight_buy = bool(
-                all_pass
-                or time_ok
-                or (sys_ok and tool_ok)
-                or (sys_ok and time_ok)
-                or (tool_ok and time_ok)
-                or (sig in (SignalType.BUY, SignalType.ADD) and any(
-                    k in action_txt for k in ("买入", "加仓", "建仓", "九转", "三层", "时机主导", "试探")
-                ))
-            )
-            # 策略明确「观望」且无买入/加仓语义 → 禁止开仓（避免「观望·建仓」）
-            _wait_txt = "观望" in action_txt and not any(
-                k in action_txt for k in ("买入", "加仓", "建仓", "三层一致", "关注买入")
-            )
-            if _wait_txt or (sig == SignalType.WAIT and not all_pass and "三层一致" not in action_txt):
+                sys_ok = tool_ok = time_ok = False
                 high_weight_buy = False
+                _wait_txt = True
+                nt_buy = nt_sell = False
+                _nt_cache = None
+            else:
+                strategy.entry_price = (avg_cost if shares > 0 and avg_cost > 0 else first_price)
+                result = strategy.analyze(
+                    current_df, current_position_pct=position_pct, _no_copy=True
+                )
+                sig = result.signal
+                action_txt = (result.action or "")[:80]
+                layers = getattr(result, "layers_consistent", None) or {}
+            if cooled_early:
+                all_pass = False
+                sys_ok = tool_ok = time_ok = False
+                try:
+                    def _layer_ok(substrs):
+                        for k, v in (layers or {}).items():
+                            if not isinstance(v, dict):
+                                continue
+                            if any(s in str(k) for s in substrs) and v.get("通过"):
+                                return True
+                        return False
+                    sys_ok = _layer_ok(("系统层",))
+                    tool_ok = _layer_ok(("工具层", "斐波那契"))
+                    time_ok = _layer_ok(("时机层", "九转"))
+                    all_pass = bool(sys_ok and tool_ok and time_ok)
+                except Exception:
+                    all_pass = False
+                if not all_pass and "三层一致" in action_txt:
+                    all_pass = True
+                high_weight_buy = bool(
+                    all_pass
+                    or time_ok
+                    or (sys_ok and tool_ok)
+                    or (sys_ok and time_ok)
+                    or (tool_ok and time_ok)
+                    or (sig in (SignalType.BUY, SignalType.ADD) and any(
+                        k in action_txt for k in ("买入", "加仓", "建仓", "九转", "三层", "时机主导", "试探")
+                    ))
+                )
+                _wait_txt = "观望" in action_txt and not any(
+                    k in action_txt for k in ("买入", "加仓", "建仓", "三层一致", "关注买入")
+                )
+                if _wait_txt or (sig == SignalType.WAIT and not all_pass and "三层一致" not in action_txt):
+                    high_weight_buy = False
 
             # 相对成本的盈亏（阶梯/加仓一律用均价，避免高位加仓后仍按旧低成本「上涨45%卖出」）
             cost_basis = avg_cost if (shares > 0 and avg_cost > 0) else first_price
@@ -225,20 +258,22 @@ class Backtester:
             recent_high = float(win.max()) if len(win) else close
             near_high = recent_high > 0 and close >= recent_high * 0.97
 
-            # 九转买卖侧（持仓加减仓叠加用）
-            nt_buy = False
-            nt_sell = False
-            try:
-                if calc_nine_turn_display is not None:
-                    _nt = calc_nine_turn_display(current_df)
-                    _dir = _nt.get("direction")
-                    _done = bool(_nt.get("is_complete") or _nt.get("is_completing"))
-                    if _done and _dir == "down":
-                        nt_buy = True
-                    if _done and _dir == "up":
-                        nt_sell = True
-            except Exception:
-                pass
+            # 九转买卖侧：仅冷却外计算（冷却内不会交易）
+            if cooled_early:
+                nt_buy = False
+                nt_sell = False
+                _nt_cache = None
+                try:
+                    if calc_nine_turn_display is not None:
+                        _nt_cache = calc_nine_turn_display(current_df)
+                        _dir = (_nt_cache or {}).get("direction")
+                        _done = bool((_nt_cache or {}).get("is_complete") or (_nt_cache or {}).get("is_completing"))
+                        if _done and _dir == "down":
+                            nt_buy = True
+                        if _done and _dir == "up":
+                            nt_sell = True
+                except Exception:
+                    _nt_cache = None
             # 三层/策略卖侧确认（有浮盈才参与减仓，避免观望乱砍）
             layer_sell = bool(
                 (sig == SignalType.SELL and not _wait_txt)
@@ -246,9 +281,11 @@ class Backtester:
             )
             signal_sell_confirm = (nt_sell or layer_sell or (not sys_ok and time_ok and "卖" in action_txt)) and pnl_from_cost >= 0.12
 
-            if result.trend == TrendType.BULL:
+            if cooled_early and getattr(result, "trend", None) == TrendType.BULL:
                 bear_trend_sold = False
                 sold_in_bear = False
+            if cooled_early and getattr(result, "trend", None) is not None:
+                last_trend = result.trend
 
             cooled = (i - last_trade_bar) >= cooldown
             can_sell = shares > 0 and cooled and (i - last_buy_bar) >= min_hold_bars
@@ -351,16 +388,7 @@ class Backtester:
                 is_flat = position_pct < 0.01
 
                 # 九转下跌买侧（完成或临近）
-                nt_buy = False
-                try:
-                    if calc_nine_turn_display is not None:
-                        nt = calc_nine_turn_display(current_df)
-                        nt_buy = bool(
-                            nt.get("direction") == "down"
-                            and (nt.get("is_complete") or nt.get("is_completing"))
-                        )
-                except Exception:
-                    nt_buy = False
+                # nt_buy 已在本 bar 顶部计算
 
                 below_cost = cost_basis > 0 and close <= cost_basis * 0.98
                 deep_dip = pnl_from_cost <= -0.12  # 相对成本跌超 12%
@@ -370,16 +398,7 @@ class Backtester:
 
                 if is_flat:
                     # 九转买入、时机层、或三层中任意高权重组合通过即可建仓
-                    nt_entry = False
-                    try:
-                        if calc_nine_turn_display is not None:
-                            _nt0 = calc_nine_turn_display(current_df)
-                            nt_entry = bool(
-                                _nt0.get("direction") == "down"
-                                and (_nt0.get("is_complete") or _nt0.get("is_completing"))
-                            )
-                    except Exception:
-                        nt_entry = False
+                    nt_entry = bool(nt_buy)
                     if (high_weight_buy or nt_entry) and not _wait_txt:
                         do_buy = True
                         buy_pct = float(result.position_pct or 0)
