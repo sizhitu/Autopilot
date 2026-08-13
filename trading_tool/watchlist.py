@@ -590,7 +590,7 @@ def _bar_date_str(row) -> str:
 
 
 def _row_fresher(a: dict, b: dict) -> dict:
-    """两者都可用时取 bar_date 更新的；否则取可用的那份。"""
+    """两者都可用时取 bar_date 更新的；缺日期/更陈旧的不覆盖。"""
     ua = _row_usable(a) if a else False
     ub = _row_usable(b) if b else False
     if ua and not ub:
@@ -605,6 +605,18 @@ def _row_fresher(a: dict, b: dict) -> dict:
             return b
         if da > db:
             return a
+        # 同日：优先非 bar_stale
+        sa = bool((a or {}).get("bar_stale"))
+        sb = bool((b or {}).get("bar_stale"))
+        if sa and not sb:
+            return b
+        if sb and not sa:
+            return a
+        return a
+    if db and not da:
+        return b
+    if da and not db:
+        return a
     return a if a else b
 
 
@@ -775,6 +787,14 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
             invalidate_kline_cache = None
         for c, _ in items:
             cu = str(c).strip().upper()
+            prev = base.get(cu) if isinstance(base, dict) else None
+            # 已有更新且非陈旧的行：保留 STATUS，避免强制刷新把日期打回前一天
+            keep = False
+            if prev and _row_usable(prev) and _bar_date_str(prev):
+                if not bool(prev.get("bar_stale")):
+                    keep = True
+            if keep:
+                continue
             _STATUS_CACHE.pop(cu, None)
             if invalidate_kline_cache:
                 try:

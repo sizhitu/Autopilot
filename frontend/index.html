@@ -3052,21 +3052,50 @@ function setWatchUpdatedLabel(json) {
 }
 
 
+function _barDateKey(row) {
+  if (!row) return '';
+  const d = String(row.bar_date || '').trim();
+  return d.length >= 10 ? d.slice(0, 10) : d;
+}
+function _preferFresherRow(newer, older) {
+  // 占位/无效 → 用另一份；都可用则取 bar_date 更新的；同日偏好非 bar_stale
+  if (!newer) return older;
+  if (!older) return newer;
+  const nBad = !!(newer.pending || newer.price === '-' || newer.signal === '计算中');
+  const oBad = !!(older.pending || older.price === '-' || older.signal === '计算中');
+  if (nBad && !oBad) return { ...older, pending: false };
+  if (oBad && !nBad) return newer;
+  const nd = _barDateKey(newer), od = _barDateKey(older);
+  if (od && nd && od > nd) return older;
+  if (nd && od && nd > od) return newer;
+  if (od && !nd) return older;
+  if (nd && !od) return newer;
+  if (newer.bar_stale && !older.bar_stale) return older;
+  if (older.bar_stale && !newer.bar_stale) return newer;
+  return newer;
+}
 function mergeWatchRows(incoming, previous) {
-  // 未完成的行继续用上一轮完整数据，已返回的行用新数据覆盖
+  // 按代码合并；禁止用更旧 bar_date 覆盖页面上已展示的更新行情
   if (!previous || !previous.length) return incoming || [];
   if (!incoming || !incoming.length) return previous;
   const prevMap = {};
   previous.forEach(s => { if (s && s.code) prevMap[String(s.code).toUpperCase()] = s; });
-  return incoming.map(s => {
+  const seen = {};
+  const out = (incoming || []).map(s => {
     if (!s) return s;
     const code = String(s.code || '').toUpperCase();
+    seen[code] = true;
     const old = prevMap[code];
     if (!old) return s;
-    const isPlaceholder = s.pending || s.price === '-' || s.signal === '计算中';
-    if (isPlaceholder) return { ...old, pending: false, stale_row: true };
-    return s;
+    return _preferFresherRow(s, old);
   });
+  // 保留上一轮有、本轮未返回的代码
+  previous.forEach(s => {
+    if (!s || !s.code) return;
+    const code = String(s.code).toUpperCase();
+    if (!seen[code]) out.push(s);
+  });
+  return out;
 }
 
 let _wlInflight = null;
@@ -3267,12 +3296,13 @@ async function _loadWatchlistBody(forceRefresh) {
       return;
     }
 
-    // 全部就绪：更新时间戳 + 可选轻提示
+    // 全部就绪：与本地已展示行按 bar_date 合并，禁止回退前一天
     setWatchUpdatedLabel(json);
+    const merged = mergeWatchRows(stocks, _lastWatchRows);
     renderWatchlistSummary(json.summary || {});
-    renderWatchlist(stocks);
-    _lastWatchRows = stocks.slice();
-    _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
+    renderWatchlist(merged);
+    _lastWatchRows = merged.slice();
+    _lastWatchSkeleton = merged.map(s => ({ code: s.code, name: s.name, market: s.market }));
     if (_watchWasComputing && forceRefresh && json.updated_at) {
       showToast('看板已更新至 ' + json.updated_at, 'ok');
     }
