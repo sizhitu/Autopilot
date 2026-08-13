@@ -3698,7 +3698,34 @@ async function calcLadder() {
 }
 
 // === 回测 ===
+function clearBacktestUI(statusText) {
+  try {
+    const meta = document.getElementById('chartMeta');
+    if (meta) meta.textContent = statusText || '回测中...';
+    const stats = document.getElementById('btStats');
+    if (stats) stats.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px 0;">正在计算，请稍候…</div>';
+    const tbody = document.getElementById('tradeTableBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);">—</td></tr>';
+    const sum = document.getElementById('btResultSummary');
+    if (sum) sum.innerHTML = '';
+    // 清空曲线画布
+    ['btEquityCanvas', 'btDrawdownCanvas'].forEach(function (id) {
+      const canvas = document.getElementById(id);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      if (!canvas.width) canvas.width = canvas.offsetWidth || 600;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(128,128,128,0.35)';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('等待回测结果…', 12, 24);
+    });
+  } catch (e) {}
+}
+
 async function runBacktest() {
+  // 先清空上次结果，避免换代码/改参数后仍显示旧数据
+  clearBacktestUI('回测中...');
   const symbol = currentSymbol || '';
   // 优先用工具栏资金/建仓价/持仓；回测配置 Tab 可覆盖
   const capitalToolbar = parseFloat(document.getElementById('capital') && document.getElementById('capital').value);
