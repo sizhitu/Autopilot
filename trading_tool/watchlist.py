@@ -581,8 +581,47 @@ _CACHES_MAX = 12            # 最多保留多少套看板缓存
 _refresh_lock = threading.Lock()
 
 
+def _bar_date_str(row) -> str:
+    """YYYY-MM-DD；无法解析则空串。"""
+    if not row or not isinstance(row, dict):
+        return ""
+    d = str(row.get("bar_date") or "").strip()
+    return d[:10] if d else ""
+
+
+def _row_fresher(a: dict, b: dict) -> dict:
+    """两者都可用时取 bar_date 更新的；否则取可用的那份。"""
+    ua = _row_usable(a) if a else False
+    ub = _row_usable(b) if b else False
+    if ua and not ub:
+        return a
+    if ub and not ua:
+        return b
+    if not ua and not ub:
+        return a if a else b
+    da, db = _bar_date_str(a), _bar_date_str(b)
+    if da and db:
+        if db > da:
+            return b
+        if da > db:
+            return a
+    return a if a else b
+
+
 def _status_cache_put(k: str, data: dict) -> None:
     now = time.time()
+    # 禁止用更旧 bar_date 覆盖状态缓存（刷新回退前一天的根因）
+    try:
+        hit = _STATUS_CACHE.get(k)
+        if hit and isinstance(hit.get("data"), dict) and isinstance(data, dict):
+            old_d = _bar_date_str(hit["data"])
+            new_d = _bar_date_str(data)
+            if old_d and new_d and old_d > new_d:
+                return
+            if old_d and not new_d:
+                return
+    except Exception:
+        pass
     _STATUS_CACHE[k] = {"ts": now, "data": data}
     # 淘汰过期 + 超上限
     dead = [ck for ck, v in list(_STATUS_CACHE.items()) if (now - v.get("ts", 0)) >= _STATUS_TTL]
@@ -616,15 +655,23 @@ def _status_dict_cached(code: str, name: str, days: int = 200) -> dict:
     k = str(code).strip().upper()
     hit = _STATUS_CACHE.get(k)
     now = time.time()
+    cached_row = None
     if hit and (now - hit["ts"]) < _STATUS_TTL and isinstance(hit.get("data"), dict):
-        d = dict(hit["data"])
+        cached_row = dict(hit["data"])
         if name:
-            d["name"] = name
-        d["pending"] = False
-        return d
+            cached_row["name"] = name
+        cached_row["pending"] = False
+        # 缓存仍新鲜且 bar_date 较新时直接返回，避免无意义重算变旧
+        if _bar_date_str(cached_row):
+            # 仍走一次轻量比较：仅当调用方刚 bust 后 hit 不存在
+            return cached_row
     st = get_stock_status(code, name, days=days)
     d = _status_to_dict(st)
     d["pending"] = False
+    if name:
+        d["name"] = name
+    if cached_row:
+        d = _row_fresher(d, cached_row)
     _status_cache_put(k, dict(d))
     return d
 
@@ -740,13 +787,20 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
         rows = []
         for c, n in items:
             cu = str(c).upper()
-            if cu in done_map:
-                r = dict(done_map[cu])
+            new_r = dict(done_map[cu]) if cu in done_map else None
+            old_r = dict(base[cu]) if cu in base else None
+            if new_r and old_r:
+                r = _row_fresher(new_r, old_r)
                 r['name'] = n or r.get('name') or c
                 r['pending'] = False
                 rows.append(r)
-            elif cu in base and _row_usable(base[cu]):
-                r = dict(base[cu])
+            elif new_r:
+                r = new_r
+                r['name'] = n or r.get('name') or c
+                r['pending'] = False
+                rows.append(r)
+            elif old_r and _row_usable(old_r):
+                r = old_r
                 r['name'] = n or r.get('name') or c
                 rows.append(r)
             else:
