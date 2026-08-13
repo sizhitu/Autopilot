@@ -170,7 +170,12 @@ def set_digest_prefs(uid: str, enabled: bool = None, freq: str = None, last_sent
     if enabled is not None:
         cur["enabled"] = bool(enabled)
     if freq in ("weekly", "biweekly"):
+        prev = cur.get("freq") or "weekly"
         cur["freq"] = freq
+        # 从双周改回每周：若仍记着双周 last_sent，不额外锁 12 天；
+        # 发送侧用 ISO 周判断，此处仅标记便于排查
+        if prev == "biweekly" and freq == "weekly":
+            cur["freq_switched_at"] = __import__("datetime").datetime.now().isoformat(timespec="seconds")
     if last_sent is not None:
         cur["last_sent"] = last_sent or None
     settings_store.set_setting(_digest_key(uid), json.dumps(cur, ensure_ascii=False))

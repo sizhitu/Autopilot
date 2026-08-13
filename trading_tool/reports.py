@@ -598,16 +598,35 @@ def generate_for_user(uid: str, email: str, period: str = "weekly") -> bool:
 
 
 def _due_for_send(prefs_freq: str, last_sent: str, period: str) -> bool:
-    from datetime import datetime
+    """是否到达发送周期。
+
+    - weekly：上一封不在本 ISO 周，且至少间隔约 5 天（避免同周重复；修复「刚好差几小时 .days=6」卡边）
+    - biweekly：至少约 13 天
+    - 从双周改回每周后：只要跨周且≥5 天即可发，不再被 12 天卡住
+    """
+    from datetime import datetime, timedelta
     if not last_sent:
         return True
     try:
-        last = datetime.fromisoformat(str(last_sent).replace("Z", ""))
+        last = datetime.fromisoformat(str(last_sent).replace("Z", "").replace("z", ""))
+        if last.tzinfo is not None:
+            last = last.replace(tzinfo=None)
     except Exception:
         return True
-    days = (datetime.now() - last).days
-    need = 12 if (prefs_freq == "biweekly") else 6
-    return days >= need
+    now = datetime.now()
+    delta = now - last
+    if prefs_freq == "biweekly":
+        return delta >= timedelta(days=13)
+    # weekly（默认）
+    try:
+        same_iso_week = (now.isocalendar()[0], now.isocalendar()[1]) == (
+            last.isocalendar()[0], last.isocalendar()[1]
+        )
+    except Exception:
+        same_iso_week = delta < timedelta(days=5)
+    if same_iso_week:
+        return False
+    return delta >= timedelta(days=5)
 
 
 def run_reports(period: str = "weekly", force: bool = False) -> dict:
@@ -616,28 +635,45 @@ def run_reports(period: str = "weekly", force: bool = False) -> dict:
     subs = user_store.list_digest_subscribers()
     sent = skipped = 0
     total = len(subs)
+    throttle_skip = 0
+    gen_fail = 0
     for u in subs:
         email = u.get("email")
         uid = u.get("id")
         freq = u.get("freq") or "weekly"
         if period != "monthly" and not force:
             if not _due_for_send(freq, u.get("last_sent"), period):
+                throttle_skip += 1
                 skipped += 1
+                logger.info(
+                    "周报节流跳过 email=%s freq=%s last_sent=%s",
+                    email, freq, u.get("last_sent"),
+                )
                 continue
         try:
             if generate_for_user(uid, email, "weekly" if period != "monthly" else period):
                 user_store.set_digest_prefs(uid, last_sent=datetime.now().isoformat(timespec="seconds"))
                 sent += 1
             else:
+                gen_fail += 1
                 skipped += 1
         except Exception as e:
             logger.warning("报告生成失败 %s: %s", email, e)
+            gen_fail += 1
             skipped += 1
     logger.info(
-        "报告任务完成 period=%s force=%s sent=%d skipped=%d subscribers=%d",
-        period, force, sent, skipped, total,
+        "报告任务完成 period=%s force=%s sent=%d skipped=%d throttle_skip=%d gen_fail=%d subscribers=%d",
+        period, force, sent, skipped, throttle_skip, gen_fail, total,
     )
-    return {"sent": sent, "skipped": skipped, "total": total, "subscribers": total, "force": force}
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "throttle_skip": throttle_skip,
+        "gen_fail": gen_fail,
+        "total": total,
+        "subscribers": total,
+        "force": force,
+    }
 
 
 if __name__ == "__main__":
