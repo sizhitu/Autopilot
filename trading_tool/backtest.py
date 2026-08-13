@@ -208,6 +208,12 @@ class Backtester:
                     k in action_txt for k in ("买入", "加仓", "建仓", "九转", "三层", "时机主导", "试探")
                 ))
             )
+            # 策略明确「观望」且无买入/加仓语义 → 禁止开仓（避免「观望·建仓」）
+            _wait_txt = "观望" in action_txt and not any(
+                k in action_txt for k in ("买入", "加仓", "建仓", "三层一致", "关注买入")
+            )
+            if _wait_txt or (sig == SignalType.WAIT and not all_pass and "三层一致" not in action_txt):
+                high_weight_buy = False
 
             # 相对成本的盈亏（阶梯/加仓一律用均价，避免高位加仓后仍按旧低成本「上涨45%卖出」）
             cost_basis = avg_cost if (shares > 0 and avg_cost > 0) else first_price
@@ -248,7 +254,7 @@ class Backtester:
                         if pnl_from_cost >= thr and thr not in ladder_sold_steps:
                             do_sell = True
                             sell_pct = pct
-                            trade_reason = reason
+                            trade_reason = f"{reason}（成本{cost_basis:.2f}，浮盈{pnl_from_cost*100:.0f}%）"
                             ladder_sold_steps.add(thr)
                             break
 
@@ -305,7 +311,7 @@ class Backtester:
                             )
                     except Exception:
                         nt_entry = False
-                    if high_weight_buy or nt_entry:
+                    if (high_weight_buy or nt_entry) and not _wait_txt:
                         do_buy = True
                         buy_pct = float(result.position_pct or 0)
                         if buy_pct < 0.05:
@@ -348,6 +354,8 @@ class Backtester:
                         if cost <= cash:
                             if shares > 0:
                                 avg_cost = (avg_cost * shares + close * trade_shares) / (shares + trade_shares)
+                                # 加仓后成本变了：藤本茂涨跌幅按新均价重计，阶梯档位清零
+                                ladder_sold_steps = set()
                             else:
                                 avg_cost = close
                                 first_price = close
@@ -357,6 +365,8 @@ class Backtester:
                             was_flat = is_flat
                             position_pct = min(self.max_position, position_pct + buy_pct)
                             action = "BUY" if was_flat else "ADD"
+                            if action == "ADD":
+                                trade_reason = (trade_reason or "加仓") + f"（新成本{avg_cost:.2f}）"
                             buy_dates.append(i)
                             last_trade_bar = i
                             last_buy_bar = i
