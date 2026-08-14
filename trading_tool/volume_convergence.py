@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+import numpy as np
 
 
 def _local_extrema(y: np.ndarray, order: int = 2) -> tuple:
@@ -168,11 +169,35 @@ def analyze_volume_series(volumes: List[float], timeframe: str = "D", lookback: 
 def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     if df is None or len(df) == 0 or "volume" not in df.columns:
         return pd.DataFrame()
-    x = df.copy()
-    if "date" not in x.columns:
+    if "date" not in df.columns:
         return pd.DataFrame()
-    x["date"] = pd.to_datetime(x["date"])
-    x = x.set_index("date").sort_index()
+    # 避免无谓整表 copy：只取需要的列
+    cols = [c for c in ("date", "open", "high", "low", "close", "volume") if c in df.columns]
+    x = df.loc[:, cols]
+    if not np.issubdtype(x["date"].dtype, np.datetime64):
+        x = x.copy()
+        x["date"] = pd.to_datetime(x["date"])
+    else:
+        x = x.set_index("date")
+        if not x.index.is_monotonic_increasing:
+            x = x.sort_index()
+        # already indexed path below
+        agg = {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }
+        cols_agg = {k: v for k, v in agg.items() if k in x.columns}
+        try:
+            out = x.resample(rule).agg(cols_agg).dropna(subset=["close"] if "close" in cols_agg else ["volume"])
+        except Exception:
+            return pd.DataFrame()
+        return out.reset_index()
+    x = x.set_index("date")
+    if not x.index.is_monotonic_increasing:
+        x = x.sort_index()
     agg = {
         "open": "first",
         "high": "max",

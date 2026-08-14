@@ -1713,15 +1713,11 @@ async def run_backtest(req: BacktestRequest, request: Request = None,
         if req.symbol:
             need = int(req.warmup or 60) + 30
             days = max(int(req.days or 300), need + 30, 200)
-            try:
-                from data_fetcher import invalidate_kline_cache
-                invalidate_kline_cache(req.symbol)
-            except Exception:
-                pass
+            # 优先用已有 K 线缓存，避免每次回测都清缓存重拉（可省数十秒）
             df = fetcher.fetch(req.symbol, days)
-            # 仍过短则再清缓存拉一次
             if df is None or len(df) < need:
                 try:
+                    from data_fetcher import invalidate_kline_cache
                     invalidate_kline_cache(req.symbol)
                 except Exception:
                     pass

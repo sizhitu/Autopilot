@@ -526,7 +526,7 @@ class FujimotoStrategy:
     # ================================================================
 
     def analyze(self, df: pd.DataFrame, current_position_pct: float = 0,
-                _no_copy: bool = False) -> StrategyResult:
+                _no_copy: bool = False, _lite: bool = False) -> StrategyResult:
         """
         完整三层分析
 
@@ -534,6 +534,7 @@ class FujimotoStrategy:
             df: OHLCV 数据 (columns: open, high, low, close, volume)
             current_position_pct: 当前持仓比例
             _no_copy: 回测热路径可 True（只读、调用方保证不共享可变状态）
+            _lite: 回测加速：跳过周/月量能重采样与价格三角（最耗时，对阶梯成交影响很小）
         Returns:
             StrategyResult
         """
@@ -620,7 +621,7 @@ class FujimotoStrategy:
 
         # 成交量收敛三角形（周线为主，辅助时机，不单独定方向）
         conv_info = {"converging": False, "status": "未检测", "tape": "", "summary": ""}
-        if compute_volume_convergence is not None:
+        if (not _lite) and compute_volume_convergence is not None:
             try:
                 vc = compute_volume_convergence(df)
                 w = vc.get("weekly") or {}
@@ -637,7 +638,7 @@ class FujimotoStrategy:
 
         # 价格收敛三角形（高点渐低 + 低点渐高）
         price_tri = {"forming": False, "status": "未检测", "label": "—", "breakout": "none"}
-        if detect_price_triangle is not None:
+        if (not _lite) and detect_price_triangle is not None:
             try:
                 price_tri = detect_price_triangle(df)
             except Exception:

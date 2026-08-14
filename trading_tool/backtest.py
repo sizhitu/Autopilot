@@ -21,9 +21,9 @@ from typing import List, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from strategy_engine import FujimotoStrategy, SignalType, TrendType
 try:
-    from nine_turn import calc_nine_turn_display
+    from nine_turn import calc_nine_turn
 except Exception:
-    calc_nine_turn_display = None
+    calc_nine_turn = None
 
 
 @dataclass
@@ -210,7 +210,8 @@ class Backtester:
             else:
                 strategy.entry_price = (avg_cost if shares > 0 and avg_cost > 0 else first_price)
                 result = strategy.analyze(
-                    current_df, current_position_pct=position_pct, _no_copy=True
+                    current_df, current_position_pct=position_pct,
+                    _no_copy=True, _lite=True,
                 )
                 sig = result.signal
                 action_txt = (result.action or "")[:80]
@@ -262,18 +263,18 @@ class Backtester:
             if cooled_early:
                 nt_buy = False
                 nt_sell = False
-                _nt_cache = None
                 try:
-                    if calc_nine_turn_display is not None:
-                        _nt_cache = calc_nine_turn_display(current_df)
-                        _dir = (_nt_cache or {}).get("direction")
-                        _done = bool((_nt_cache or {}).get("is_complete") or (_nt_cache or {}).get("is_completing"))
+                    # 日线九转即可（避免 display 再算月线+周MACD）
+                    if calc_nine_turn is not None:
+                        _nt = calc_nine_turn(current_df, unit="天")
+                        _done = bool(getattr(_nt, "is_complete", False) or getattr(_nt, "is_completing", False))
+                        _dir = getattr(_nt, "direction", None)
                         if _done and _dir == "down":
                             nt_buy = True
                         if _done and _dir == "up":
                             nt_sell = True
                 except Exception:
-                    _nt_cache = None
+                    pass
             # 三层/策略卖侧确认（有浮盈才参与减仓，避免观望乱砍）
             layer_sell = bool(
                 (sig == SignalType.SELL and not _wait_txt)
