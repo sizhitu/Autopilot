@@ -595,8 +595,12 @@ body.help-open { overflow: hidden; touch-action: none; }
     <button type="button" onclick="closeUpgradeModal()" aria-label="关闭" style="position:absolute;right:12px;top:10px;background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;line-height:1;">×</button>
     <div style="text-align:center;margin-bottom:6px;color:var(--gold);font-size:12px;font-weight:600;letter-spacing:.3px;">UNLOCK</div>
     <div style="text-align:center;font-size:17px;font-weight:700;margin-bottom:6px;color:var(--text);">解锁完整自选与任意标的分析</div>
-    <div style="text-align:center;font-size:12px;color:var(--text-dim);margin-bottom:14px;line-height:1.5;">免费版可体验 AAPL / TSLA 真实行情。<br>升级后可添加任意美股、A股与 ETF，并使用完整策略视图。</div>
-    <div id="planCardPlus" onclick="selectUpgradePlan('plus')" style="cursor:pointer;border:1px solid var(--gold,#c9a227);border-radius:12px;padding:14px;margin-bottom:10px;background:rgba(201,162,39,.1);position:relative;">
+    <div style="text-align:center;font-size:12px;color:var(--text-dim);margin-bottom:10px;line-height:1.5;">免费版可体验 AAPL / TSLA 真实行情。<br>升级后可添加任意美股、A股与 ETF，并使用完整策略视图。</div>
+    <div id="upgradeMaintainBanner" style="margin-bottom:14px;padding:10px 12px;border-radius:10px;border:1px solid rgba(241,196,15,.45);background:rgba(241,196,15,.12);text-align:center;font-size:13px;color:var(--text);line-height:1.55;">
+      <b style="color:var(--gold);">支付功能维护中</b><br>
+      <span style="font-size:12px;color:var(--text-dim);">暂无法完成订阅支付，请稍后再试。<br>感谢支持！</span>
+    </div>
+    <div id="planCardPlus" style="cursor:not-allowed;opacity:.55;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;background:rgba(128,128,128,.08);position:relative;pointer-events:none;">
       <span style="position:absolute;right:10px;top:10px;background:var(--gold,#c9a227);color:#111;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700;">推荐</span>
       <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px;">Plus</div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">主动分析 + 邮件摘要，适合跟踪多个标的</div>
@@ -606,9 +610,9 @@ body.help-open { overflow: hidden; touch-action: none; }
         <li>完整策略视图与回测</li>
         <li><b style="color:var(--gold);">邮件订阅推送</b>（周报摘要）</li>
       </ul>
-      <div style="margin-top:12px;text-align:center;font-size:12px;font-weight:700;color:#111;background:var(--gold);border-radius:8px;padding:8px 0;">选择 Plus 并支付</div>
+      <div style="margin-top:12px;text-align:center;font-size:12px;font-weight:700;color:#888;background:#3a3a3a;border-radius:8px;padding:8px 0;cursor:not-allowed;">维护中 · 暂不可支付</div>
     </div>
-    <div id="planCardPro" onclick="selectUpgradePlan('pro')" style="cursor:pointer;border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg,#0a1419);">
+    <div id="planCardPro" style="cursor:not-allowed;opacity:.55;border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg,#0a1419);pointer-events:none;">
       <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px;">Pro</div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">日常主动查看分析，性价比首选</div>
       <div style="font-size:24px;font-weight:700;color:var(--text);">$<span id="priceProLabel">9.9</span><span style="font-size:12px;font-weight:500;color:var(--text-dim);"> /月</span></div>
@@ -617,9 +621,9 @@ body.help-open { overflow: hidden; touch-action: none; }
         <li>完整策略视图与回测</li>
         <li style="color:var(--text-dim);">不含邮件推送</li>
       </ul>
-      <div style="margin-top:12px;text-align:center;font-size:12px;font-weight:600;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 0;">选择 Pro 并支付</div>
+      <div style="margin-top:12px;text-align:center;font-size:12px;font-weight:700;color:#888;background:#3a3a3a;border:1px solid #444;border-radius:8px;padding:8px 0;cursor:not-allowed;">维护中 · 暂不可支付</div>
     </div>
-    <div style="margin-top:12px;font-size:11px;color:var(--text-dim);text-align:center;line-height:1.55;">支付由 Waffo 安全处理 · 可随时在订阅管理中取消续费<br>
+    <div style="margin-top:12px;font-size:11px;color:var(--text-dim);text-align:center;line-height:1.55;">当前支付通道维护中 · 恢复后可正常订阅<br>
       <span style="display:inline-block;margin-top:6px;text-align:left;max-width:100%;">退款说明：符合条件的退款，平台审核通过后一般 <b style="color:var(--text);">24 小时内</b>发起退款处理；款项退回您的支付账户后，各国家/地区银行或信用卡中心入账通常约 <b style="color:var(--text);">7 个工作日</b>，部分情况可能需要 <b style="color:var(--text);">1～2 周</b>（与国际订房平台常见说明类似，以发卡机构实际处理为准）。</span><br>
       研究工具，不构成投资建议</div>
   </div>
@@ -1774,11 +1778,13 @@ function closeUpgradeModal() {
   m.classList.add('hidden');
 }
 function selectUpgradePlan(plan) {
-  closeUpgradeModal();
-  startCheckout(plan === 'plus' ? 'plus' : 'pro');
+  try { showToast('支付功能维护中，感谢支持！', 'info'); } catch (e) {}
+  return;
 }
 
 async function startCheckout(plan) {
+  try { showToast('支付功能维护中，感谢支持！', 'info'); } catch (e) {}
+  return;
   plan = plan || 'pro';
   try {
     const origin = location.origin + location.pathname;
