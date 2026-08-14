@@ -1120,11 +1120,13 @@ function showToast(msg, type = 'error') {
   let t = document.getElementById('toast');
   if (!t) {
     t = document.createElement('div'); t.id = 'toast';
-    t.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:9999;padding:8px 16px;border-radius:6px;font-size:13px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.35);transition:opacity .3s;max-width:80vw;';
+    t.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:10050;padding:8px 16px;border-radius:6px;font-size:13px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.35);transition:opacity .3s;max-width:80vw;';
     document.body.appendChild(t);
   }
   const bg = type === 'ok' ? 'rgba(46,204,113,.95)' : type === 'info' ? 'rgba(52,152,219,.95)' : 'rgba(231,76,60,.95)';
   t.style.background = bg;
+  t.style.zIndex = '10050';
+  t.style.pointerEvents = 'none';
   t.textContent = msg; t.style.opacity = '1';
   clearTimeout(t._timer); t._timer = setTimeout(() => { t.style.opacity = '0'; }, 2800);
 }
