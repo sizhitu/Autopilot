@@ -3175,6 +3175,8 @@ let _wlInflight = null;
 let _wlPollTimer = null;
 let _wlPollCount = 0;
 let _wlPendingForce = false;
+let _manualRefreshStreak = 0;
+let _manualRefreshTs = 0;
 const _WL_MAX_POLL = 12;  // 最多轮询次数，避免长时间空刷
 
 
@@ -3266,8 +3268,18 @@ async function _loadWatchlistBody(forceRefresh) {
     // 免费 / 未登录：固定两只真实行情（服务端缓存），可点进分析
     if (isDemoMode()) {
       try {
-        if (forceRefresh) { try { showToast('正在拉取最新收盘价…', 'ok'); } catch (e) {} }
-        const res = await api('/api/watchlist/free-preview' + (forceRefresh ? '?refresh=1' : ''));
+        let hardQ = '';
+        if (forceRefresh) {
+          const now = Date.now();
+          if (now - _manualRefreshTs > 120000) _manualRefreshStreak = 0;
+          _manualRefreshStreak += 1;
+          _manualRefreshTs = now;
+          hardQ = (_manualRefreshStreak >= 2) ? '&hard=1' : '';
+          try {
+            showToast(hardQ ? '二次刷新：强制清除非最新代码缓存…' : '正在拉取最新收盘价…', 'ok');
+          } catch (e) {}
+        }
+        const res = await api('/api/watchlist/free-preview' + (forceRefresh ? ('?refresh=1' + hardQ) : ''));
         const json = await res.json();
         let stocks = (json && json.stocks) ? json.stocks : [];
         if (!stocks.length) stocks = getDemoWatchlistRows();
@@ -3311,10 +3323,23 @@ async function _loadWatchlistBody(forceRefresh) {
       }
     }
     setDemoBanner(false);
-    if (forceRefresh) { try { showToast('正在更新自选行情…', 'ok'); } catch (e) {} }
-    const res = await api('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''));
+    let hardQ2 = '';
+    if (forceRefresh) {
+      const now2 = Date.now();
+      if (now2 - _manualRefreshTs > 120000) _manualRefreshStreak = 0;
+      _manualRefreshStreak += 1;
+      _manualRefreshTs = now2;
+      hardQ2 = (_manualRefreshStreak >= 2) ? '&hard=1' : '';
+      try {
+        showToast(hardQ2 ? '二次刷新：强制清除非最新代码缓存并重拉…' : '正在更新自选行情…', 'ok');
+      } catch (e) {}
+    }
+    const res = await api('/api/watchlist' + (forceRefresh ? ('?refresh=1' + hardQ2) : ''));
     const json = await res.json();
     if (!json.success) throw new Error('获取失败');
+    if (json.hard_refresh && (json.hard_purged || []).length) {
+      try { showToast('已强制更新 ' + json.hard_purged.length + ' 只非最新代码', 'ok'); } catch (e) {}
+    }
 
     if (json.computing) {
       _watchWasComputing = true;

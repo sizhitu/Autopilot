@@ -1160,7 +1160,7 @@ def merge_free_preview_price_rows(rows: list) -> None:
 
 
 @app.get("/api/watchlist/free-preview")
-async def watchlist_free_preview(request: Request, refresh: bool = False):
+async def watchlist_free_preview(request: Request, refresh: bool = False, hard: bool = False):
     """免费/未登录固定两只真实行情；与登录看板同一套日期新鲜度与防回退逻辑。"""
     _rate_check(None, request, "free_preview", 30, 60)
     import time as _time
@@ -1209,6 +1209,21 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
             pass
         # 缓存里有旧日期 → 继续往下强制刷新
 
+    # 连续手动刷新 / hard：对非最新代码清 STATUS+K线
+    try:
+        from watchlist import _note_force_streak, _hard_purge_stale_symbols
+        _streak = _note_force_streak("__free_preview__", bool(refresh))
+        if hard or (refresh and _streak >= 2):
+            hard = True
+            prev_stocks = ((_FREE_PREVIEW_CACHE.get("data") or {}).get("stocks") or [])
+            purged = _hard_purge_stale_symbols(prev_stocks or items)
+            try:
+                _FREE_PREVIEW_CACHE["ts"] = 0  # 失效进程缓存时间戳，强制重写
+            except Exception:
+                pass
+    except Exception:
+        hard = bool(hard)
+
     # 逐只：未最新则 force_live；与旧缓存行比日期防回退
     prev_by = {}
     try:
@@ -1221,7 +1236,7 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
     stocks = []
     for code, name in items:
         try:
-            need_live = refresh or not _row_is_date_fresh(prev_by.get(str(code).upper()) or {}, code)
+            need_live = refresh or hard or not _row_is_date_fresh(prev_by.get(str(code).upper()) or {}, code)
             row = _status_dict_cached(code, name, 300, force_live=bool(need_live))
             if isinstance(row, dict):
                 row = dict(row)
@@ -1340,11 +1355,12 @@ async def watchlist_verify_fresh(req: VerifyFreshRequest, request: Request = Non
 
 
 @app.get("/api/watchlist")
-async def get_watchlist(refresh: bool = False, user: Optional[dict] = Depends(_optional_user),
+async def get_watchlist(refresh: bool = False, hard: bool = False,
+                        user: Optional[dict] = Depends(_optional_user),
                         authorization: Optional[str] = Header(None)):
     """获取自选看板。已登录用其自选（按用户排序、附带备注），未登录回退默认看板。
 
-    refresh=1 时强制后台重新计算（前端「刷新」按钮使用，支持逐行渐进返回）。
+    refresh=1 时强制后台重新计算；hard=1（或短时间内连续两次 refresh）对仍非最新日期的代码清缓存强拉。
     """
     user_id = user["id"] if user else None
     try:
@@ -1359,7 +1375,8 @@ async def get_watchlist(refresh: bool = False, user: Optional[dict] = Depends(_o
                 pass
         token = _bearer(authorization) if authorization else ""
         data = get_watchlist_status(
-            user_id, force=refresh, is_admin=is_admin, access_token=token or None
+            user_id, force=refresh, is_admin=is_admin, access_token=token or None,
+            hard=bool(hard),
         )
         data["user_scoped"] = user_id is not None
         if not isinstance(data.get("stocks"), list):

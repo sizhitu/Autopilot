@@ -572,6 +572,7 @@ def _status_to_dict(st: StockStatus) -> dict:
 
 # 缓存：按 user_id 分桶（0 = 全局默认看板），后台刷新，接口永远秒回
 _CACHES = {}          # key -> {'data':..., 'ts':..., 'refreshing':...}
+_FORCE_STREAK = {}    # key -> {n, ts} 手动 force 连续次数
 _WATCHLIST_SOFT_TTL = 45    # 秒内纯内存命中，毫秒级返回
 _WATCHLIST_TTL = 600
 _STATUS_CACHE = {}
@@ -963,6 +964,59 @@ def _schedule_price_date_refresh(key, stale_items: list) -> None:
         pass
 
 
+
+def _note_force_streak(key, force: bool) -> int:
+    """记录手动刷新连击；3 分钟内累计，返回当前次数。"""
+    if not force:
+        return 0
+    now = time.time()
+    k = str(key)
+    ent = _FORCE_STREAK.get(k) or {"n": 0, "ts": 0.0}
+    if now - float(ent.get("ts") or 0) > 180:
+        ent = {"n": 0, "ts": now}
+    ent["n"] = int(ent.get("n") or 0) + 1
+    ent["ts"] = now
+    _FORCE_STREAK[k] = ent
+    return int(ent["n"])
+
+
+def _hard_purge_stale_symbols(stocks_or_items) -> list:
+    """对非最新交易日代码：清 STATUS + K 线缓存，返回 [(code,name),...]。"""
+    from data_fetcher import invalidate_kline_cache
+    stale = []
+    seen = set()
+    # stocks list of dicts or items list of tuples
+    rows = []
+    for x in stocks_or_items or []:
+        if isinstance(x, dict):
+            rows.append(x)
+        elif isinstance(x, (list, tuple)) and x:
+            rows.append({"code": x[0], "name": x[1] if len(x) > 1 else x[0]})
+        else:
+            rows.append({"code": x})
+    tagged, stale_items = _tag_stocks_date_freshness(rows)
+    # 若传入的是 items 且无 bar_date，全部视为需强刷
+    if not stale_items and rows:
+        for r in rows:
+            code = str((r or {}).get("code") or "").strip().upper()
+            if not code or code in seen:
+                continue
+            if not _bar_date_str(r) or not _row_is_date_fresh(r, code):
+                stale_items.append((code, (r or {}).get("name") or code))
+    for code, name in stale_items:
+        code = str(code).upper()
+        if code in seen:
+            continue
+        seen.add(code)
+        stale.append((code, name or code))
+        _STATUS_CACHE.pop(code, None)
+        try:
+            invalidate_kline_cache(code)
+            invalidate_kline_cache(str(code).lower())
+        except Exception:
+            pass
+    return stale
+
 def _annotate_and_maybe_refresh_dates(out: dict, key, items: list = None) -> dict:
     """响应前打标；有过旧现价日期则后台更新缓存。"""
     if not isinstance(out, dict):
@@ -1313,7 +1367,7 @@ def _background_refresh(key, items, user_id, bust_status_cache: bool = False):
 
 
 def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = False,
-                         access_token: str = None) -> dict:
+                         access_token: str = None, hard: bool = False) -> dict:
     """
     获取关注股票看板状态（接口永远秒回）。
       - 已登录且有自选 → 计算该用户看板
@@ -1358,6 +1412,16 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
 
     now = time.time()
     cache = _CACHES.get(key)
+    force_streak = _note_force_streak(key, bool(force))
+    # 连续手动刷新 ≥2 次：对仍非最新日期的代码强制清缓存
+    hard = bool(hard) or (bool(force) and force_streak >= 2)
+    hard_purged = []
+    if hard and cache and isinstance(cache.get("data"), dict):
+        hard_purged = _hard_purge_stale_symbols(cache["data"].get("stocks") or items)
+        if not hard_purged:
+            hard_purged = _hard_purge_stale_symbols(items)
+    elif hard:
+        hard_purged = _hard_purge_stale_symbols(items)
 
     # 软 TTL：完整可用数据 → 毫秒级返回；但必须与当前自选 codes 对齐
     if (not force and cache and isinstance(cache.get('data'), dict)
@@ -1412,12 +1476,14 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                         # 周五 vs 周一特殊：bar 为周五且今天周一/二可接受
                         all_fresh = False
                         break
-                if all_fresh and (out.get('stocks') or []):
+                if all_fresh and (out.get('stocks') or []) and not hard:
                     force_needed = False
                     out['computing'] = False
                     out['cache_hit'] = True
                     out['skipped_force'] = True
                     return _annotate_and_maybe_refresh_dates(out, key, items)
+                if hard and hard_purged:
+                    force_needed = True
             except Exception:
                 pass
         need_refresh = force_needed or out['stale'] or (
@@ -1439,12 +1505,23 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                             'total': len(items),
                         }
                     threading.Thread(
-                        target=_background_refresh, args=(key, items, user_id, bool(force)), daemon=True
+                        target=_background_refresh,
+                        args=(key, items, user_id, bool(force or hard)),
+                        daemon=True,
                     ).start()
             out['computing'] = True
+            if hard:
+                out['hard_refresh'] = True
+                out['hard_purged'] = [c for c, _ in (hard_purged or [])]
+                out['force_streak'] = force_streak
         else:
             out['computing'] = bool(cache.get('refreshing'))
-        return _annotate_and_maybe_refresh_dates(out, key, items)
+        out = _annotate_and_maybe_refresh_dates(out, key, items)
+        if hard:
+            out['hard_refresh'] = True
+            out['hard_purged'] = [c for c, _ in (hard_purged or [])]
+            out['force_streak'] = force_streak
+        return out
 
     # 无可用缓存：骨架 + 后台计算
     with _refresh_lock:
