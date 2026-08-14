@@ -590,16 +590,12 @@ body.help-open { overflow: hidden; touch-action: none; }
 <!-- 登录/注册 弹窗 -->
 
 <!-- 升级套餐弹窗 -->
-<div id="upgradeModal" class="modal hidden glass-overlay" style="display:none;position:fixed;inset:0;z-index:10000;align-items:center;justify-content:center;padding:16px;">
-  <div class="glass-dark" style="max-width:440px;width:100%;padding:20px 16px 16px;position:relative;">
+<div id="upgradeModal" class="modal hidden glass-overlay" style="display:none;position:fixed;inset:0;z-index:10000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;overflow-y:auto;" onclick="if(event.target===this)closeUpgradeModal()">
+  <div class="glass-dark" style="max-width:440px;width:100%;max-height:min(88vh,640px);overflow-y:auto;padding:20px 16px 16px;position:relative;margin:auto;box-sizing:border-box;" onclick="event.stopPropagation()">
     <button type="button" onclick="closeUpgradeModal()" aria-label="关闭" style="position:absolute;right:12px;top:10px;background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;line-height:1;">×</button>
     <div style="text-align:center;margin-bottom:6px;color:var(--gold);font-size:12px;font-weight:600;letter-spacing:.3px;">UNLOCK</div>
     <div style="text-align:center;font-size:17px;font-weight:700;margin-bottom:6px;color:var(--text);">解锁完整自选与任意标的分析</div>
     <div style="text-align:center;font-size:12px;color:var(--text-dim);margin-bottom:10px;line-height:1.5;">免费版可体验 AAPL / TSLA 真实行情。<br>升级后可添加任意美股、A股与 ETF，并使用完整策略视图。</div>
-    <div id="upgradeMaintainBanner" style="margin-bottom:14px;padding:10px 12px;border-radius:10px;border:1px solid rgba(241,196,15,.45);background:rgba(241,196,15,.12);text-align:center;font-size:13px;color:var(--text);line-height:1.55;">
-      <b style="color:var(--gold);">支付功能维护中</b><br>
-      <span style="font-size:12px;color:var(--text-dim);">暂无法完成订阅支付，请稍后再试。<br>感谢支持！</span>
-    </div>
     <div id="planCardPlus" style="cursor:not-allowed;opacity:.55;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;background:rgba(128,128,128,.08);position:relative;pointer-events:none;">
       <span style="position:absolute;right:10px;top:10px;background:var(--gold,#c9a227);color:#111;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700;">推荐</span>
       <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px;">Plus</div>
@@ -1769,6 +1765,8 @@ function openUpgradeModal() {
   if (elB) elB.textContent = Number(pb).toFixed(1).replace(/\.0$/, '');
   if (elP) elP.textContent = Number(pp).toFixed(1).replace(/\.0$/, '');
   m.style.display = 'flex';
+  m.style.alignItems = 'center';
+  m.style.justifyContent = 'center';
   m.classList.remove('hidden');
 }
 function closeUpgradeModal() {
