@@ -935,7 +935,15 @@ def _background_price_date_refresh(key, symbols_with_names: list) -> None:
                 _status_cache_put(cu, base)
             except Exception:
                 pass
-        if key:
+        if key == "__free_preview__":
+            try:
+                # 延迟导入，避免与 web_app 循环依赖
+                import web_app as _wa
+                if hasattr(_wa, "merge_free_preview_price_rows"):
+                    _wa.merge_free_preview_price_rows(rows)
+            except Exception:
+                pass
+        elif key is not None:
             _merge_price_fields_into_board(key, rows)
     except Exception:
         pass

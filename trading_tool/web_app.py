@@ -1118,6 +1118,47 @@ async def get_daily(symbol: str, limit: int = Query(0, description="0=全部，>
 #  自选看板 API（按用户）
 # ================================================================
 
+def merge_free_preview_price_rows(rows: list) -> None:
+    """后台补价后写回未登录 free-preview 进程缓存（只升不降）。"""
+    global _FREE_PREVIEW_CACHE
+    try:
+        _FREE_PREVIEW_CACHE
+    except NameError:
+        _FREE_PREVIEW_CACHE = {"ts": 0, "data": None}
+    if not rows or not isinstance(_FREE_PREVIEW_CACHE.get("data"), dict):
+        return
+    try:
+        from watchlist import _row_fresher, _row_is_date_fresh, _tag_stocks_date_freshness
+        data = dict(_FREE_PREVIEW_CACHE["data"])
+        stocks = list(data.get("stocks") or [])
+        by = {str(r.get("code")).upper(): r for r in rows if r and r.get("code")}
+        new_stocks = []
+        for s in stocks:
+            if not isinstance(s, dict) or not s.get("code"):
+                new_stocks.append(s)
+                continue
+            cu = str(s["code"]).upper()
+            u = by.get(cu)
+            if not u:
+                new_stocks.append(s)
+                continue
+            merged = dict(s)
+            for k in ("price", "bar_date", "bar_stale", "change_1d", "date_fresh", "expected_bar_date", "data_source"):
+                if k in u and u.get(k) is not None:
+                    merged[k] = u[k]
+            merged = _row_fresher(merged, s)
+            merged["date_fresh"] = _row_is_date_fresh(merged, cu)
+            new_stocks.append(merged)
+        tagged, stale = _tag_stocks_date_freshness(new_stocks)
+        data["stocks"] = tagged
+        data["date_stale_count"] = len(stale)
+        data["cache_date_stale"] = len(stale) > 0
+        import time as _t
+        _FREE_PREVIEW_CACHE = {"ts": _t.time(), "data": data}
+    except Exception:
+        pass
+
+
 @app.get("/api/watchlist/free-preview")
 async def watchlist_free_preview(request: Request, refresh: bool = False):
     """免费/未登录固定两只真实行情；与登录看板同一套日期新鲜度与防回退逻辑。"""
@@ -1162,7 +1203,7 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
             payload["date_stale_count"] = len(stale)
             payload["cached"] = True
             payload["data_source"] = "free_preview_cache_stale"
-            _schedule_price_date_refresh(None, stale)
+            _schedule_price_date_refresh("__free_preview__", stale)
             # 仍继续同步拉新，尽量本次就返回新日期
         except Exception:
             pass
@@ -1255,7 +1296,7 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
         _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
         if stale:
             from watchlist import _schedule_price_date_refresh
-            _schedule_price_date_refresh(None, stale)
+            _schedule_price_date_refresh("__free_preview__", stale)
     except Exception:
         _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
 
