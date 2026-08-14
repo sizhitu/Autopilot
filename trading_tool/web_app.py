@@ -260,10 +260,45 @@ def result_to_dict(result) -> dict:
     return d
 
 
-def df_to_chart_json(df: pd.DataFrame, result, show_last=300) -> dict:
-    """提取K线+均线数据供前端绘图。全库统一默认 300 根，便于观察 MA120/MA250。"""
-    show_last = max(int(show_last or 300), 300)
-    # 有多少展示多少，上限 show_last
+CHART_BARS = 300  # 全站分析/行情图固定展示根数
+
+
+def _clamp_quote_chart(payload: dict) -> dict:
+    """保证返回的 chart 恰好最多 CHART_BARS 根，并同步 meta.rows。"""
+    if not isinstance(payload, dict):
+        return payload
+    out = dict(payload)
+    ch = out.get("chart")
+    if isinstance(ch, dict) and isinstance(ch.get("candles"), list):
+        n0 = len(ch["candles"])
+        if n0 > CHART_BARS:
+            ch = dict(ch)
+            for k, v in list(ch.items()):
+                if isinstance(v, list) and len(v) == n0:
+                    ch[k] = v[-CHART_BARS:]
+            mas = ch.get("mas")
+            if isinstance(mas, dict):
+                mas2 = {}
+                for pk, pv in mas.items():
+                    if isinstance(pv, dict) and isinstance(pv.get("data"), list) and len(pv["data"]) == n0:
+                        mas2[pk] = {**pv, "data": pv["data"][-CHART_BARS:]}
+                    else:
+                        mas2[pk] = pv
+                ch["mas"] = mas2
+            ch["candles"] = ch["candles"][-CHART_BARS:]
+            ch["count"] = len(ch["candles"])
+            out["chart"] = ch
+        n = len((out.get("chart") or {}).get("candles") or [])
+        meta = dict(out.get("meta") or {})
+        meta["rows"] = n
+        meta["chart_bars"] = n
+        out["meta"] = meta
+    return out
+
+
+def df_to_chart_json(df: pd.DataFrame, result, show_last=None) -> dict:
+    """提取K线+均线数据供前端绘图。全库统一固定 300 根。"""
+    show_last = CHART_BARS
     recent = df.tail(min(show_last, len(df))).copy().reset_index(drop=True)
 
     candles = []
@@ -819,12 +854,12 @@ async def cron_prewarm_cache(
                 "stale": bool(is_stale),
                 "prewarm": True,
                 "data": result_to_dict(result),
-                "chart": df_to_chart_json(df, result, show_last=300),
+                "chart": df_to_chart_json(df, result, show_last=CHART_BARS),
                 "nine_turn": nine_turn,
                 "high_low": extra.get("high_low"),
                 "valuation": extra.get("valuation"),
                 "meta": {
-                    "rows": len(df),
+                    "rows": min(len(df), CHART_BARS),
                     "last_close": round(float(df["close"].iloc[-1]), 2),
                     "end_date": end_s or (
                         df["date"].iloc[-1].strftime("%Y-%m-%d") if "date" in df.columns else ""
@@ -879,7 +914,7 @@ async def cron_prewarm_cache(
                 payload = _to_jsonable({
                     "success": True, "symbol": sym, "stale": False, "prewarm": True,
                     "data": result_to_dict(result),
-                    "chart": df_to_chart_json(df, result, show_last=300),
+                    "chart": df_to_chart_json(df, result, show_last=CHART_BARS),
                     "nine_turn": nine_turn,
                     "high_low": extra.get("high_low"),
                     "valuation": extra.get("valuation"),
@@ -997,12 +1032,14 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             and (cached_hit.get("chart") or {}).get("candles")):
         _nc = len((cached_hit.get("chart") or {}).get("candles") or [])
         # 低于 250 根视为旧截断缓存，强制重拉
-        if _nc >= 300:
-            cached_hit = dict(cached_hit)
-            cached_hit["stale"] = False
-            cached_hit["cache_hit"] = True
-            return JSONResponse(content=_to_jsonable(cached_hit),
-                                headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+        if _nc >= 250:
+            cached_hit = _clamp_quote_chart(dict(cached_hit))
+            _nc3 = len(((cached_hit.get("chart") or {}).get("candles")) or [])
+            if _nc3 >= 250:
+                cached_hit["stale"] = False
+                cached_hit["cache_hit"] = True
+                return JSONResponse(content=_to_jsonable(cached_hit),
+                                    headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
         # 短 K 线缓存作废（含历史 15/80 根污染）
         try:
             cache.delete_quote_cache(req.symbol)
@@ -1012,7 +1049,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             except Exception:
                 pass
     try:
-        _days = max(int(req.days or 300), 300)
+        _days = CHART_BARS
         df = fetcher.fetch(req.symbol, _days)
         if df is None or len(df) < 200:
             try:
@@ -1020,7 +1057,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
                 invalidate_kline_cache(req.symbol)
             except Exception:
                 pass
-            df = fetcher.fetch(req.symbol, max(_days, 400))
+            df = fetcher.fetch(req.symbol, CHART_BARS)
         source = "live"
         stale = False
     except Exception as e:
@@ -1028,8 +1065,8 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         cached = cache.get_quote_cache(req.symbol)
         if cached and isinstance(cached, dict):
             _nc2 = len(((cached.get("chart") or {}).get("candles")) or [])
-            if _nc2 >= 300:
-                cached = dict(cached)
+            if _nc2 >= 250:
+                cached = _clamp_quote_chart(dict(cached))
                 cached["stale"] = True
                 return JSONResponse(content=_to_jsonable(cached),
                                     headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
@@ -1056,7 +1093,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         except Exception:
             pass
         try:
-            df2 = fetcher.fetch(req.symbol, 400)
+            df2 = fetcher.fetch(req.symbol, CHART_BARS)
             if df2 is not None and len(df2) > len(df):
                 df = df2
         except Exception:
@@ -1068,6 +1105,10 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             daily_store.store_daily_bars(req.symbol, df, source=source)
         except Exception:
             pass
+
+    # 固定保留最近 300 根，避免 meta 出现 400、图却 300 的不一致
+    if df is not None and len(df) > CHART_BARS:
+        df = df.tail(CHART_BARS).reset_index(drop=True)
 
     strategy = FujimotoStrategy(total_capital=100000)
     result = strategy.analyze(df)
@@ -1096,7 +1137,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         "symbol": req.symbol,
         "stale": stale,
         "data": result_to_dict(result),
-        "chart": df_to_chart_json(df, result, show_last=max(300, int(getattr(req, "days", 300) or 300))),
+        "chart": df_to_chart_json(df, result, show_last=CHART_BARS),
         "nine_turn": nine_turn,
         "high_low": extra["high_low"],
         "valuation": extra["valuation"],
@@ -1111,11 +1152,13 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         }
     })
 
-    # 仅当 chart≥300 根才写入 quote 缓存，杜绝 15 根污染全站
+    payload = _clamp_quote_chart(payload)
+
+    # 仅当 chart≥250 根才写入 quote 缓存，杜绝 15 根污染；写入前已截断为最多 300
     if source == "live":
         try:
             _cn = len(((payload.get("chart") or {}).get("candles")) or [])
-            if _cn >= 300:
+            if _cn >= 250:
                 cache.set_quote_cache(req.symbol, payload)
             else:
                 cache.delete_quote_cache(req.symbol)
@@ -1138,7 +1181,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         except Exception:
             pass
 
-    return JSONResponse(content=payload,
+    return JSONResponse(content=_to_jsonable(payload),
                         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -1621,7 +1664,7 @@ async def analyze_csv(
         response_data = {
             "success": True,
             "data": result_to_dict(result),
-            "chart": df_to_chart_json(df, result, show_last=300),
+            "chart": df_to_chart_json(df, result, show_last=CHART_BARS),
             "nine_turn": nine_turn,
             "high_low": extra["high_low"],
             "valuation": extra["valuation"],

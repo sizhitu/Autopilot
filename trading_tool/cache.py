@@ -243,8 +243,8 @@ def set_quote_cache(symbol: str, payload: dict, ttl: int = None) -> None:
         if isinstance(candles, list) and len(candles) < 250:
             return
         # 历史曾截断为 80/更短，导致分析页只见十几～几十根 K 线
-        max_n = int(os.getenv("CACHE_QUOTE_CANDLES_MAX", "320") or "320")
-        max_n = max(max_n, 300)
+        max_n = int(os.getenv("CACHE_QUOTE_CANDLES_MAX", "300") or "300")
+        max_n = min(max(max_n, 250), 300)  # 全站固定最多 300 根
         if isinstance(candles, list) and len(candles) > max_n:
             ch = dict(ch)
             n0 = len(candles)

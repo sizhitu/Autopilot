@@ -2701,14 +2701,17 @@ async function fetchQuote(symbol, name, market) {
   try {
     const res = await api('/api/quote', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbol: symbol, days: 300, force: true})
+      body: JSON.stringify({symbol: symbol, days: 300, force: !!window._quoteForce})
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
 
     // 显示股票信息（含收盘价/K线区间）
     info.style.display = 'flex';
-    info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${json.meta.rows}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
+    const _nBars = (json.chart && json.chart.candles && json.chart.candles.length)
+      ? json.chart.candles.length
+      : (json.meta && json.meta.rows) || '';
+    info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${_nBars}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
 
     updateResults(json.data, json.meta, json.nine_turn);
     if (json.stale) showToast('⚠ 当前行情为缓存快照，可能延迟', 'info');
@@ -2727,7 +2730,7 @@ async function fetchQuote(symbol, name, market) {
       switchMainTab('analysis');
     }
     if (json.chart && json.chart.candles && json.chart.candles.length) {
-      // 短 K 线（历史缓存污染）自动 force 再拉一次，目标 300 根
+      // 短 K 线（历史缓存污染）自动 force 再拉一次，目标固定 300 根
       if (json.chart.candles.length < 250 && !window._quoteShortRetry) {
         window._quoteShortRetry = true;
         window._quoteForce = true;
@@ -2742,11 +2745,10 @@ async function fetchQuote(symbol, name, market) {
       lastChartData = json.chart;
       drawChart(json.chart);
       const nBar = json.chart.candles.length;
-      const metaRows = (json.meta && json.meta.rows) ? json.meta.rows : nBar;
       const cm = document.getElementById('chartMeta');
       if (cm) {
         const base = cm.textContent || '';
-        cm.textContent = (base && base.indexOf('错误') < 0 ? base + ' · ' : '') + 'K线 ' + nBar + ' 根' + (metaRows && metaRows !== nBar ? ('（数据 ' + metaRows + '）') : '');
+        cm.textContent = (base && base.indexOf('错误') < 0 ? base + ' · ' : '') + 'K线 ' + nBar + ' 根';
       }
     } else {
       document.getElementById('chartMeta').textContent = '行情已返回但缺少K线，请点刷新或重新搜索';
