@@ -1201,10 +1201,11 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
         })
 
     done_map = {}
-    # 并行计算；每完成一批（默认 5 个）才写一次进度缓存，供前端轮询渐进重绘
-    _batch = 5
+    # 并行计算；每完成 1～3 个写进度（大列表更密），避免只见前 5 只
+    _batch = 1 if total <= 8 else 3
     _done_n = 0
-    with ThreadPoolExecutor(max_workers=min(5, max(2, len(items)))) as ex:
+    _workers = min(8, max(3, len(items)))
+    with ThreadPoolExecutor(max_workers=_workers) as ex:
         def _one(code, name):
             cu = str(code).upper()
             prev = base.get(cu) if base else None

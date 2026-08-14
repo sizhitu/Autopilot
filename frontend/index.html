@@ -3177,7 +3177,7 @@ let _wlPollCount = 0;
 let _wlPendingForce = false;
 let _manualRefreshStreak = 0;
 let _manualRefreshTs = 0;
-const _WL_MAX_POLL = 12;  // 最多轮询次数，避免长时间空刷
+const _WL_MAX_POLL = 40;  // 大自选（20+）需足够轮询；仍有熔断
 
 
 function isFreeUser() {
@@ -3424,24 +3424,31 @@ async function _loadWatchlistBody(forceRefresh) {
       clearTimeout(_wlPollTimer);
       const pr = json.progress || {};
       const progDone = (pr.done != null && pr.total) ? (pr.done >= pr.total) : false;
-      const nearlyDone = (total > 0 && usable.length >= total) || progDone;
-      if (nearlyDone) {
-        if (_wlPollCount < 2) {
+      const stillComputing = !!json.computing && !progDone;
+      // 必须等 computing=false 或 progress 全部完成，不能只因「可用数≈5」就停
+      const allReady = (!json.computing && progDone) ||
+        (!json.computing && total > 0 && usable.length >= total) ||
+        (progDone && usable.length >= total);
+      if (stillComputing || (!allReady && json.computing)) {
+        if (_wlPollCount < _WL_MAX_POLL) {
           _wlPollCount += 1;
-          _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 2000);
+          // 数量大时间隔略加长，减轻压力
+          const gap = total > 15 ? 2800 : 2200;
+          _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, gap);
         } else {
           _wlPollCount = 0;
           _watchWasComputing = false;
-          setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt });
+          setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt || '' });
+          try { showToast('部分行情仍在计算，可稍后再点刷新', 'info'); } catch (e) {}
         }
-      } else if (_wlPollCount < _WL_MAX_POLL) {
+      } else if (!allReady && _wlPollCount < Math.min(_WL_MAX_POLL, Math.max(8, Math.ceil(total / 3)))) {
+        // computing 已结束但行未齐：再补几轮
         _wlPollCount += 1;
-        _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 2500);
+        _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 2000);
       } else {
-        // 熔断：停止「刷新中」，避免最后不足5只一直转
         _wlPollCount = 0;
         _watchWasComputing = false;
-        setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt || '' });
+        setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt });
       }
       return;
     }

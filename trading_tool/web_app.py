@@ -394,6 +394,29 @@ def _rate_check(authorization: Optional[str], request: Request, name: str,
         )
 
 
+# 全站 API 宽松总限流（按 IP/用户）；各接口可另有更严规则
+_GLOBAL_RL_SKIP = {
+    "/api/health", "/api/config",
+    "/api/billing/webhook", "/api/billing/webhook/waffo", "/api/billing/webhook/polar",
+    "/api/cron/reports", "/api/cron/prewarm-cache",
+}
+
+@app.middleware("http")
+async def global_api_rate_limit(request: Request, call_next):
+    path = request.url.path or ""
+    if path.startswith("/api/") and path not in _GLOBAL_RL_SKIP and not path.startswith("/api/billing/webhook"):
+        try:
+            auth_h = request.headers.get("authorization")
+            # 宽松：每分钟 180 次（约 3 次/秒峰值仍可），防打挂
+            _rate_check(auth_h, request, "global_api", 180, 60)
+        except HTTPException as he:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=he.status_code, content={"detail": he.detail})
+        except Exception:
+            pass
+    return await call_next(request)
+
+
 # ================================================================
 #  健康检查
 # ================================================================
@@ -482,6 +505,7 @@ async def get_digest_prefs_api(user: dict = Depends(auth.get_current_user)):
 
 @app.post("/api/user/digest")
 async def set_digest_prefs_api(req: DigestPrefsRequest, user: dict = Depends(auth.get_current_user)):
+    _rate_check(None, request, "digest_set", 20, 60)
     profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
     ent = user_store.entitlement_from_profile(
         profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin"))
@@ -1427,6 +1451,7 @@ class WatchAddRequest(BaseModel):
 async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_current_user),
                         authorization: Optional[str] = Header(None)):
     """添加自选（需登录）。支持「代码」或「名称」输入；多市场自动归一化。"""
+    _rate_check(authorization, request, "watchlist_add", 30, 60)
     raw = (req.symbol or "").strip()
     if not raw:
         raise HTTPException(400, "代码/名称不能为空")
@@ -1476,6 +1501,7 @@ class WatchReorderRequest(BaseModel):
 async def watchlist_reorder(req: WatchReorderRequest, user: dict = Depends(auth.get_current_user),
                             authorization: Optional[str] = Header(None)):
     """调整自选顺序（需登录）。传入期望的 symbol 顺序列表。"""
+    _rate_check(authorization, request, "watchlist_reorder", 20, 60)
     ok = watchlist_store.reorder(user["id"], [str(s).upper() for s in req.order],
                                  _bearer(authorization))
     return {"success": ok}
@@ -1490,6 +1516,7 @@ class WatchNoteRequest(BaseModel):
 async def watchlist_note(req: WatchNoteRequest, user: dict = Depends(auth.get_current_user),
                          authorization: Optional[str] = Header(None)):
     """为某自选添加/修改备注（需登录）。"""
+    _rate_check(authorization, request, "watchlist_note", 30, 60)
     symbol = (req.symbol or "").strip().upper()
     if not symbol:
         raise HTTPException(400, "代码不能为空")
@@ -1620,6 +1647,7 @@ class LadderRequest(BaseModel):
 @app.post("/api/ladder")
 async def calc_ladder(req: LadderRequest, authorization: Optional[str] = Header(None)):
     """藤本茂阶梯仓位计算器"""
+    _rate_check(authorization, request, "ladder", 30, 60)
     _require_pro(authorization)
     strategy = FujimotoStrategy()
     change = req.price_change / 100.0
@@ -1893,6 +1921,7 @@ async def billing_status(user: dict = Depends(auth.get_current_user)):
 @app.post("/api/billing/checkout")
 async def billing_checkout(request: Request, user: dict = Depends(auth.get_current_user)):
     """创建结账会话：优先 Polar，其次静态 Checkout Link，最后 Stripe。"""
+    _rate_check(None, request, "billing_checkout", 10, 60)
     profile = user_store.get_or_create_profile(user["id"], user.get("email", ""))
     ent = user_store.entitlement_from_profile(
         profile, is_admin_user=bool(user.get("is_admin") or profile.get("is_admin"))
