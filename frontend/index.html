@@ -693,7 +693,7 @@ body.help-open { overflow: hidden; touch-action: none; }
           <div class="search-results" id="watchSuggest" style="top:100%; left:0; width:230px; display:none;"></div>
           <button class="btn btn-green btn-sm" onclick="addWatch()">+ 添加</button>
         </span>
-        <button class="btn btn-gold btn-sm" onclick="loadWatchlist(true)">🔄 刷新</button>
+        <button class="btn btn-gold btn-sm" onclick="manualWatchlistRefresh()">🔄 刷新</button>
       </div>
     </div>
     <div id="watchlistSummary" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px;"></div>
@@ -3223,6 +3223,45 @@ function setDemoBanner(show) {
   if (el) el.style.display = show ? 'block' : 'none';
 }
 
+// 手动刷新节流：最短间隔 + 每分钟次数，保护后端
+let _lastManualRefreshAt = 0;
+const _MANUAL_REFRESH_MIN_MS = 8000;   // 两次手动刷新至少间隔 8 秒
+const _MANUAL_REFRESH_MAX_PER_MIN = 6;
+let _manualRefreshTimes = [];
+
+function _toastRateLimit(errMsg) {
+  const m = String(errMsg || '');
+  if (/429|过于频繁|限流/.test(m)) {
+    try { showToast(m.replace(/^Error:\s*/i, '') || '请求过于频繁，请稍后再试', 'info'); } catch (e) {}
+    return true;
+  }
+  return false;
+}
+
+function manualWatchlistRefresh() {
+  const now = Date.now();
+  const wait = _MANUAL_REFRESH_MIN_MS - (now - _lastManualRefreshAt);
+  if (_lastManualRefreshAt && wait > 0) {
+    const sec = Math.ceil(wait / 1000);
+    try { showToast('刷新太频繁，请 ' + sec + ' 秒后再试', 'info'); } catch (e) {}
+    return;
+  }
+  _manualRefreshTimes = (_manualRefreshTimes || []).filter(function (t) { return now - t < 60000; });
+  if (_manualRefreshTimes.length >= _MANUAL_REFRESH_MAX_PER_MIN) {
+    const oldest = _manualRefreshTimes[0];
+    const sec = Math.ceil((60000 - (now - oldest)) / 1000);
+    try { showToast('一分钟内最多刷新 ' + _MANUAL_REFRESH_MAX_PER_MIN + ' 次，请 ' + sec + ' 秒后再试', 'info'); } catch (e) {}
+    return;
+  }
+  if (_wlInflight) {
+    try { showToast('正在刷新中，请稍候…', 'info'); } catch (e) {}
+    return;
+  }
+  _lastManualRefreshAt = now;
+  _manualRefreshTimes.push(now);
+  loadWatchlist(true);
+}
+
 async function loadWatchlist(forceRefresh = false) {
   if (_wlInflight) {
     if (forceRefresh) _wlPendingForce = true;
@@ -3280,6 +3319,10 @@ async function _loadWatchlistBody(forceRefresh) {
           } catch (e) {}
         }
         const res = await api('/api/watchlist/free-preview' + (forceRefresh ? ('?refresh=1' + hardQ) : ''));
+        if (res.status === 429) {
+          const j = await res.json().catch(function () { return {}; });
+          throw new Error((j && j.detail) || '请求过于频繁，请稍后再试');
+        }
         const json = await res.json();
         let stocks = (json && json.stocks) ? json.stocks : [];
         if (!stocks.length) stocks = getDemoWatchlistRows();
@@ -3335,8 +3378,12 @@ async function _loadWatchlistBody(forceRefresh) {
       } catch (e) {}
     }
     const res = await api('/api/watchlist' + (forceRefresh ? ('?refresh=1' + hardQ2) : ''));
+    if (res.status === 429) {
+      const j = await res.json().catch(function () { return {}; });
+      throw new Error((j && j.detail) || '请求过于频繁，请稍后再试');
+    }
     const json = await res.json();
-    if (!json.success) throw new Error('获取失败');
+    if (!json.success) throw new Error(json.detail || '获取失败');
     if (json.hard_refresh && (json.hard_purged || []).length) {
       try { showToast('已强制更新 ' + json.hard_purged.length + ' 只非最新代码', 'ok'); } catch (e) {}
     }
@@ -3438,7 +3485,9 @@ async function _loadWatchlistBody(forceRefresh) {
     } catch (e) {}
   } catch(e) {
     // 失败时尽量保留旧表，只改文案
-    if (_lastWatchRows && _lastWatchRows.length) {
+    if (_toastRateLimit(e && (e.message || e))) {
+      setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt });
+    } else if (_lastWatchRows && _lastWatchRows.length) {
       setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt });
       const el = document.getElementById('watchlistUpdated');
       if (el && _lastWatchUpdatedAt) {

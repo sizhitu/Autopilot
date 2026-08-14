@@ -1163,6 +1163,9 @@ def merge_free_preview_price_rows(rows: list) -> None:
 async def watchlist_free_preview(request: Request, refresh: bool = False, hard: bool = False):
     """免费/未登录固定两只真实行情；与登录看板同一套日期新鲜度与防回退逻辑。"""
     _rate_check(None, request, "free_preview", 30, 60)
+    # 手动刷新更严：每分钟最多 6 次，避免打挂实例
+    if refresh:
+        _rate_check(None, request, "free_preview_refresh", 6, 60)
     import time as _time
     from watchlist import (
         _status_dict_cached, _row_is_date_fresh, _row_fresher, _bar_date_str,
@@ -1357,11 +1360,17 @@ async def watchlist_verify_fresh(req: VerifyFreshRequest, request: Request = Non
 @app.get("/api/watchlist")
 async def get_watchlist(refresh: bool = False, hard: bool = False,
                         user: Optional[dict] = Depends(_optional_user),
-                        authorization: Optional[str] = Header(None)):
+                        authorization: Optional[str] = Header(None),
+                        request: Request = None):
     """获取自选看板。已登录用其自选（按用户排序、附带备注），未登录回退默认看板。
 
     refresh=1 时强制后台重新计算；hard=1（或短时间内连续两次 refresh）对仍非最新日期的代码清缓存强拉。
     """
+    # 读缓存不严限；手动刷新限流
+    if refresh:
+        _rate_check(authorization, request, "watchlist_refresh", 6, 60)
+        if hard:
+            _rate_check(authorization, request, "watchlist_hard", 3, 60)
     user_id = user["id"] if user else None
     try:
         is_admin = bool(user and (user.get("is_admin") or False))
