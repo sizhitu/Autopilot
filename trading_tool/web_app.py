@@ -23,6 +23,15 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional
 
+
+import warnings
+# 抑制 supabase/httpx 在新版 SDK 中的弃用噪声（不影响功能）
+warnings.filterwarnings("ignore", message=r".*timeout.*deprecated.*", category=DeprecationWarning)
+warnings.filterwarnings("ignore", message=r".*verify.*deprecated.*", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"supabase.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"postgrest.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"httpx.*")
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -406,9 +415,8 @@ async def global_api_rate_limit(request: Request, call_next):
     path = request.url.path or ""
     if path.startswith("/api/") and path not in _GLOBAL_RL_SKIP and not path.startswith("/api/billing/webhook"):
         try:
-            auth_h = request.headers.get("authorization")
-            # 宽松：每分钟 180 次（约 3 次/秒峰值仍可），防打挂
-            _rate_check(auth_h, request, "global_api", 180, 60)
+            # 仅按 IP 限流，禁止在中间件里解析 JWT/打 Supabase（否则易拖死实例）
+            _rate_check(None, request, "global_api", 180, 60)
         except HTTPException as he:
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=he.status_code, content={"detail": he.detail})
@@ -422,7 +430,18 @@ async def global_api_rate_limit(request: Request, call_next):
 # ================================================================
 @app.get("/api/health")
 async def health():
-    return {"success": True, "service": "autopilot-api", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    # 极轻量：不做 DB/行情；偶发清理过大进程缓存，降低 OOM 被杀概率
+    try:
+        from watchlist import maybe_trim_caches
+        maybe_trim_caches()
+    except Exception:
+        pass
+    return {
+        "success": True,
+        "service": "autopilot-api",
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "ok": True,
+    }
 
 
 @app.get("/api/config")

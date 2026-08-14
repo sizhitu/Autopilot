@@ -580,6 +580,8 @@ _STATUS_TTL = 180
 _STATUS_CACHE_MAX = 64
 _CACHES_MAX = 12            # 最多保留多少套看板缓存
 _refresh_lock = threading.Lock()
+_BG_SEM = threading.Semaphore(2)  # 同时最多 2 个看板/补价后台任务，防线程打爆内存
+_LAST_TRIM_TS = 0.0
 
 
 def _bar_date_str(row) -> str:
@@ -954,15 +956,50 @@ def _schedule_price_date_refresh(key, stale_items: list) -> None:
     if not stale_items:
         return
     try:
-        t = threading.Thread(
-            target=_background_price_date_refresh,
-            args=(key, list(stale_items)[:80]),
-            daemon=True,
-        )
-        t.start()
+        def _run():
+            if not _BG_SEM.acquire(blocking=False):
+                return  # 已有足够后台任务，跳过避免堆积
+            try:
+                _background_price_date_refresh(key, list(stale_items)[:80])
+            finally:
+                try:
+                    _BG_SEM.release()
+                except Exception:
+                    pass
+        threading.Thread(target=_run, daemon=True, name="price-date-refresh").start()
     except Exception:
         pass
 
+
+
+def maybe_trim_caches() -> None:
+    """健康检查/空闲时轻量裁剪进程缓存，避免 Render 免费实例 OOM。"""
+    global _LAST_TRIM_TS
+    now = time.time()
+    if now - float(_LAST_TRIM_TS or 0) < 120:
+        return
+    _LAST_TRIM_TS = now
+    try:
+        # STATUS 过期清理
+        dead = [ck for ck, v in list(_STATUS_CACHE.items()) if (now - v.get("ts", 0)) >= _STATUS_TTL]
+        for ck in dead:
+            _STATUS_CACHE.pop(ck, None)
+        if len(_STATUS_CACHE) > _STATUS_CACHE_MAX:
+            ordered = sorted(_STATUS_CACHE.items(), key=lambda x: x[1].get("ts", 0))
+            for ck, _ in ordered[: max(0, len(_STATUS_CACHE) - _STATUS_CACHE_MAX)]:
+                _STATUS_CACHE.pop(ck, None)
+        # 看板缓存超上限
+        if len(_CACHES) > _CACHES_MAX:
+            items = sorted(
+                ((v.get("ts") or 0, k) for k, v in list(_CACHES.items()) if not v.get("refreshing")),
+                key=lambda x: x[0],
+            )
+            for _, k in items[: max(0, len(_CACHES) - _CACHES_MAX)]:
+                _CACHES.pop(k, None)
+        import gc
+        gc.collect()
+    except Exception:
+        pass
 
 
 def _note_force_streak(key, force: bool) -> int:
@@ -1204,7 +1241,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
     # 并行计算；每完成 1～3 个写进度（大列表更密），避免只见前 5 只
     _batch = 1 if total <= 8 else 3
     _done_n = 0
-    _workers = min(8, max(3, len(items)))
+    _workers = min(4, max(2, len(items)))  # Render 小实例控制并发，降内存峰值
     with ThreadPoolExecutor(max_workers=_workers) as ex:
         def _one(code, name):
             cu = str(code).upper()
@@ -1505,11 +1542,18 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                             'done': 0,
                             'total': len(items),
                         }
-                    threading.Thread(
-                        target=_background_refresh,
-                        args=(key, items, user_id, bool(force or hard)),
-                        daemon=True,
-                    ).start()
+                    def _run_bg():
+                        if not _BG_SEM.acquire(blocking=False):
+                            # 已有刷新在跑：标记仍 computing，由已有任务收尾
+                            return
+                        try:
+                            _background_refresh(key, items, user_id, bool(force or hard))
+                        finally:
+                            try:
+                                _BG_SEM.release()
+                            except Exception:
+                                pass
+                    threading.Thread(target=_run_bg, daemon=True, name="wl-refresh").start()
             out['computing'] = True
             if hard:
                 out['hard_refresh'] = True
@@ -1558,9 +1602,17 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                          'symbols': [{'code': c, 'name': n} for c, n in items]},
                 'ts': time.time(), 'refreshing': True,
             }
-            threading.Thread(
-                target=_background_refresh, args=(key, items, user_id, force), daemon=True
-            ).start()
+            def _run_bg2():
+                if not _BG_SEM.acquire(blocking=False):
+                    return
+                try:
+                    _background_refresh(key, items, user_id, force)
+                finally:
+                    try:
+                        _BG_SEM.release()
+                    except Exception:
+                        pass
+            threading.Thread(target=_run_bg2, daemon=True, name="wl-refresh-cold").start()
 
     cache = _CACHES.get(key)
     if cache and cache['data'] is not None:

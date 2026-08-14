@@ -52,28 +52,26 @@ def _create_supabase(url: str, key: str) -> "Client":
     opts = None
     try:
         from supabase import ClientOptions  # type: ignore
-        # 新版优先用 ClientOptions，避免把 timeout/verify 直接塞进 PostgREST
         try:
+            # 尽量不传已弃用的 timeout/verify，交给默认 httpx 客户端
             opts = ClientOptions()
+        except TypeError:
+            try:
+                opts = ClientOptions(postgrest_client_timeout=20)
+            except Exception:
+                opts = None
         except Exception:
             opts = None
     except Exception:
         opts = None
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=r".*timeout.*deprecated.*",
-            category=DeprecationWarning,
-        )
-        warnings.filterwarnings(
-            "ignore",
-            message=r".*verify.*deprecated.*",
-            category=DeprecationWarning,
-        )
+        warnings.simplefilter("ignore", DeprecationWarning)
         if opts is not None:
             try:
                 return create_client(url, key, options=opts)
             except TypeError:
+                pass
+            except Exception:
                 pass
         return create_client(url, key)
 

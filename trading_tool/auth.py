@@ -23,21 +23,33 @@ import supabase_client
 
 # 通过环境变量额外授予管理员权限的邮箱（逗号分隔）
 ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+_ADMIN_CACHE = {}  # uid -> (is_admin, ts)
+_ADMIN_CACHE_TTL = 300
 
 
 def is_admin(user: dict = None, uid: str = None, email: str = None) -> bool:
     """判断用户是否为管理员（profiles.is_admin 或 ADMIN_EMAILS 命中）。"""
+    import time as _time
     if user:
         uid = uid or user.get("id")
         email = email or user.get("email")
     if email and email.strip().lower() in ADMIN_EMAILS:
         return True
     if supabase_client.using_supabase() and uid:
+        now = _time.time()
+        hit = _ADMIN_CACHE.get(str(uid))
+        if hit and (now - hit[1]) < _ADMIN_CACHE_TTL:
+            return bool(hit[0])
         try:
             row = (supabase_client.get_service_client()
                    .table("profiles").select("is_admin").eq("id", uid).execute())
-            if row.data:
-                return bool(row.data[0].get("is_admin"))
+            val = bool(row.data[0].get("is_admin")) if row.data else False
+            _ADMIN_CACHE[str(uid)] = (val, now)
+            if len(_ADMIN_CACHE) > 256:
+                # 简单裁剪
+                for k in list(_ADMIN_CACHE.keys())[:64]:
+                    _ADMIN_CACHE.pop(k, None)
+            return val
         except Exception:
             pass
     return False
