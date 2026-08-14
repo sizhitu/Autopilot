@@ -1149,8 +1149,23 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
         if all_fresh:
             payload["cached"] = True
             payload["data_source"] = "free_preview_cache"
+            payload["cache_date_stale"] = False
+            payload["date_stale_count"] = 0
             return JSONResponse(content=_to_jsonable(payload),
                                 headers={"Cache-Control": "no-store, max-age=0"})
+        # 缓存里有旧日期：先标记返回，同时后台只补价/日期写回缓存（避免重登再读旧）
+        try:
+            from watchlist import _schedule_price_date_refresh, _tag_stocks_date_freshness
+            tagged, stale = _tag_stocks_date_freshness(stocks0)
+            payload["stocks"] = tagged
+            payload["cache_date_stale"] = True
+            payload["date_stale_count"] = len(stale)
+            payload["cached"] = True
+            payload["data_source"] = "free_preview_cache_stale"
+            _schedule_price_date_refresh(None, stale)
+            # 仍继续同步拉新，尽量本次就返回新日期
+        except Exception:
+            pass
         # 缓存里有旧日期 → 继续往下强制刷新
 
     # 逐只：未最新则 force_live；与旧缓存行比日期防回退
@@ -1224,16 +1239,23 @@ async def watchlist_free_preview(request: Request, refresh: bool = False):
         "cached": False,
     }
     try:
+        from watchlist import _tag_stocks_date_freshness
         old_stocks = ((_FREE_PREVIEW_CACHE.get("data") or {}).get("stocks") or [])
-        # 逐行防回退后再存
         merged_store = []
         old_map = {str(s.get("code")).upper(): s for s in old_stocks if isinstance(s, dict)}
         for s in stocks:
             cu = str((s or {}).get("code") or "").upper()
             merged_store.append(_row_fresher(s, old_map.get(cu)) if cu in old_map else s)
-        data["stocks"] = merged_store
-        data["summary"] = _sum_stocks(merged_store)
+        tagged, stale = _tag_stocks_date_freshness(merged_store)
+        data["stocks"] = tagged
+        data["summary"] = _sum_stocks(tagged)
+        data["date_stale_count"] = len(stale)
+        data["cache_date_stale"] = len(stale) > 0
+        # 仅当全部最新时写入长缓存时间戳；有 stale 也写，但后台会继续补
         _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
+        if stale:
+            from watchlist import _schedule_price_date_refresh
+            _schedule_price_date_refresh(None, stale)
     except Exception:
         _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
 

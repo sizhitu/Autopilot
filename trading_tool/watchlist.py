@@ -856,6 +856,132 @@ def verify_and_refresh_symbols(symbols_with_names: list) -> dict:
     }
 
 
+def _tag_stocks_date_freshness(stocks: list) -> tuple:
+    """给每行打 date_fresh / expected_bar_date；返回 (tagged_stocks, stale_items[(code,name)])。"""
+    out = []
+    stale = []
+    for s in stocks or []:
+        if not isinstance(s, dict):
+            continue
+        row = dict(s)
+        code = str(row.get("code") or "").strip().upper()
+        if not code:
+            out.append(row)
+            continue
+        fresh = _row_is_date_fresh(row, code)
+        row["date_fresh"] = bool(fresh)
+        row["expected_bar_date"] = _expected_bar_date_str(code)
+        if not fresh:
+            row["bar_stale"] = True
+            stale.append((code, row.get("name") or code))
+        out.append(row)
+    return out, stale
+
+
+def _merge_price_fields_into_board(key, updated_rows: list) -> None:
+    """把仅价/日期更新合并进看板缓存，供下次登录直接命中新日期。"""
+    if not key or not updated_rows:
+        return
+    entry = _CACHES.get(key)
+    if not entry or not isinstance(entry.get("data"), dict):
+        return
+    data = dict(entry["data"])
+    stocks = list(data.get("stocks") or [])
+    by = {str(r.get("code")).upper(): r for r in updated_rows if r and r.get("code")}
+    new_stocks = []
+    for s in stocks:
+        if not isinstance(s, dict) or not s.get("code"):
+            new_stocks.append(s)
+            continue
+        cu = str(s["code"]).upper()
+        u = by.get(cu)
+        if not u:
+            new_stocks.append(s)
+            continue
+        merged = dict(s)
+        for k in ("price", "bar_date", "bar_stale", "change_1d", "date_fresh", "expected_bar_date", "data_source"):
+            if k in u and u.get(k) is not None:
+                merged[k] = u[k]
+        # 防回退
+        merged = _row_fresher(merged, s)
+        merged["date_fresh"] = _row_is_date_fresh(merged, cu)
+        new_stocks.append(merged)
+    data["stocks"] = new_stocks
+    data["date_stale_count"] = sum(1 for s in new_stocks if isinstance(s, dict) and not s.get("date_fresh", True))
+    data["cache_date_stale"] = data["date_stale_count"] > 0
+    entry = dict(entry)
+    entry["data"] = data
+    entry["ts"] = time.time()
+    _caches_put(key, entry)
+
+
+def _background_price_date_refresh(key, symbols_with_names: list) -> None:
+    """后台只补现价日期，写 STATUS + 看板缓存，避免用户重登仍读旧日期。"""
+    try:
+        result = verify_and_refresh_symbols(symbols_with_names)
+        rows = result.get("stocks") or []
+        for r in rows:
+            if not r or not r.get("code"):
+                continue
+            cu = str(r["code"]).upper()
+            try:
+                hit = _STATUS_CACHE.get(cu)
+                base = dict(hit["data"]) if hit and isinstance(hit.get("data"), dict) else dict(r)
+                for k in ("price", "bar_date", "bar_stale", "change_1d", "data_source", "pending"):
+                    if k in r:
+                        base[k] = r[k]
+                base["date_fresh"] = _row_is_date_fresh(base, cu)
+                base["expected_bar_date"] = _expected_bar_date_str(cu)
+                _status_cache_put(cu, base)
+            except Exception:
+                pass
+        if key:
+            _merge_price_fields_into_board(key, rows)
+    except Exception:
+        pass
+
+
+def _schedule_price_date_refresh(key, stale_items: list) -> None:
+    if not stale_items:
+        return
+    try:
+        t = threading.Thread(
+            target=_background_price_date_refresh,
+            args=(key, list(stale_items)[:80]),
+            daemon=True,
+        )
+        t.start()
+    except Exception:
+        pass
+
+
+def _annotate_and_maybe_refresh_dates(out: dict, key, items: list = None) -> dict:
+    """响应前打标；有过旧现价日期则后台更新缓存。"""
+    if not isinstance(out, dict):
+        return out
+    stocks = out.get("stocks") or []
+    tagged, stale = _tag_stocks_date_freshness(stocks)
+    out = dict(out)
+    out["stocks"] = tagged
+    out["date_stale_count"] = len(stale)
+    out["cache_date_stale"] = len(stale) > 0
+    # 后台补齐；items 用于补全 name
+    name_map = {}
+    if items:
+        for c, n in items:
+            name_map[str(c).upper()] = n
+    stale_named = [(c, name_map.get(c, n)) for c, n in stale]
+    if not stale_named and items:
+        # 也检查 items 里缓存缺失的
+        have = {str(s.get("code")).upper() for s in tagged if s}
+        for c, n in items:
+            cu = str(c).upper()
+            if cu not in have:
+                stale_named.append((cu, n or cu))
+    _schedule_price_date_refresh(key, stale_named)
+    return out
+
+
 def _has_usable_stocks(data: dict) -> bool:
     for s in (data or {}).get("stocks") or []:
         if not s or s.get("error"):
@@ -1097,6 +1223,11 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
         'progress': {'done': total, 'total': total},
         'cache_flushed': True,
     }
+    try:
+        final = _annotate_and_maybe_refresh_dates(final, key, items)
+        partial = final.get('stocks') or partial
+    except Exception:
+        pass
     # 刷新完成：强制把最新行写回单标的状态缓存 + 看板缓存，避免下次仍命中旧 STATUS/看板
     try:
         for s in partial:
@@ -1237,7 +1368,7 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
             out['computing'] = False
             out['cache_hit'] = True
             out['stale'] = False
-            return out
+            return _annotate_and_maybe_refresh_dates(out, key, items)
         # codes 不一致：走 SWR 刷新
 
     # SWR：有上次结果 → 立刻返回对齐后的列表（新增代码先占位），后台刷新
@@ -1278,7 +1409,7 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                     out['computing'] = False
                     out['cache_hit'] = True
                     out['skipped_force'] = True
-                    return out
+                    return _annotate_and_maybe_refresh_dates(out, key, items)
             except Exception:
                 pass
         need_refresh = force_needed or out['stale'] or (
@@ -1305,7 +1436,7 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
             out['computing'] = True
         else:
             out['computing'] = bool(cache.get('refreshing'))
-        return out
+        return _annotate_and_maybe_refresh_dates(out, key, items)
 
     # 无可用缓存：骨架 + 后台计算
     with _refresh_lock:
