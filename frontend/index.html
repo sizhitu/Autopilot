@@ -452,20 +452,20 @@ body.help-open { overflow: hidden; touch-action: none; }
   max-width: 100%;
   vertical-align: middle;
 }
-#watchlistTable .wl-name {
+#watchlistTable .wl-code {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.02em;
   max-width: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#watchlistTable .wl-code {
+#watchlistTable .wl-name {
   font-size: 10px;
-  font-weight: 600;
-  color: var(--gold);
-  letter-spacing: 0.02em;
+  font-weight: 500;
+  color: var(--text-dim);
   max-width: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -486,8 +486,8 @@ body.help-open { overflow: hidden; touch-action: none; }
     padding-left: 2px !important;
     padding-right: 2px !important;
   }
-  #watchlistTable .wl-name { font-size: 11px; max-width: 60px; }
-  #watchlistTable .wl-code { font-size: 9px; max-width: 60px; }
+  #watchlistTable .wl-code { font-size: 11px; max-width: 60px; }
+  #watchlistTable .wl-name { font-size: 9px; max-width: 60px; }
 }
 /* 合并后列序：1代码名称 2现价 3日涨幅 4近5日 5九转 6趋势 7操盘 8新高 9参考价 */
 #watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 8%; }   /* 现价 */
@@ -3706,7 +3706,7 @@ function renderWatchlist(stocks) {
     if (s.error) {
       html += `<tr style="border-bottom:1px solid var(--border);">
         <td style="padding:5px 6px;">
-          <span class="wl-sym-stack"><span class="wl-name">${escapeHtml(s.name || s.code)}</span><span class="wl-code">${escapeHtml(s.code)}</span></span>
+          <span class="wl-sym-stack"><span class="wl-code">${escapeHtml(s.code)}</span><span class="wl-name">${escapeHtml(s.name || s.code)}</span></span>
         </td>
         <td colspan="7" style="padding:5px 6px;color:var(--red);font-size:11px;">${escapeHtml(s.error)}</td>
       </tr>`;
@@ -3771,8 +3771,8 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 4px;line-height:1.2;">${
         (currentUser ? `<button class="wl-del" onclick="event.stopPropagation();removeWatch('${escapeAttr(s.code)}')" title="删除">✕</button>` : '') +
         `<span class="wl-sym-stack" onclick="event.stopPropagation();editNote('${escapeAttr(_cd)}')" title="${escapeAttr(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};">` +
-        `<span class="wl-name" style="${watchNotes[s.code]?'border-bottom:1px dotted var(--gold);':''}">${escapeHtml(s.name || '—')}</span>` +
-        `<span class="wl-code">${escapeHtml(s.code)}</span></span>`
+        `<span class="wl-code" style="${watchNotes[s.code]?'border-bottom:1px dotted var(--gold);':''}">${escapeHtml(s.code)}</span>` +
+        `<span class="wl-name">${escapeHtml(s.name || '—')}</span></span>`
       }</td>
       <td style="padding:5px 6px;font-family:monospace;color:${(s.pending || s.price === '-' || s.signal === '计算中') ? 'var(--text-dim)' : 'inherit'};line-height:1.25;">${(function(){
         const pending = (s.pending || s.price === '-' || s.signal === '计算中') && (s.price === '-' || s.price == null);
