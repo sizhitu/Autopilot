@@ -3714,17 +3714,32 @@ function renderWatchlistSummary(summary) {
 
 function renderWatchlist(stocks) {
   const isPending = (s) => !!(s && (s.pending || s.signal === '计算中' || s.price === '-' || s.price === '' || s.price == null));
-  // 市场分组：美股(含ETF)在前 → 港股 → A股在后；组内按代码排序。展示格式统一「代码上、名称下」
+  // 市场分组：美股(含ETF)在前 → 港股 → A股(含指数/场内基金)在后；组内按代码排序
   function _mktBucket(s) {
     const m = String((s && s.market) || '').trim();
+    const n = String((s && s.name) || '');
     const c = String((s && s.code) || '').trim().toUpperCase();
+    const cBare = c.replace(/^(SH|SZ|BJ)/, '');
+    // 美股指数 ^GSPC 等
+    if (c.startsWith('^')) return 0;
     if (m.indexOf('美') >= 0 || m.toLowerCase().indexOf('us') >= 0) return 0;
+    // A 股宽基指数（上证/深成/创业板/沪深300 等）与 sh/sz 前缀指数
+    const cnIdx = {
+      '000001': 1, '399001': 1, '399006': 1, '399300': 1,
+      '000016': 1, '000300': 1, '000905': 1, '000852': 1,
+      'SH000001': 1, 'SZ399001': 1, 'SZ399006': 1, 'SZ399300': 1
+    };
+    if (cnIdx[c] || cnIdx[cBare]) return 2;
+    // 名称或市场带「指数」且非美股 → 与 A 股同组（如「上证指数」）
+    if ((/指数/.test(n) || /指数/.test(m)) && m.indexOf('美') < 0 && !c.startsWith('^')) return 2;
+    // A 股场内 ETF / 基金（常见代码段）
+    if (/^[0-9]{6}$/.test(cBare) && /^(15|16|18|50|51|52|56|58|159|510|511|512|513|516|588)/.test(cBare)) return 2;
     if (m.indexOf('港') >= 0 || /\.HK$/i.test(c)) return 1;
     if (m.indexOf('A') >= 0 || m.indexOf('沪') >= 0 || m.indexOf('深') >= 0 || m.indexOf('京') >= 0) return 2;
-    // 无 market 时用代码形态兜底
-    if (/^[0-9]{6}$/.test(c) || /^(SH|SZ|BJ)/i.test(c)) return 2;
+    // 6 位数字 / sh|sz|bj 前缀 → A 股（个股、指数、基金统一靠后）
+    if (/^[0-9]{6}$/.test(c) || /^[0-9]{6}$/.test(cBare) || /^(SH|SZ|BJ)/i.test(c)) return 2;
     if (/\.HK$/i.test(c) || (/^[0-9]{5}$/.test(c))) return 1;
-    if (/^[A-Z][A-Z0-9.\-]*$/.test(c) || c.startsWith('^')) return 0;
+    if (/^[A-Z][A-Z0-9.\-]*$/.test(c)) return 0;
     return 3;
   }
   stocks = (stocks || []).slice().sort((a, b) => {
