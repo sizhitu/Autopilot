@@ -401,76 +401,92 @@ body.help-open { overflow: hidden; touch-action: none; }
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
-  /* 避免子元素半透明叠在 sticky 上出现「透视叠字」 */
   isolation: isolate;
+  /* 内边距放到滚动容器外层，避免 sticky 与卡片 padding 产生左侧缝 */
+  margin: 0 -2px;
+  padding: 0 2px;
 }
 #watchlistTable { table-layout: fixed; width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
-  padding: 6px 1px !important;
+  padding: 6px 2px !important;
   box-sizing: border-box;
 }
 #watchlistTable th {
   text-align: center !important;
   font-weight: 600;
 }
-/* 左右滑动固定「代码」「名称」：不透明底，防透视重叠 */
+/* 代码 / 名称：表头左对齐；sticky 实色底 + 向左延伸阴影堵住缝隙与透字 */
+#watchlistTable th:nth-child(1),
+#watchlistTable th:nth-child(2) {
+  text-align: left !important;
+}
 #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
   position: sticky;
   left: 0;
-  z-index: 4;
-  width: 68px;
-  min-width: 68px;
-  max-width: 68px;
+  z-index: 5;
+  width: 64px;
+  min-width: 64px;
+  max-width: 64px;
   background: #1a1d27 !important;
-  background-clip: padding-box;
+  background-clip: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 向左铺实色，盖住滚动时左侧缝与越界字 */
+  box-shadow: -16px 0 0 0 #1a1d27;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 #watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) {
   position: sticky;
-  left: 68px;
-  z-index: 4;
-  width: 76px;
-  min-width: 76px;
-  max-width: 76px;
+  left: 64px;
+  z-index: 5;
+  width: 70px;
+  min-width: 70px;
+  max-width: 70px;
   background: #1a1d27 !important;
-  background-clip: padding-box;
-  box-shadow: 5px 0 8px -4px rgba(0,0,0,.55);
+  background-clip: border-box;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   word-break: normal;
+  /* 右侧分隔 + 左侧补缝 */
+  box-shadow: 6px 0 10px -3px rgba(0,0,0,.6), -2px 0 0 0 #1a1d27;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 #watchlistTable thead th:nth-child(1),
 #watchlistTable thead th:nth-child(2) {
-  z-index: 6;
+  z-index: 7;
   background: #1a1d27 !important;
 }
-/* hover 也用不透明色，禁止半透明导致后面列字透过来 */
 #watchlistTable tbody tr:hover td:nth-child(1),
 #watchlistTable tbody tr:hover td:nth-child(2) {
   background: #222632 !important;
+  box-shadow: -16px 0 0 0 #222632;
 }
-/* 手机端再收窄固定列，给后面指标留可视宽度 */
+#watchlistTable tbody tr:hover td:nth-child(2) {
+  box-shadow: 6px 0 10px -3px rgba(0,0,0,.6), -2px 0 0 0 #222632;
+}
 @media (max-width: 640px) {
   #watchlistTable { min-width: 860px; }
   #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
-    width: 48px;
-    min-width: 48px;
-    max-width: 48px;
+    width: 54px;
+    min-width: 54px;
+    max-width: 54px;
     font-size: 11px;
-    padding-left: 1px !important;
-    padding-right: 1px !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
   }
   #watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) {
-    left: 48px;
-    width: 52px;
-    min-width: 52px;
-    max-width: 52px;
+    left: 54px;
+    width: 56px;
+    min-width: 56px;
+    max-width: 56px;
     font-size: 10px;
-    padding-left: 1px !important;
-    padding-right: 1px !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
   }
-  /* 删除按钮缩小，少占代码列宽度 */
   #watchlistTable td:nth-child(1) button {
     font-size: 10px !important;
     margin-right: 1px !important;
