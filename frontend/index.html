@@ -3714,8 +3714,24 @@ function renderWatchlistSummary(summary) {
 
 function renderWatchlist(stocks) {
   const isPending = (s) => !!(s && (s.pending || s.signal === '计算中' || s.price === '-' || s.price === '' || s.price == null));
-  // 默认按代码字母顺序排序
-  stocks = (stocks || []).slice().sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { sensitivity: 'base' }));
+  // 市场分组：美股(含ETF)在前 → 港股 → A股在后；组内按代码排序。展示格式统一「代码上、名称下」
+  function _mktBucket(s) {
+    const m = String((s && s.market) || '').trim();
+    const c = String((s && s.code) || '').trim().toUpperCase();
+    if (m.indexOf('美') >= 0 || m.toLowerCase().indexOf('us') >= 0) return 0;
+    if (m.indexOf('港') >= 0 || /\.HK$/i.test(c)) return 1;
+    if (m.indexOf('A') >= 0 || m.indexOf('沪') >= 0 || m.indexOf('深') >= 0 || m.indexOf('京') >= 0) return 2;
+    // 无 market 时用代码形态兜底
+    if (/^[0-9]{6}$/.test(c) || /^(SH|SZ|BJ)/i.test(c)) return 2;
+    if (/\.HK$/i.test(c) || (/^[0-9]{5}$/.test(c))) return 1;
+    if (/^[A-Z][A-Z0-9.\-]*$/.test(c) || c.startsWith('^')) return 0;
+    return 3;
+  }
+  stocks = (stocks || []).slice().sort((a, b) => {
+    const ba = _mktBucket(a), bb = _mktBucket(b);
+    if (ba !== bb) return ba - bb;
+    return String(a.code || '').localeCompare(String(b.code || ''), undefined, { sensitivity: 'base', numeric: true });
+  });
   const body = document.getElementById('watchlistBody');
   let html = '';
   for (const s of stocks) {
