@@ -2142,6 +2142,8 @@ async function initAuth() {
 }
 
 let currentSymbol = '';
+let lastChartSymbol = '';  // 与 lastChartData 对应的代码，防串图
+let _quoteReqSeq = 0;      // 丢弃过期的 quote 响应
 let currentName = '';
 let currentMarket = '';
 let lastChartData = null;
@@ -2685,6 +2687,8 @@ async function fetchQuote(symbol, name, market) {
     }
     return;
   }
+  symbol = String(symbol || '').trim().toUpperCase();
+  const reqId = ++_quoteReqSeq;
   document.getElementById('searchResults').style.display = 'none';
   document.getElementById('chartMeta').textContent = '获取数据中...';
   currentSymbol = symbol;
@@ -2705,6 +2709,10 @@ async function fetchQuote(symbol, name, market) {
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
+    // 已切换到其他代码：丢弃本响应，避免串图/串面板
+    if (reqId !== _quoteReqSeq || String(currentSymbol || '').toUpperCase() !== symbol) {
+      return;
+    }
 
     // 显示股票信息（含收盘价/K线区间）
     info.style.display = 'flex';
@@ -2743,6 +2751,7 @@ async function fetchQuote(symbol, name, market) {
         return;
       }
       lastChartData = json.chart;
+      lastChartSymbol = symbol;
       drawChart(json.chart);
       const nBar = json.chart.candles.length;
       const cm = document.getElementById('chartMeta');
@@ -2814,12 +2823,32 @@ async function runAnalysis() {
   const position = parseFloat(document.getElementById('position').value) || 0;
   const entryPrice = parseFloat(document.getElementById('entryPrice').value) || 0;
   const fileInput = document.getElementById('csvFile');
+
+  // 已选真实代码：重新拉取并分析该代码（禁止落到模拟样例导致串代码）
+  if (currentSymbol && !(fileInput && fileInput.files && fileInput.files.length > 0)) {
+    document.getElementById('chartMeta').textContent = '分析中...';
+    window._quoteForce = true;
+    try {
+      await fetchQuote(currentSymbol, currentName, currentMarket);
+      showToast('已按 ' + currentSymbol + ' 完成分析', 'ok');
+    } catch (e) {
+      document.getElementById('chartMeta').textContent = '错误: ' + ((e && e.message) || e);
+    } finally {
+      window._quoteForce = false;
+    }
+    return;
+  }
+
   const formData = new FormData();
   formData.append('capital', capital);
   formData.append('position', position);
   formData.append('entry_price', entryPrice);
-  if (fileInput.files.length > 0) { formData.append('file', fileInput.files[0]); formData.append('use_sample', 'false'); }
-  else { formData.append('use_sample', 'true'); }
+  if (fileInput && fileInput.files.length > 0) {
+    formData.append('file', fileInput.files[0]);
+    formData.append('use_sample', 'false');
+  } else {
+    formData.append('use_sample', 'true');
+  }
 
   document.getElementById('chartMeta').textContent = '分析中...';
   try {
@@ -2831,6 +2860,7 @@ async function runAnalysis() {
     updateHlVal(json.high_low, json.valuation);
     updateVolumeConvergence(json.volume_convergence);
     lastChartData = json.chart;
+    lastChartSymbol = currentSymbol || 'SAMPLE';
     switchView('analysis');
     drawChart(json.chart);
   } catch(e) {
@@ -2843,6 +2873,7 @@ async function loadSample() {
   currentSymbol = '';
   currentName = '';
   currentMarket = '';
+  lastChartSymbol = '';
   const info = document.getElementById('stockInfo');
   info.style.display = 'flex';
   info.innerHTML = '<span class="symbol">SAMPLE</span> <span class="stock-name">模拟数据</span> <span class="market" style="color:var(--text-dim);">[演示]</span>';
@@ -2867,8 +2898,10 @@ let _analysisLoadStarted = 0;
 
 async function ensureAnalysisSymbol() {
   const _n = (lastChartData && lastChartData.candles) ? lastChartData.candles.length : 0;
-  // K 线足够才跳过请求；过短（如旧缓存十几根）必须重拉
-  if (currentSymbol && _n >= 120) {
+  const _symOk = currentSymbol && lastChartSymbol
+    && String(lastChartSymbol).toUpperCase() === String(currentSymbol).toUpperCase();
+  // 仅当「当前代码」的图足够长才跳过请求，避免画出上一只代码的图
+  if (_symOk && _n >= 120) {
     try { drawChart(lastChartData); } catch (e) {}
     return;
   }
@@ -2999,7 +3032,11 @@ function switchMainTab(tab) {
   if (tab === 'analysis') {
     // 视图已在上面打开；补数异步，绝不阻塞再次点击
     try {
-      if (lastChartData && lastChartData.candles && lastChartData.candles.length) {
+      const ok = lastChartData && lastChartData.candles && lastChartData.candles.length
+        && lastChartSymbol
+        && currentSymbol
+        && String(lastChartSymbol).toUpperCase() === String(currentSymbol).toUpperCase();
+      if (ok) {
         try { drawChart(lastChartData); } catch (e3) {}
       } else {
         try { ensureAnalysisSymbol().catch(function () {}); } catch (e4) {}
@@ -3761,10 +3798,16 @@ function updateResults(data, meta, nineTurn) {
   document.getElementById('tab-indicators').innerHTML = ih;
 
   let fh = '';
-  for (const fl of data.fib_levels) {
-    const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span style="color:var(--text-dim);">●</span>' : '');
-    const rx = fl.reaction_signal ? ` <span style="color:var(--gold);">${fl.reaction_signal}</span>` : '';
-    fh += `<div class="fib-row"><span class="fib-level">${fl.level.toFixed(3)}</span><span class="fib-price">${fl.price}</span><span>${star}${rx}</span></div>`;
+  const _fibs = (data && data.fib_levels) ? data.fib_levels : [];
+  if (!_fibs.length) {
+    fh = '<div style="color:var(--text-dim);text-align:center;padding:12px;">暂无斐波那契数据，请点「分析」或重新打开该代码</div>';
+  } else {
+    for (const fl of _fibs) {
+      const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span style="color:var(--text-dim);">●</span>' : '');
+      const rx = fl.reaction_signal ? ` <span style="color:var(--gold);">${fl.reaction_signal}</span>` : '';
+      const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
+      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span>${star}${rx}</span></div>`;
+    }
   }
   document.getElementById('tab-fibonacci').innerHTML = fh;
 
