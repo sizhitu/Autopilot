@@ -3719,26 +3719,25 @@ function renderWatchlist(stocks) {
     const m = String((s && s.market) || '').trim();
     const n = String((s && s.name) || '');
     const c = String((s && s.code) || '').trim().toUpperCase();
-    const cBare = c.replace(/^(SH|SZ|BJ)/, '');
-    // 美股指数 ^GSPC 等
+    // 去掉市场前缀再判 6 位码（SH000001 → 000001）
+    const cBare = c.replace(/^(SH|SZ|BJ)/i, '');
+    // 美股指数仅 ^ 前缀
     if (c.startsWith('^')) return 0;
-    if (m.indexOf('美') >= 0 || m.toLowerCase().indexOf('us') >= 0) return 0;
-    // A 股宽基指数（上证/深成/创业板/沪深300 等）与 sh/sz 前缀指数
+    // —— 优先按代码形态：避免 market 误标成「美股」时把上证/A股 ETF 分到美股组 ——
     const cnIdx = {
       '000001': 1, '399001': 1, '399006': 1, '399300': 1,
-      '000016': 1, '000300': 1, '000905': 1, '000852': 1,
-      'SH000001': 1, 'SZ399001': 1, 'SZ399006': 1, 'SZ399300': 1
+      '000016': 1, '000300': 1, '000905': 1, '000852': 1
     };
-    if (cnIdx[c] || cnIdx[cBare]) return 2;
-    // 名称或市场带「指数」且非美股 → 与 A 股同组（如「上证指数」）
-    if ((/指数/.test(n) || /指数/.test(m)) && m.indexOf('美') < 0 && !c.startsWith('^')) return 2;
-    // A 股场内 ETF / 基金（常见代码段）
-    if (/^[0-9]{6}$/.test(cBare) && /^(15|16|18|50|51|52|56|58|159|510|511|512|513|516|588)/.test(cBare)) return 2;
-    if (m.indexOf('港') >= 0 || /\.HK$/i.test(c)) return 1;
+    if (cnIdx[cBare] || cnIdx[c]) return 2;
+    // sh/sz/bj 前缀或 6 位数字 → A 股（个股/指数/场内基金）
+    if (/^(SH|SZ|BJ)/i.test(c) || /^[0-9]{6}$/.test(c) || /^[0-9]{6}$/.test(cBare)) return 2;
+    // 名称含上证/深证/沪深/创业板 等
+    if (/上证|深证|沪深|创业板|中证|科创/.test(n) || /上证|深证|沪深/.test(m)) return 2;
+    if (/指数/.test(n) && !c.startsWith('^')) return 2;
+    if (m.indexOf('港') >= 0 || /\.HK$/i.test(c) || /^[0-9]{5}$/.test(c)) return 1;
     if (m.indexOf('A') >= 0 || m.indexOf('沪') >= 0 || m.indexOf('深') >= 0 || m.indexOf('京') >= 0) return 2;
-    // 6 位数字 / sh|sz|bj 前缀 → A 股（个股、指数、基金统一靠后）
-    if (/^[0-9]{6}$/.test(c) || /^[0-9]{6}$/.test(cBare) || /^(SH|SZ|BJ)/i.test(c)) return 2;
-    if (/\.HK$/i.test(c) || (/^[0-9]{5}$/.test(c))) return 1;
+    // 最后才看「美股」标签 / 字母代码
+    if (m.indexOf('美') >= 0 || m.toLowerCase().indexOf('us') >= 0) return 0;
     if (/^[A-Z][A-Z0-9.\-]*$/.test(c)) return 0;
     return 3;
   }
