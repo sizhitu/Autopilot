@@ -1510,7 +1510,8 @@ class WatchAddRequest(BaseModel):
 
 
 @app.post("/api/watchlist/add")
-async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_current_user),
+async def watchlist_add(req: WatchAddRequest, request: Request,
+                        user: dict = Depends(auth.get_current_user),
                         authorization: Optional[str] = Header(None)):
     """添加自选（需登录）。支持「代码」或「名称」输入；多市场自动归一化。"""
     _rate_check(authorization, request, "watchlist_add", 30, 60)
@@ -1518,6 +1519,18 @@ async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_curr
     if not raw:
         raise HTTPException(400, "代码/名称不能为空")
     name = (req.name or "").strip()
+    # 常见别名（谷歌/Google → GOOGL）
+    _ALIASES = {
+        "谷歌": "GOOGL", "GOOGLE": "GOOGL", "ALPHABET": "GOOGL",
+        "谷歌A": "GOOGL", "谷歌C": "GOOG", "GOOG": "GOOG", "GOOGL": "GOOGL",
+    }
+    alias_key = raw.strip().upper() if symbols.is_code_like(raw) else raw.strip()
+    if alias_key in _ALIASES or raw.strip() in _ALIASES:
+        mapped = _ALIASES.get(alias_key) or _ALIASES.get(raw.strip())
+        if mapped:
+            raw = mapped
+            if not name:
+                name = "谷歌" if mapped.startswith("GOOG") else name
     # 代码型（不含中文）直接当作代码；否则视为名称，走搜索解析
     if not symbols.is_code_like(raw):
         try:
@@ -1528,18 +1541,25 @@ async def watchlist_add(req: WatchAddRequest, user: dict = Depends(auth.get_curr
         except Exception:
             pass
     norm = symbols.normalize_symbol(raw)
+    if not norm.get("symbol"):
+        raise HTTPException(400, "无法识别的股票代码")
     if not name:
         try:
             name = fetcher.lookup_name(norm["symbol"]) or ""
         except Exception:
             name = ""
-    ok = watchlist_store.add(user["id"], norm["symbol"], name, norm["market"], "",
-                             _bearer(authorization))
+    try:
+        ok = watchlist_store.add(user["id"], norm["symbol"], name, norm["market"], "",
+                                 _bearer(authorization))
+    except Exception as e:
+        raise HTTPException(400, f"写入自选失败：{str(e)[:120]}")
+    if not ok:
+        raise HTTPException(400, "添加失败，请稍后重试")
     try:
         invalidate_user_cache(user["id"])
     except Exception:
         pass
-    return {"success": ok, "symbol": norm["symbol"], "name": name, "market": norm["market"]}
+    return {"success": True, "symbol": norm["symbol"], "name": name, "market": norm["market"]}
 
 
 @app.delete("/api/watchlist/remove")

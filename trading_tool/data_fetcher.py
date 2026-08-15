@@ -262,7 +262,7 @@ class DataFetcher:
 
     # 美股常见代码映射
     US_STOCKS = {
-        'AAPL': '苹果', 'MSFT': '微软', 'GOOGL': '谷歌', 'AMZN': '亚马逊',
+        'AAPL': '苹果', 'MSFT': '微软', 'GOOGL': '谷歌', 'GOOG': '谷歌C', 'AMZN': '亚马逊',
         'NVDA': '英伟达', 'META': 'Meta', 'TSLA': '特斯拉', 'BRK-B': '伯克希尔',
         'JPM': '摩根大通', 'V': 'Visa', 'WMT': '沃尔玛', 'MA': '万事达',
         'JNJ': '强生', 'PG': '宝洁', 'UNH': '联合健康', 'HD': '家得宝',
@@ -893,9 +893,21 @@ class DataFetcher:
 
     def search(self, keyword: str) -> list:
         """搜索股票代码，精确匹配优先"""
-        keyword = keyword.strip().upper()
+        raw_kw = (keyword or "").strip()
+        keyword = raw_kw.upper()
+        # 中文名保留原文匹配（upper 对中文无影响，但统一用 raw 比 name）
+        name_kw = raw_kw
         exact = []     # 精确匹配
         partial = []   # 模糊匹配
+        # 别名：谷歌 → GOOGL 优先
+        _NAME_ALIAS = {
+            "谷歌": "GOOGL", "GOOGLE": "GOOGL", "ALPHABET": "GOOGL",
+            "谷歌A": "GOOGL", "谷歌C": "GOOG",
+        }
+        if name_kw in _NAME_ALIAS or keyword in _NAME_ALIAS:
+            code = _NAME_ALIAS.get(name_kw) or _NAME_ALIAS.get(keyword)
+            nm = self.US_STOCKS.get(code) or ("谷歌" if code.startswith("GOOG") else code)
+            exact.append({"code": code, "name": nm, "market": "美股"})
 
         # 指数
         for code, name in {**self.US_INDICES, **self.CN_INDICES}.items():
@@ -906,16 +918,18 @@ class DataFetcher:
 
         # 美股
         for code, name in self.US_STOCKS.items():
+            if any(r.get("code") == code for r in exact):
+                continue
             if code == keyword:
                 exact.append({'code': code, 'name': name, 'market': '美股'})
-            elif keyword in code or keyword in name.upper():
+            elif keyword in code or name_kw in str(name) or keyword in str(name).upper():
                 partial.append({'code': code, 'name': name, 'market': '美股'})
 
         # A股
         for code, name in self.CN_STOCKS.items():
             if code == keyword:
                 exact.append({'code': code, 'name': name, 'market': 'A股'})
-            elif keyword in code or keyword in name:
+            elif keyword in code or name_kw in str(name) or keyword in str(name):
                 partial.append({'code': code, 'name': name, 'market': 'A股'})
 
         results = exact + partial
