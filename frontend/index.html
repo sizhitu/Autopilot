@@ -401,93 +401,109 @@ body.help-open { overflow: hidden; touch-action: none; }
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
-  isolation: isolate;
-  margin: 0 -2px;
-  padding: 0 2px;
+  /* 不要给滚动容器加左右 padding，否则 sticky 左侧易露缝 */
+  margin: 0;
+  padding: 0;
 }
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 820px; border-collapse: separate; border-spacing: 0; }
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 860px; border-collapse: separate; border-spacing: 0; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
-  padding: 6px 2px !important;
+  padding: 6px 3px !important;
   box-sizing: border-box;
 }
 #watchlistTable th {
   text-align: center !important;
   font-weight: 600;
 }
-/* 合并列「代码名称」：表头左对齐 + sticky */
+/* 合并列「代码名称」：左对齐 + sticky；完整显示名称不省略 */
 #watchlistTable th:nth-child(1) { text-align: left !important; }
 #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
   position: sticky;
   left: 0;
-  z-index: 5;
-  width: 88px;
-  min-width: 88px;
-  max-width: 100px;
+  z-index: 8;
+  width: 112px;
+  min-width: 112px;
+  max-width: 130px;
   background: #1a1d27 !important;
   background-clip: border-box;
-  overflow: hidden;
   text-align: left !important;
   vertical-align: middle;
-  box-shadow: -16px 0 0 0 #1a1d27, 6px 0 10px -3px rgba(0,0,0,.55);
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
   white-space: normal;
+  /* 右侧阴影分隔；左侧用伪元素堵缝（不用 transform，避免 iOS sticky 失效） */
+  box-shadow: 6px 0 10px -3px rgba(0,0,0,.6);
+  overflow: visible;
+}
+#watchlistTable th:nth-child(1)::before,
+#watchlistTable td:nth-child(1)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -24px;
+  width: 24px;
+  background: #1a1d27;
+  pointer-events: none;
+  z-index: -1;
 }
 #watchlistTable thead th:nth-child(1) {
-  z-index: 7;
+  z-index: 10;
   background: #1a1d27 !important;
   white-space: nowrap;
 }
 #watchlistTable tbody tr:hover td:nth-child(1) {
   background: #222632 !important;
-  box-shadow: -16px 0 0 0 #222632, 6px 0 10px -3px rgba(0,0,0,.55);
 }
-/* 名称在上偏大，代码在下偏小（同现价+日期） */
+#watchlistTable tbody tr:hover td:nth-child(1)::before {
+  background: #222632;
+}
+#watchlistTable .wl-sym-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
 #watchlistTable .wl-sym-stack {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   align-items: flex-start;
-  line-height: 1.2;
-  max-width: 100%;
-  vertical-align: middle;
+  line-height: 1.25;
+  min-width: 0;
+  flex: 1;
 }
+/* 代码在上稍大，名称在下完整换行展示（不省略号） */
 #watchlistTable .wl-code {
   font-size: 12px;
   font-weight: 700;
   color: var(--gold);
   letter-spacing: 0.02em;
-  max-width: 72px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  word-break: keep-all;
 }
 #watchlistTable .wl-name {
   font-size: 10px;
   font-weight: 500;
   color: var(--text-dim);
-  max-width: 72px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
 }
 #watchlistTable .wl-del {
   background: none; border: none; color: var(--red);
-  cursor: pointer; font-size: 11px; padding: 0 2px 0 0;
-  vertical-align: top; line-height: 1.2;
+  cursor: pointer; font-size: 11px; padding: 0 1px 0 0;
+  flex-shrink: 0; line-height: 1.2;
 }
 @media (max-width: 640px) {
-  #watchlistTable { min-width: 780px; }
+  #watchlistTable { min-width: 800px; }
   #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
-    width: 76px;
-    min-width: 76px;
-    max-width: 84px;
-    font-size: 11px;
-    padding-left: 2px !important;
-    padding-right: 2px !important;
+    width: 100px;
+    min-width: 100px;
+    max-width: 118px;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
   }
-  #watchlistTable .wl-code { font-size: 11px; max-width: 60px; }
-  #watchlistTable .wl-name { font-size: 9px; max-width: 60px; }
+  #watchlistTable .wl-code { font-size: 11px; }
+  #watchlistTable .wl-name { font-size: 9px; }
 }
 /* 合并后列序：1代码名称 2现价 3日涨幅 4近5日 5九转 6趋势 7操盘 8新高 9参考价 */
 #watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 8%; }   /* 现价 */
@@ -3705,8 +3721,8 @@ function renderWatchlist(stocks) {
   for (const s of stocks) {
     if (s.error) {
       html += `<tr style="border-bottom:1px solid var(--border);">
-        <td style="padding:5px 6px;">
-          <span class="wl-sym-stack"><span class="wl-code">${escapeHtml(s.code)}</span><span class="wl-name">${escapeHtml(s.name || s.code)}</span></span>
+        <td style="padding:5px 4px;">
+          <div class="wl-sym-wrap"><span class="wl-sym-stack"><span class="wl-code">${escapeHtml(s.code)}</span><span class="wl-name">${escapeHtml(s.name || s.code)}</span></span></div>
         </td>
         <td colspan="7" style="padding:5px 6px;color:var(--red);font-size:11px;">${escapeHtml(s.error)}</td>
       </tr>`;
@@ -3769,10 +3785,11 @@ function renderWatchlist(stocks) {
     const _cd = String(s.code || '').replace(/'/g, "\\'");
     html += `<tr style="border-bottom:1px solid var(--border); cursor:pointer;" onclick="fetchQuote('${_cd}','${_nm}','${_mk}')">
       <td style="padding:5px 4px;line-height:1.2;">${
+        `<div class="wl-sym-wrap">` +
         (currentUser ? `<button class="wl-del" onclick="event.stopPropagation();removeWatch('${escapeAttr(s.code)}')" title="删除">✕</button>` : '') +
         `<span class="wl-sym-stack" onclick="event.stopPropagation();editNote('${escapeAttr(_cd)}')" title="${escapeAttr(watchNotes[s.code]||'点击添加备注')}" style="cursor:${currentUser?'pointer':'default'};">` +
         `<span class="wl-code" style="${watchNotes[s.code]?'border-bottom:1px dotted var(--gold);':''}">${escapeHtml(s.code)}</span>` +
-        `<span class="wl-name">${escapeHtml(s.name || '—')}</span></span>`
+        `<span class="wl-name">${escapeHtml(s.name || '—')}</span></span></div>`
       }</td>
       <td style="padding:5px 6px;font-family:monospace;color:${(s.pending || s.price === '-' || s.signal === '计算中') ? 'var(--text-dim)' : 'inherit'};line-height:1.25;">${(function(){
         const pending = (s.pending || s.price === '-' || s.signal === '计算中') && (s.price === '-' || s.price == null);
