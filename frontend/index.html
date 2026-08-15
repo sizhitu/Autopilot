@@ -397,7 +397,12 @@ body.help-open { overflow: hidden; touch-action: none; }
 .industry-tag { margin-top:4px; display:inline-block; font-size:11px; font-weight:600; color:var(--gold); background:rgba(212,175,55,0.12); border:1px solid rgba(212,175,55,0.35); padding:2px 9px; border-radius:999px; }
 
 /* 自选看板表格：列宽合计 100%，间距视觉均匀 */
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 820px; border-collapse: collapse; }
+#watchlistScroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 920px; border-collapse: separate; border-spacing: 0; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
   padding: 6px 1px !important;   /* 左右再缩，给末列腾空间 */
@@ -408,8 +413,35 @@ body.help-open { overflow: hidden; touch-action: none; }
   font-weight: 600;
 }
 #watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }
-#watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) { width: 9%; }    /* 代码（含删除按钮） */
-#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 11%; }   /* 名称 */
+/* 左右滑动时固定「代码」「名称」列 */
+#watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 78px;
+  min-width: 78px;
+  max-width: 96px;
+  background: var(--card);
+}
+#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) {
+  position: sticky;
+  left: 78px;
+  z-index: 3;
+  width: 92px;
+  min-width: 92px;
+  max-width: 120px;
+  background: var(--card);
+  box-shadow: 6px 0 10px -6px rgba(0,0,0,.45);
+}
+#watchlistTable thead th:nth-child(1),
+#watchlistTable thead th:nth-child(2) {
+  z-index: 5;
+  background: var(--card);
+}
+#watchlistTable tbody tr:hover td:nth-child(1),
+#watchlistTable tbody tr:hover td:nth-child(2) {
+  background: var(--bg-hover, rgba(255,255,255,.04));
+}
 #watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 7%; }   /* 现价 */
 #watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 6%; }   /* 日涨幅 */
 #watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 6%; }   /* 近5日 */
@@ -701,7 +733,7 @@ body.help-open { overflow: hidden; touch-action: none; }
       <span id="watchLoginHint" style="color:var(--blue);cursor:pointer;" onclick="openLogin()">登录后可自定义自选</span>
     </div>
   </div>
-  <div class="card" style="overflow-x:auto;">
+  <div class="card" id="watchlistScroll" style="overflow-x:auto;">
     <table id="watchlistTable" style="width:100%; border-collapse:collapse; font-size:12px;">
       <thead>
         <tr style="color:var(--text-dim); border-bottom:1px solid var(--border);">
