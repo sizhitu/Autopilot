@@ -401,46 +401,81 @@ body.help-open { overflow: hidden; touch-action: none; }
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
+  /* 避免子元素半透明叠在 sticky 上出现「透视叠字」 */
+  isolation: isolate;
 }
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 920px; border-collapse: separate; border-spacing: 0; }
+#watchlistTable { table-layout: fixed; width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
-  padding: 6px 1px !important;   /* 左右再缩，给末列腾空间 */
+  padding: 6px 1px !important;
   box-sizing: border-box;
 }
 #watchlistTable th {
-  text-align: center !important;  /* 表头居中，视觉更整齐 */
+  text-align: center !important;
   font-weight: 600;
 }
-#watchlistTable td:nth-child(2) { white-space: normal; word-break: break-word; }
-/* 左右滑动时固定「代码」「名称」列 */
+/* 左右滑动固定「代码」「名称」：不透明底，防透视重叠 */
 #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
   position: sticky;
   left: 0;
-  z-index: 3;
-  width: 78px;
-  min-width: 78px;
-  max-width: 96px;
-  background: var(--card);
+  z-index: 4;
+  width: 68px;
+  min-width: 68px;
+  max-width: 68px;
+  background: #1a1d27 !important;
+  background-clip: padding-box;
 }
 #watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) {
   position: sticky;
-  left: 78px;
-  z-index: 3;
-  width: 92px;
-  min-width: 92px;
-  max-width: 120px;
-  background: var(--card);
-  box-shadow: 6px 0 10px -6px rgba(0,0,0,.45);
+  left: 68px;
+  z-index: 4;
+  width: 76px;
+  min-width: 76px;
+  max-width: 76px;
+  background: #1a1d27 !important;
+  background-clip: padding-box;
+  box-shadow: 5px 0 8px -4px rgba(0,0,0,.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
 }
 #watchlistTable thead th:nth-child(1),
 #watchlistTable thead th:nth-child(2) {
-  z-index: 5;
-  background: var(--card);
+  z-index: 6;
+  background: #1a1d27 !important;
 }
+/* hover 也用不透明色，禁止半透明导致后面列字透过来 */
 #watchlistTable tbody tr:hover td:nth-child(1),
 #watchlistTable tbody tr:hover td:nth-child(2) {
-  background: var(--bg-hover, rgba(255,255,255,.04));
+  background: #222632 !important;
+}
+/* 手机端再收窄固定列，给后面指标留可视宽度 */
+@media (max-width: 640px) {
+  #watchlistTable { min-width: 860px; }
+  #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
+    width: 48px;
+    min-width: 48px;
+    max-width: 48px;
+    font-size: 11px;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+  }
+  #watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) {
+    left: 48px;
+    width: 52px;
+    min-width: 52px;
+    max-width: 52px;
+    font-size: 10px;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+  }
+  /* 删除按钮缩小，少占代码列宽度 */
+  #watchlistTable td:nth-child(1) button {
+    font-size: 10px !important;
+    margin-right: 1px !important;
+    padding: 0 !important;
+  }
 }
 #watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 7%; }   /* 现价 */
 #watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 6%; }   /* 日涨幅 */
