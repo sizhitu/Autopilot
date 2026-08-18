@@ -1313,7 +1313,7 @@ async def watchlist_free_preview(request: Request, refresh: bool = False, hard: 
     except Exception:
         hard = bool(hard)
 
-    # 逐只：未最新则 force_live；与旧缓存行比日期防回退
+    # 手动刷新：清空进程缓存 + STATUS，避免立刻返回旧 free_preview 缓存
     prev_by = {}
     try:
         for s in ((_FREE_PREVIEW_CACHE.get("data") or {}).get("stocks") or []):
@@ -1321,16 +1321,39 @@ async def watchlist_free_preview(request: Request, refresh: bool = False, hard: 
                 prev_by[str(s["code"]).upper()] = dict(s)
     except Exception:
         prev_by = {}
+    if refresh or hard:
+        try:
+            from watchlist import _STATUS_CACHE
+            from data_fetcher import invalidate_kline_cache
+            for code, _ in items:
+                cu = str(code).upper()
+                _STATUS_CACHE.pop(cu, None)
+                try:
+                    invalidate_kline_cache(code)
+                    invalidate_kline_cache(cu)
+                except Exception:
+                    pass
+            _FREE_PREVIEW_CACHE = {"ts": 0, "data": None}
+        except Exception:
+            pass
 
     stocks = []
     for code, name in items:
         try:
-            need_live = refresh or hard or not _row_is_date_fresh(prev_by.get(str(code).upper()) or {}, code)
+            # 点刷新必须实拉；平时未新鲜也实拉
+            need_live = bool(refresh or hard or not _row_is_date_fresh(prev_by.get(str(code).upper()) or {}, code))
             row = _status_dict_cached(code, name, 300, force_live=bool(need_live))
             if isinstance(row, dict):
                 row = dict(row)
                 prev = prev_by.get(str(code).upper())
-                if prev:
+                # 手动刷新：信任实拉结果；仅当实拉无有效现价时才回退旧行
+                if prev and (refresh or hard):
+                    px = row.get("price")
+                    if px in (None, "", "-", "…") and prev.get("price") not in (None, "", "-", "…"):
+                        row = dict(prev)
+                        row["data_source"] = "free_preview_fallback"
+                    # 否则不用 _row_fresher，防止旧缓存日期更高时盖住本次实拉
+                elif prev:
                     row = _row_fresher(row, prev)
                 row["pending"] = False
                 row["demo"] = False

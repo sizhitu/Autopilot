@@ -3194,19 +3194,17 @@ let _mainTab = 'watchlist';
 let _lastMainTabSwitch = 0;
 function switchMainTab(tab) {
   // 同步切换视图，任何网络/重绘不得阻塞（含未登录刷新中）
-  if (tab !== 'watchlist' && tab !== 'analysis') return;
+  if (tab !== 'watchlist' && tab !== 'analysis' && tab !== 'ladder') return;
   const now = Date.now();
   // 仅防连点抖到同一 tab；切到另一 tab 永远放行
   if (now - _lastMainTabSwitch < 80 && _mainTab === tab) return;
   _lastMainTabSwitch = now;
   _mainTab = tab;
   try {
-    if (tab === 'analysis') {
+    if (tab === 'analysis' || tab === 'ladder') {
       try { clearTimeout(_wlPollTimer); _wlPollTimer = null; } catch (e0) {}
       try { _wlPollCount = 0; } catch (e0b) {}
       try { _analysisLoading = false; } catch (e1) {}
-      // 刷新中也不挡分析：释放看板 inflight 锁（请求仍在后台跑完）
-      try { /* 不中断 fetch，只允许再次点看板 */ } catch (e1b) {}
     }
     const ta = document.getElementById('tabAnalysis');
     const tw = document.getElementById('tabWatchlist');

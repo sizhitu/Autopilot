@@ -1245,7 +1245,15 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
             new_r = dict(done_map[cu]) if cu in done_map else None
             old_r = dict(base[cu]) if cu in base else None
             if new_r and old_r:
-                r = _row_fresher(new_r, old_r)
+                # 强制刷新：有有效现价的新行优先，避免旧 base 盖住实拉
+                if bust_status_cache:
+                    npx = new_r.get('price')
+                    if npx not in (None, '', '-', '…'):
+                        r = dict(new_r)
+                    else:
+                        r = _row_fresher(new_r, old_r)
+                else:
+                    r = _row_fresher(new_r, old_r)
                 r['name'] = n or r.get('name') or c
                 r['pending'] = False
                 rows.append(r)
