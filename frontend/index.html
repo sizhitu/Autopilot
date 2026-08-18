@@ -170,6 +170,49 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,"Micro
 .left { flex:3; min-width:0; }
 .right { flex:1; min-width:360px; max-width:440px; display:flex; flex-direction:column; gap:8px; }
 .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px; }
+
+/* 主导航 Tab：均分宽度、禁止换行，小屏缩短文案 */
+#mainTabBar {
+  display: flex;
+  width: 100%;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  position: sticky;
+  top: 0;
+  z-index: 5000;
+  isolation: isolate;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+#mainTabBar .main-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  padding: 10px 8px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  box-sizing: border-box;
+}
+#mainTabBar .main-tab.active {
+  color: var(--gold);
+  font-weight: 600;
+  border-bottom-color: var(--gold);
+}
+#mainTabBar .main-tab .tab-short { display: none; }
+@media (max-width: 520px) {
+  #mainTabBar .main-tab { padding: 9px 4px; font-size: 12px; }
+  #mainTabBar .main-tab .tab-full { display: none; }
+  #mainTabBar .main-tab .tab-short { display: inline; }
+}
+
 .card-title { font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; }
 .toolbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .toolbar label { font-size:11px; color:var(--text-dim); }
@@ -752,16 +795,19 @@ body.help-open { overflow: hidden; touch-action: none; }
 </div>
 
 <!-- 主Tab：自选看板 / 分析工具（置顶可点，不依赖请求） -->
-<div id="mainTabBar" style="display:flex; gap:0; border-bottom:1px solid var(--border); background:var(--card); position:sticky; top:0; z-index:5000; isolation:isolate;">
+<div id="mainTabBar">
   <div class="main-tab active" id="tabWatchlist" role="button" tabindex="0"
-       onclick="switchMainTab('watchlist')" onmousedown="switchMainTab('watchlist')"
-       style="padding:8px 24px; cursor:pointer; border-bottom:2px solid var(--gold); color:var(--gold); font-weight:600; font-size:13px; pointer-events:auto; -webkit-user-select:none; user-select:none;">📋 自选看板</div>
+       onclick="switchMainTab('watchlist')" onmousedown="switchMainTab('watchlist')">
+    <span class="tab-full">📋 自选看板</span><span class="tab-short">📋 自选</span>
+  </div>
   <div class="main-tab" id="tabAnalysis" role="button" tabindex="0"
-       onclick="switchMainTab('analysis')" onmousedown="switchMainTab('analysis')"
-       style="padding:8px 24px; cursor:pointer; color:var(--text-dim); font-size:13px; pointer-events:auto; -webkit-user-select:none; user-select:none;">📊 分析工具</div>
+       onclick="switchMainTab('analysis')" onmousedown="switchMainTab('analysis')">
+    <span class="tab-full">📊 分析工具</span><span class="tab-short">📊 分析</span>
+  </div>
   <div class="main-tab" id="tabLadder" role="button" tabindex="0"
-       onclick="switchMainTab('ladder')" onmousedown="switchMainTab('ladder')"
-       style="padding:8px 24px; cursor:pointer; color:var(--text-dim); font-size:13px; pointer-events:auto; -webkit-user-select:none; user-select:none;">📶 藤本茂阶梯</div>
+       onclick="switchMainTab('ladder')" onmousedown="switchMainTab('ladder')">
+    <span class="tab-full">📶 藤本茂阶梯</span><span class="tab-short">📶 阶梯</span>
+  </div>
 </div>
 
 <!-- 自选看板视图 -->
