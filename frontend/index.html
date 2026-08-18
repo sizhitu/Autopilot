@@ -1144,6 +1144,82 @@ function escapeAttr(s) {
 let authToken = (() => { try { return localStorage.getItem('autopilot_token') || ''; } catch (e) { return ''; } })();
 let currentUser = (() => { try { const u = localStorage.getItem('autopilot_user'); return u ? JSON.parse(u) : null; } catch (e) { return null; } })();
 
+// —— 登录会话有效期（长时间不登录自动失效）——
+// 闲置：连续无操作超过此天数需重新登录；最长：自登录起超过此天数无论是否活跃都失效
+const SESSION_IDLE_DAYS = 30;
+const SESSION_MAX_DAYS = 90;
+const SESSION_IDLE_MS = SESSION_IDLE_DAYS * 24 * 60 * 60 * 1000;
+const SESSION_MAX_MS = SESSION_MAX_DAYS * 24 * 60 * 60 * 1000;
+let _lastActivityTouch = 0;
+
+function touchSessionActivity(isNewLogin) {
+  const now = Date.now();
+  // 节流：操作频繁时最多每 30 秒写一次 storage
+  if (!isNewLogin && now - _lastActivityTouch < 30000) return;
+  _lastActivityTouch = now;
+  try {
+    localStorage.setItem('autopilot_last_active', String(now));
+    if (isNewLogin || !localStorage.getItem('autopilot_session_started')) {
+      localStorage.setItem('autopilot_session_started', String(now));
+    }
+  } catch (e) {}
+}
+
+function clearSessionMeta() {
+  try {
+    localStorage.removeItem('autopilot_last_active');
+    localStorage.removeItem('autopilot_session_started');
+  } catch (e) {}
+}
+
+/** @returns {'idle'|'max'|null} */
+function sessionExpireReason() {
+  try {
+    if (!authToken && !currentUser) return null;
+    const now = Date.now();
+    const last = parseInt(localStorage.getItem('autopilot_last_active') || '0', 10) || 0;
+    const started = parseInt(localStorage.getItem('autopilot_session_started') || '0', 10) || 0;
+    // 旧版本无时间戳：补记起点，不立即踢出
+    if (!last && !started) {
+      touchSessionActivity(false);
+      return null;
+    }
+    if (last && (now - last) > SESSION_IDLE_MS) return 'idle';
+    if (started && (now - started) > SESSION_MAX_MS) return 'max';
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function enforceSessionExpiry() {
+  const reason = sessionExpireReason();
+  if (!reason) return false;
+  doLogout({
+    silent: true,
+    reason: reason,
+    message: reason === 'idle'
+      ? ('已超过 ' + SESSION_IDLE_DAYS + ' 天未使用，请重新登录')
+      : ('登录已满 ' + SESSION_MAX_DAYS + ' 天，请重新登录'),
+  });
+  return true;
+}
+
+function bindSessionActivityListeners() {
+  const touch = function () {
+    if (authToken || currentUser) touchSessionActivity(false);
+  };
+  ['click', 'keydown', 'touchstart', 'scroll'].forEach(function (ev) {
+    try { document.addEventListener(ev, touch, { passive: true, capture: true }); } catch (e) {}
+  });
+  // 定时自检（跨午夜/长期挂起标签页）
+  try {
+    setInterval(function () {
+      try { enforceSessionExpiry(); } catch (e) {}
+    }, 5 * 60 * 1000);
+  } catch (e) {}
+}
+
 // 统一请求封装：拼接后端地址 + 自动注入 Bearer 令牌
 // 从 Supabase 会话同步最新 access_token（过期则尝试 refresh）
 async function ensureFreshToken() {
@@ -1163,6 +1239,7 @@ async function ensureFreshToken() {
     if (session && session.access_token) {
       authToken = session.access_token;
       try { localStorage.setItem('autopilot_token', authToken); } catch (e) {}
+      try { touchSessionActivity(false); } catch (e) {}
       return true;
     }
   } catch (e) { console.warn('ensureFreshToken 失败', e); }
@@ -1672,6 +1749,8 @@ async function finishSession(session, opts = {}) {
   } catch (e) { console.warn('获取用户资料失败（保留 supabase 会话）', e); }
   currentUser = user;
   localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
+  // silent=页面恢复会话：只续期活跃时间；正式登录重置会话起点
+  touchSessionActivity(!opts.silent);
   refreshAuthUI(); closeAuth();
   if (!opts.silent) showToast('登录成功', 'ok');
   setupRealtime();
@@ -1954,12 +2033,17 @@ async function startCheckout(plan) {
   } catch (e) {}
 })();
 
-function doLogout() {
+function doLogout(opts) {
+  opts = opts || {};
   if (sb) sb.auth.signOut().catch(() => {});
   teardownRealtime();
   authToken = ''; currentUser = null;
   localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user');
-  refreshAuthUI(); showToast('已退出'); loadWatchlist();
+  clearSessionMeta();
+  refreshAuthUI();
+  if (!opts.silent) showToast(opts.message || '已退出');
+  else if (opts.message) showToast(opts.message, 'info');
+  try { loadWatchlist(); } catch (e) {}
 }
 // 顶栏用户名简略展示：去掉 @ 及域名；超过 6 字符只保留前 5 位 + *
 function formatDisplayName(raw, maxLen) {
@@ -2183,6 +2267,9 @@ async function consumeAuthRedirect() {
 
 async function initAuth() {
   await initSupabase();
+  // 长时间未使用：先清本地登录态，再画 UI
+  try { enforceSessionExpiry(); } catch (e) {}
+  try { bindSessionActivityListeners(); } catch (e) {}
   // 早调一次：若本地已持久化登录态（authToken/currentUser 已在顶层恢复），
   // 在 supabase 异步初始化或远程回跳之前就先把「已登录」界面画出来，避免刷新瞬间闪回未登录态。
   refreshAuthUI();
@@ -2242,6 +2329,14 @@ async function initAuth() {
     }
   }
 
+  // 恢复会话后再检一次（防止 silent 登录写入了新时间戳前应已过期）
+  try {
+    if (enforceSessionExpiry()) {
+      /* already logged out */
+    } else if (authToken || currentUser) {
+      touchSessionActivity(false);
+    }
+  } catch (e) {}
   refreshAuthUI();
   setupRealtime();
   try { loadWatchlist(); } catch (e) {}
