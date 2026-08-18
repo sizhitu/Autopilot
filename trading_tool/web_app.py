@@ -1750,10 +1750,10 @@ class LadderRequest(BaseModel):
 
 
 @app.post("/api/ladder")
-async def calc_ladder(req: LadderRequest, authorization: Optional[str] = Header(None)):
-    """藤本茂阶梯仓位计算器"""
+async def calc_ladder(req: LadderRequest, request: Request,
+                      authorization: Optional[str] = Header(None)):
+    """藤本茂阶梯仓位计算器（公开参考，无需 Pro）"""
     _rate_check(authorization, request, "ladder", 30, 60)
-    _require_pro(authorization)
     strategy = FujimotoStrategy()
     change = req.price_change / 100.0
     desc, delta = strategy._fujimoto_action(change, req.current_position)
@@ -1774,9 +1774,8 @@ async def calc_ladder(req: LadderRequest, authorization: Optional[str] = Header(
 
 
 @app.get("/api/ladder_table")
-async def ladder_table(authorization: Optional[str] = Header(None)):
-    """返回藤本茂完整阶梯表"""
-    _require_pro(authorization)
+async def ladder_table():
+    """返回藤本茂完整阶梯表（固定参考，无需登录）"""
     return {
         "buy_ladder": [
             {"trigger": "-5%", "action": "不操作", "desc": "噪音区间，不动如山"},

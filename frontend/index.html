@@ -4653,16 +4653,62 @@ window.addEventListener('resize', () => {
 });
 
 // === 初始化 ===
+const _DEFAULT_LADDER = {
+  buy_ladder: [
+    { trigger: '-5%', action: '不操作', desc: '噪音区间，不动如山' },
+    { trigger: '-15%', action: '+10%', desc: '第一档承接，试探性入场' },
+    { trigger: '-25%', action: '+25%', desc: '加重仓，恐慌中接筹码' },
+    { trigger: '-35%+', action: '止损评估', desc: '设硬止损，避免深套' },
+  ],
+  sell_ladder: [
+    { trigger: '+5%', action: '持有', desc: '趋势初期，让利润奔跑' },
+    { trigger: '+15%', action: '持有', desc: '趋势确认，不动如山' },
+    { trigger: '+25%', action: '-10%', desc: '开始兑现，落袋为安' },
+    { trigger: '+35%', action: '-20%', desc: '加速兑现' },
+    { trigger: '+45%', action: '-30%', desc: '大幅减仓' },
+    { trigger: '+60%', action: '-40%', desc: '接近清仓' },
+    { trigger: '+100%', action: '清仓', desc: '极端泡沫，离场观望' },
+  ],
+};
+
+function _fillLadderTables(data) {
+  const bt = document.getElementById('buyLadderTable');
+  const st = document.getElementById('sellLadderTable');
+  if (!bt || !st) return;
+  const buy = (data && data.buy_ladder) || _DEFAULT_LADDER.buy_ladder;
+  const sell = (data && data.sell_ladder) || _DEFAULT_LADDER.sell_ladder;
+  bt.innerHTML = '<tr><th>触发</th><th>操作</th><th>说明</th></tr>';
+  buy.forEach(function (i) {
+    bt.innerHTML += '<tr><td>' + escapeHtml(i.trigger) + '</td><td class="buy">' + escapeHtml(i.action) + '</td><td>' + escapeHtml(i.desc) + '</td></tr>';
+  });
+  st.innerHTML = '<tr><th>触发</th><th>操作</th><th>说明</th></tr>';
+  sell.forEach(function (i) {
+    const c = i.action === '持有' ? 'hold' : 'sell';
+    st.innerHTML += '<tr><td>' + escapeHtml(i.trigger) + '</td><td class="' + c + '">' + escapeHtml(i.action) + '</td><td>' + escapeHtml(i.desc) + '</td></tr>';
+  });
+}
+
 async function loadLadderTable() {
   const bt = document.getElementById('buyLadderTable');
   const st = document.getElementById('sellLadderTable');
   if (!bt || !st) return;
-  const res = await api('/api/ladder_table');
-  const data = await res.json();
-  bt.innerHTML = '<tr><th>触发</th><th>操作</th><th>说明</th></tr>';
-  (data.buy_ladder || []).forEach(i => bt.innerHTML += `<tr><td>${i.trigger}</td><td class="buy">${i.action}</td><td>${i.desc}</td></tr>`);
-  st.innerHTML = '<tr><th>触发</th><th>操作</th><th>说明</th></tr>';
-  (data.sell_ladder || []).forEach(i => { const c = i.action === '持有' ? 'hold' : 'sell'; st.innerHTML += `<tr><td>${i.trigger}</td><td class="${c}">${i.action}</td><td>${i.desc}</td></tr>`; });
+  // 先本地填表，避免接口慢/失败时空白
+  if (!bt.rows || bt.rows.length < 2) _fillLadderTables(_DEFAULT_LADDER);
+  try {
+    const res = await api('/api/ladder_table');
+    if (!res.ok) {
+      _fillLadderTables(_DEFAULT_LADDER);
+      return;
+    }
+    const data = await res.json();
+    if ((data.buy_ladder && data.buy_ladder.length) || (data.sell_ladder && data.sell_ladder.length)) {
+      _fillLadderTables(data);
+    } else {
+      _fillLadderTables(_DEFAULT_LADDER);
+    }
+  } catch (e) {
+    _fillLadderTables(_DEFAULT_LADDER);
+  }
 }
 loadLadderTable().catch(()=>{});
 initAuth().then(function(){ try { maybeHandlePasswordRecovery(); } catch(e){} });
