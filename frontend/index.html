@@ -1146,8 +1146,8 @@ let currentUser = (() => { try { const u = localStorage.getItem('autopilot_user'
 
 // —— 登录会话有效期（长时间不登录自动失效）——
 // 闲置：连续无操作超过此天数需重新登录；最长：自登录起超过此天数无论是否活跃都失效
-const SESSION_IDLE_DAYS = 3;
-const SESSION_MAX_DAYS = 7;
+const SESSION_IDLE_DAYS = 7;
+const SESSION_MAX_DAYS = 30;
 const SESSION_IDLE_MS = SESSION_IDLE_DAYS * 24 * 60 * 60 * 1000;
 const SESSION_MAX_MS = SESSION_MAX_DAYS * 24 * 60 * 60 * 1000;
 let _lastActivityTouch = 0;
