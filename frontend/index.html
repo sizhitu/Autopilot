@@ -759,6 +759,9 @@ body.help-open { overflow: hidden; touch-action: none; }
   <div class="main-tab" id="tabAnalysis" role="button" tabindex="0"
        onclick="switchMainTab('analysis')" onmousedown="switchMainTab('analysis')"
        style="padding:8px 24px; cursor:pointer; color:var(--text-dim); font-size:13px; pointer-events:auto; -webkit-user-select:none; user-select:none;">📊 分析工具</div>
+  <div class="main-tab" id="tabLadder" role="button" tabindex="0"
+       onclick="switchMainTab('ladder')" onmousedown="switchMainTab('ladder')"
+       style="padding:8px 24px; cursor:pointer; color:var(--text-dim); font-size:13px; pointer-events:auto; -webkit-user-select:none; user-select:none;">📶 藤本茂阶梯</div>
 </div>
 
 <!-- 自选看板视图 -->
@@ -819,6 +822,28 @@ body.help-open { overflow: hidden; touch-action: none; }
     </div>
   </div>
   <div class="footer-note">点击任意一行加载详细分析 · 汇总旁图标可查看列释义 · 仅供研究不构成投资建议 · <a href="/privacy.html" style="color:var(--text-dim);">隐私政策</a> · <a href="/terms.html" style="color:var(--text-dim);">服务条款</a> <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
+</div>
+
+<!-- 藤本茂阶梯（独立页，与三层校验解耦） -->
+<div id="ladderView" class="hidden" style="padding:12px;max-width:720px;margin:0 auto;">
+  <div class="card" style="margin-bottom:10px;">
+    <div style="font-weight:700;color:var(--gold);margin-bottom:6px;">藤本茂阶梯参考</div>
+    <div style="font-size:12px;color:var(--text-dim);line-height:1.55;">
+      固定百分比加减仓参考表，与分析页「三层一致性校验」独立，仅作仓位节奏备忘。
+      实际买卖仍需结合自选看板时机/趋势与详情分析，不构成投资建议。
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:10px;">
+    <div style="margin-bottom:6px;"><b style="color:var(--green);font-size:12px;">▼ 下跌阶梯（加仓）</b></div>
+    <table class="ladder-table" id="buyLadderTable"></table>
+    <div style="margin:12px 0 6px;"><b style="color:var(--red);font-size:12px;">▲ 上涨阶梯（减仓）</b></div>
+    <table class="ladder-table" id="sellLadderTable"></table>
+  </div>
+  <div class="card">
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">涨跌幅计算器</div>
+    <div class="ladder-input"><input type="number" id="calcChange" placeholder="-15 或 +25"><button class="btn btn-green btn-sm" onclick="calcLadder()">计算</button></div>
+    <div class="ladder-result" id="calcResult">输入相对成本涨跌幅(%)后计算建议档位</div>
+  </div>
 </div>
 
 <!-- 分析模式视图 -->
@@ -1005,24 +1030,11 @@ body.help-open { overflow: hidden; touch-action: none; }
       <div class="tabs">
         <div class="tab active" onclick="switchTab('indicators',this)">指标</div>
         <div class="tab" onclick="switchTab('fibonacci',this)">斐波那契</div>
-        <div class="tab" onclick="switchTab('ladder',this)">阶梯表</div>
-        <div class="tab" onclick="switchTab('calculator',this)">计算器</div>
         <div class="tab" onclick="switchTab('backtest',this)">回测配置</div>
         <div class="tab" id="adminTab" style="display:none;" onclick="switchTab('admin',this)">管理</div>
       </div>
       <div id="tab-indicators"><div style="color:var(--text-dim);text-align:center;padding:15px;">等待分析</div></div>
       <div id="tab-fibonacci" class="hidden"><div style="color:var(--text-dim);text-align:center;padding:15px;">等待分析</div></div>
-      <div id="tab-ladder" class="hidden">
-        <div style="margin-bottom:6px;"><b style="color:var(--green);font-size:11px;">▼ 下跌阶梯（加仓）</b></div>
-        <table class="ladder-table" id="buyLadderTable"></table>
-        <div style="margin:8px 0 6px;"><b style="color:var(--red);font-size:11px;">▲ 上涨阶梯（减仓）</b></div>
-        <table class="ladder-table" id="sellLadderTable"></table>
-      </div>
-      <div id="tab-calculator" class="hidden">
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">输入涨跌幅(%)查看建议</div>
-        <div class="ladder-input"><input type="number" id="calcChange" placeholder="-15 或 +25"><button class="btn btn-green btn-sm" onclick="calcLadder()">计算</button></div>
-        <div class="ladder-result" id="calcResult">输入涨跌幅后计算</div>
-      </div>
       <div id="tab-backtest" class="hidden">
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">回测参数配置</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
@@ -2247,7 +2259,7 @@ function switchTab(name, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   if (el) el.classList.add('active');
   // 只切换右侧面板内容，绝不能匹配主导航 tabWatchlist / tabAnalysis
-  const SIDE_PANELS = ['indicators', 'fibonacci', 'ladder', 'calculator', 'backtest', 'admin'];
+  const SIDE_PANELS = ['indicators', 'fibonacci', 'backtest', 'admin'];
   SIDE_PANELS.forEach(function (n) {
     const pane = document.getElementById('tab-' + n);
     if (pane) pane.classList.toggle('hidden', n !== name);
@@ -3084,6 +3096,8 @@ function switchMainTab(tab) {
       tw.style.pointerEvents = 'auto';
       tw.style.cursor = 'pointer';
     }
+    const lv = document.getElementById('ladderView');
+    const tl = document.getElementById('tabLadder');
     if (av) {
       if (tab === 'analysis') { av.classList.remove('hidden'); av.style.display = ''; }
       else { av.classList.add('hidden'); av.style.display = 'none'; }
@@ -3091,6 +3105,18 @@ function switchMainTab(tab) {
     if (wv) {
       if (tab === 'watchlist') { wv.classList.remove('hidden'); wv.style.display = ''; }
       else { wv.classList.add('hidden'); wv.style.display = 'none'; }
+    }
+    if (lv) {
+      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { loadLadderTable(); } catch (eL) {} }
+      else { lv.classList.add('hidden'); lv.style.display = 'none'; }
+    }
+    if (tl) {
+      tl.classList.toggle('active', tab === 'ladder');
+      tl.style.borderBottom = tab === 'ladder' ? '2px solid var(--gold)' : '2px solid transparent';
+      tl.style.color = tab === 'ladder' ? 'var(--gold)' : 'var(--text-dim)';
+      tl.style.fontWeight = tab === 'ladder' ? '600' : '400';
+      tl.style.pointerEvents = 'auto';
+      tl.style.cursor = 'pointer';
     }
     // 关掉可能挡住点击的帮助层
     try {
@@ -3699,7 +3725,7 @@ function renderWatchlistSummary(summary) {
   html += `<span class="help-q help-q-board" style="margin-left:6px;" onclick="event.stopPropagation();toggleHelp(this)" title="查看看板列说明" role="button" aria-label="看板列说明"><span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
     <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）— 收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
     <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多·指标未齐 / 空·指标未齐」= 均线已偏多/偏空，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
-    <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签（持有 / 观望 / 关注等）。冲突时降权偏观察。作复查清单，非买卖委托。</p></div>
+    <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签。观望不标强度；其余动作后附 <b>·1～·5</b> 为该侧信号强度（5 最强）。买侧：关注买入 / 阶梯抄底关注；卖侧：关注卖出 / 阶梯止盈关注。同侧可比较强弱，跨侧勿直接比数字。冲突时降权观望。非买卖委托。</p></div>
     <div class="hp-sec"><b>新高 / 估值</b><p>新高或回撤看阶段位置。低估 / 合理 / 高估是相对均线或分位的粗分档（如压舱石 MA250±8%、高赔率 ±35% 等），不是基本面公允价。</p></div>
     <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股 — 分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF — 以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
     <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板。<br>
@@ -3779,6 +3805,11 @@ function renderWatchlist(stocks) {
     const actionText = s.action || s.signal || '观望';
     const actionColor = sigColors[s.action_color || s.signal_color] || 'var(--text-dim)';
     const actionTip = s.action_reason || '';
+    const actStr = Number(s.action_strength || 0);
+    const actSide = s.action_side || '';
+    const strengthHtml = (actionText !== '观望' && actStr >= 1)
+      ? ` <span style="display:inline-block;min-width:28px;padding:0 4px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(255,255,255,.06);color:${actionColor};" title="${actSide==='buy'?'买侧':'卖侧'}强度 ${actStr}/5（5最强）">·${actStr}</span>`
+      : '';
     const _ntc = st => st === 'complete' ? 'var(--gold)' : (st === 'completing' ? 'var(--orange)' : 'var(--text-dim)');
     const _dTxt = escapeHtml(s.nine_turn_daily || '');
     const _mTxt = escapeHtml(s.nine_turn_monthly || '');
@@ -3844,7 +3875,7 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 6px;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:5px 6px;white-space:normal;line-height:1.25;"><span style="color:${timingColor};font-weight:600;">${escapeHtml(timingText)}</span>${ntSub}</td>
       <td style="padding:5px 6px;"><span style="color:${trendColor};font-weight:600;">${escapeHtml(trendText)}</span></td>
-      <td style="padding:5px 6px;" title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;">${escapeHtml(actionText)}</span></td>
+      <td style="padding:5px 6px;" title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
       <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
     </tr>`;
@@ -4472,14 +4503,15 @@ window.addEventListener('resize', () => {
 
 // === 初始化 ===
 async function loadLadderTable() {
+  const bt = document.getElementById('buyLadderTable');
+  const st = document.getElementById('sellLadderTable');
+  if (!bt || !st) return;
   const res = await api('/api/ladder_table');
   const data = await res.json();
-  const bt = document.getElementById('buyLadderTable');
   bt.innerHTML = '<tr><th>触发</th><th>操作</th><th>说明</th></tr>';
-  data.buy_ladder.forEach(i => bt.innerHTML += `<tr><td>${i.trigger}</td><td class="buy">${i.action}</td><td>${i.desc}</td></tr>`);
-  const st = document.getElementById('sellLadderTable');
+  (data.buy_ladder || []).forEach(i => bt.innerHTML += `<tr><td>${i.trigger}</td><td class="buy">${i.action}</td><td>${i.desc}</td></tr>`);
   st.innerHTML = '<tr><th>触发</th><th>操作</th><th>说明</th></tr>';
-  data.sell_ladder.forEach(i => { const c = i.action === '持有' ? 'hold' : 'sell'; st.innerHTML += `<tr><td>${i.trigger}</td><td class="${c}">${i.action}</td><td>${i.desc}</td></tr>`; });
+  (data.sell_ladder || []).forEach(i => { const c = i.action === '持有' ? 'hold' : 'sell'; st.innerHTML += `<tr><td>${i.trigger}</td><td class="${c}">${i.action}</td><td>${i.desc}</td></tr>`; });
 }
 loadLadderTable().catch(()=>{});
 initAuth().then(function(){ try { maybeHandlePasswordRecovery(); } catch(e){} });

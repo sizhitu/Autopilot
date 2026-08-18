@@ -202,6 +202,8 @@ class StockStatus:
     action: str = "观望"          # 操盘动作（综合）
     action_color: str = "gray"
     action_reason: str = ""       # 一句话理由
+    action_strength: int = 0      # 非观望动作强度 1~5（0=观望不展示）
+    action_side: str = ""         # buy / sell / ""
     nine_turn: str = "无"         # 九转状态（日级|月级 合并文本）
     nine_turn_dir: str = "none"   # down/up/none（主级别方向）
     nine_turn_level: str = "日"   # 主级别：月/日
@@ -423,53 +425,98 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         timing_sell = status.timing_color == "red" and "九转" in status.timing
         reasons = []
 
+        # 九转完成度（用于强度）
+        nt_complete = bool(nt.get("is_complete"))
+        nt_completing = bool(nt.get("is_completing"))
+        chg5 = float(status.change_5d or 0)
+
         if nt.get('conflict'):
             status.action = "观望"
             status.action_color = "gray"
             reasons.append("日/月九转方向冲突")
         elif timing_buy and trend == "空头趋势":
-            # 背离：不单独标「轻仓观察」，统一观望
             status.action = "观望"
             status.action_color = "gray"
             reasons.append("九转买点与空头趋势背离，观望")
         elif timing_sell and trend == "多头趋势":
-            # 背离：不单独标「减仓观察」，统一观望
             status.action = "观望"
             status.action_color = "gray"
             reasons.append("九转卖点与多头趋势背离，观望")
         elif timing_buy and trend == "多头趋势":
             status.action = "关注买入"
             status.action_color = "orange"
+            status.action_side = "buy"
+            # 5=完成九转+多头；4=完成或临近+多头；3=多头+买点
+            if nt_complete:
+                status.action_strength = 5
+            elif nt_completing:
+                status.action_strength = 4
+            else:
+                status.action_strength = 3
             reasons.append("九转买点与多头同向")
         elif timing_sell and trend == "空头趋势":
             status.action = "关注卖出"
             status.action_color = "red"
+            status.action_side = "sell"
+            if nt_complete:
+                status.action_strength = 5
+            elif nt_completing:
+                status.action_strength = 4
+            else:
+                status.action_strength = 3
             reasons.append("九转卖点与空头同向")
         elif timing_buy:
             status.action = "关注买入"
             status.action_color = "orange"
+            status.action_side = "buy"
+            status.action_strength = 4 if nt_complete else (3 if nt_completing else 2)
             reasons.append(status.timing)
         elif timing_sell:
             status.action = "关注卖出"
             status.action_color = "red"
+            status.action_side = "sell"
+            status.action_strength = 4 if nt_complete else (3 if nt_completing else 2)
             reasons.append(status.timing)
         elif buy_ladder_hit:
             status.action = "阶梯抄底关注"
             status.action_color = "orange"
+            status.action_side = "buy"
+            # 跌幅越深强度略高（仍低于九转+趋势共振）
+            if chg5 <= -30:
+                status.action_strength = 3
+            elif chg5 <= -20:
+                status.action_strength = 2
+            else:
+                status.action_strength = 1
             reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂买入档")
         elif sell_ladder_hit:
             status.action = "阶梯止盈关注"
             status.action_color = "red"
+            status.action_side = "sell"
+            if chg5 >= 45:
+                status.action_strength = 3
+            elif chg5 >= 30:
+                status.action_strength = 2
+            else:
+                status.action_strength = 1
             reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂卖出档")
         else:
             status.action = "观望"
             status.action_color = "gray"
+            status.action_strength = 0
+            status.action_side = ""
             if nt_signal in ('买入', '加仓', '卖出', '持有'):
                 reasons.append(f"无明确时机共振（策略信号仅供参考：{nt_signal}）")
             else:
                 reasons.append("无共振时机")
 
+        if status.action == "观望":
+            status.action_strength = 0
+            status.action_side = ""
         status.action_reason = "；".join(reasons)
+        if status.action_strength > 0:
+            side_cn = "买侧" if status.action_side == "buy" else ("卖侧" if status.action_side == "sell" else "")
+            status.action_reason += f"；{side_cn}强度{status.action_strength}/5"
         # 汇总仅三类，与列表行一一对应
         if status.action in ("关注买入", "阶梯抄底关注"):
             status.signal = "即将上涨关注"
@@ -549,6 +596,8 @@ def _status_to_dict(st: StockStatus) -> dict:
         'action': st.action,
         'action_color': st.action_color,
         'action_reason': st.action_reason,
+        'action_strength': int(getattr(st, 'action_strength', 0) or 0),
+        'action_side': getattr(st, 'action_side', '') or '',
         'nine_turn': st.nine_turn,
         'nine_turn_dir': st.nine_turn_dir,
         'nine_turn_level': st.nine_turn_level,
