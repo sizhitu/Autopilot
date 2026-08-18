@@ -1223,20 +1223,13 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
                     base[str(s['code']).upper()] = dict(s)
 
     if bust_status_cache:
+        # 用户手动刷新：每只都清 STATUS/K线，必须实拉，避免「点了刷新仍用旧缓存」
         try:
             from data_fetcher import invalidate_kline_cache
         except Exception:
             invalidate_kline_cache = None
         for c, _ in items:
             cu = str(c).strip().upper()
-            prev = base.get(cu) if isinstance(base, dict) else None
-            # 已有更新且非陈旧的行：保留 STATUS，避免强制刷新把日期打回前一天
-            keep = False
-            if prev and _row_usable(prev) and _bar_date_str(prev):
-                if not bool(prev.get("bar_stale")):
-                    keep = True
-            if keep:
-                continue
             _STATUS_CACHE.pop(cu, None)
             if invalidate_kline_cache:
                 try:
@@ -1295,10 +1288,13 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
         def _one(code, name):
             cu = str(code).upper()
             prev = base.get(cu) if base else None
-            # 已最新则读缓存；否则强制实拉
-            fl = True
-            if prev and _row_is_date_fresh(prev, cu):
-                fl = False
+            # 手动 force 刷新：一律实拉；软刷新才允许「已最新读缓存」
+            if bust_status_cache:
+                fl = True
+            else:
+                fl = True
+                if prev and _row_is_date_fresh(prev, cu):
+                    fl = False
             return _status_dict_cached(code, name, 300, force_live=fl)
         futs = {ex.submit(_one, code, name): code for code, name in items}
         for fut in as_completed(futs):
@@ -1563,7 +1559,8 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                         # 周五 vs 周一特殊：bar 为周五且今天周一/二可接受
                         all_fresh = False
                         break
-                if all_fresh and (out.get('stocks') or []) and not hard:
+                # 仅「非用户手动 force」时才因全员日期新鲜而跳过；点刷新必须重算
+                if all_fresh and (out.get('stocks') or []) and not hard and not force:
                     force_needed = False
                     out['computing'] = False
                     out['cache_hit'] = True
@@ -1581,6 +1578,9 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                 c2 = _CACHES.get(key)
                 # force：即使标记在刷新中也允许重开（避免卡死在「最后1只」）
                 stuck = bool(c2 and c2.get('refreshing') and force)
+                if stuck:
+                    # 卡在 refreshing：允许重开
+                    c2['refreshing'] = False
                 if c2 and (not c2.get('refreshing') or stuck):
                     c2['refreshing'] = True
                     if isinstance(c2.get('data'), dict):
@@ -1592,8 +1592,10 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                             'total': len(items),
                         }
                     def _run_bg():
-                        if not _BG_SEM.acquire(blocking=False):
-                            # 已有刷新在跑：标记仍 computing，由已有任务收尾
+                        got = _BG_SEM.acquire(blocking=False)
+                        if not got and force:
+                            got = _BG_SEM.acquire(timeout=45)
+                        if not got:
                             return
                         try:
                             _background_refresh(key, items, user_id, bool(force or hard))

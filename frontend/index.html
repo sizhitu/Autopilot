@@ -3342,7 +3342,7 @@ let _wlPollCount = 0;
 let _wlPendingForce = false;
 let _manualRefreshStreak = 0;
 let _manualRefreshTs = 0;
-const _WL_MAX_POLL = 40;  // 大自选（20+）需足够轮询；仍有熔断
+const _WL_MAX_POLL = 60;  // 大自选需足够轮询；熔断放宽
 
 
 function isFreeUser() {
@@ -3446,6 +3446,7 @@ async function loadWatchlist(forceRefresh = false) {
 }
 
 let _lastWatchSig = '';
+let _lastProgKey = '';
 
 function _watchRowsSig(stocks) {
   if (!stocks || !stocks.length) return '';
@@ -3458,6 +3459,13 @@ async function _loadWatchlistBody(forceRefresh) {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
   const hasRows = _lastWatchRows && _lastWatchRows.length;
+  // 手动刷新：清会话「最新锁」，允许接口新日期写回（避免前端锁死旧 bar_date）
+  if (forceRefresh) {
+    try {
+      for (const k of Object.keys(_bestWatchByCode || {})) delete _bestWatchByCode[k];
+    } catch (e0) {}
+    _lastWatchSig = '';
+  }
   // 已有数据时不展示整块 loading，避免闪三下
   if (hasRows) {
     if (forceRefresh) setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
@@ -3558,7 +3566,8 @@ async function _loadWatchlistBody(forceRefresh) {
       let stocks = json.stocks || [];
       const total = json.total || stocks.length || (json.count || 0);
       let usable = stocks.filter(s => s && !s.pending && s.price !== '-' && s.signal !== '计算中');
-      if (usable.length === 0 && _lastWatchRows && _lastWatchRows.length) {
+      // 仅当本次完全无行时才回退旧底图；有分批进度时继续用服务端行，避免「刷新一半停住」
+      if (usable.length === 0 && !(stocks && stocks.length) && _lastWatchRows && _lastWatchRows.length) {
         stocks = _lastWatchRows;
       } else if (!stocks.length && (json.symbols || []).length) {
         stocks = buildSkeletonRows(json.symbols);
@@ -3573,13 +3582,16 @@ async function _loadWatchlistBody(forceRefresh) {
         const sig = _watchRowsSig(stocks);
         const codeChanged = (stocks.length !== (_lastWatchRows || []).length);
         // 内容未变则不重绘；但代码数量变化必须重绘（新增/删除）
-        if (sig !== _lastWatchSig || codeChanged || forceRefresh) {
+        const prog = json.progress || {};
+        const progKey = String(prog.done || 0) + '/' + String(prog.total || 0);
+        if (sig !== _lastWatchSig || codeChanged || forceRefresh || json.computing || progKey !== (_lastProgKey || '')) {
           renderWatchlistSummary(json.summary || {});
           renderWatchlist(stocks);
           _lastWatchSig = sig;
+          _lastProgKey = progKey;
           _lastWatchSkeleton = stocks.map(s => ({ code: s.code, name: s.name, market: s.market }));
-          // 始终用合并后的结果更新底图（禁止计算中途用旧日期覆盖）
-          if (usable.length > 0) {
+          // 有任一可用行或强制刷新时更新底图
+          if (usable.length > 0 || forceRefresh) {
             _lastWatchRows = stocks.slice();
           }
         }
