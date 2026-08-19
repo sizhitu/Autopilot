@@ -562,7 +562,21 @@ body.help-open { overflow: hidden; touch-action: none; }
 #watchlistTable td:nth-child(8) { text-align: left !important; }
 #watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 14%; }  /* 九转时机 */
 #watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 9%; }   /* 趋势过滤 */
-#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 11%; }  /* 操盘动作 */
+#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 12%; }  /* 操盘动作 */
+#watchlistTable td:nth-child(7) { padding-left: 3px !important; padding-right: 3px !important; white-space: nowrap; }
+#watchlistTable td:nth-child(7) .wl-act-str {
+  display: inline-block;
+  min-width: 12px;
+  padding: 0 1px;
+  margin-left: 1px;
+  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  background: rgba(255,255,255,.06);
+  vertical-align: baseline;
+}
 #watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 15%; }  /* 新高/估值 */
 #watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 15%; text-align: center !important; }  /* 参考价/涨幅 */
 
@@ -3970,7 +3984,7 @@ function renderWatchlist(stocks) {
     const actStr = Number(s.action_strength || 0);
     const actSide = s.action_side || '';
     const strengthHtml = (actionText !== '观望' && actStr >= 1)
-      ? ` <span style="display:inline-block;min-width:28px;padding:0 4px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(255,255,255,.06);color:${actionColor};" title="${actSide==='buy'?'买侧':'卖侧'}强度 ${actStr}/5（5最强）">·${actStr}</span>`
+      ? `<span class="wl-act-str" style="color:${actionColor};" title="${actSide==='buy'?'买侧':'卖侧'}强度 ${actStr}/5（5最强）">·${actStr}</span>`
       : '';
     const _ntc = st => st === 'complete' ? 'var(--gold)' : (st === 'completing' ? 'var(--orange)' : 'var(--text-dim)');
     const _dTxt = escapeHtml(s.nine_turn_daily || '');
@@ -4037,7 +4051,7 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 6px;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:5px 6px;white-space:normal;line-height:1.25;"><span style="color:${timingColor};font-weight:600;">${escapeHtml(timingText)}</span>${ntSub}</td>
       <td style="padding:5px 6px;"><span style="color:${trendColor};font-weight:600;">${escapeHtml(trendText)}</span></td>
-      <td style="padding:5px 6px;" title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
+      <td title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;font-size:11px;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
       <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
     </tr>`;
