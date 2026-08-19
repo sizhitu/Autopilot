@@ -1407,20 +1407,32 @@ async def watchlist_free_preview(request: Request, refresh: bool = False, hard: 
         "cached": False,
     }
     try:
-        from watchlist import _tag_stocks_date_freshness
+        from watchlist import _tag_stocks_date_freshness, _row_usable, _row_richness
         old_stocks = ((_FREE_PREVIEW_CACHE.get("data") or {}).get("stocks") or [])
         merged_store = []
         old_map = {str(s.get("code")).upper(): s for s in old_stocks if isinstance(s, dict)}
+        # 若本次清空了进程缓存，仍可用 prev_by（本函数上文）兜底完整行
         for s in stocks:
             cu = str((s or {}).get("code") or "").upper()
-            merged_store.append(_row_fresher(s, old_map.get(cu)) if cu in old_map else s)
+            prev = old_map.get(cu) or prev_by.get(cu)
+            if prev and _row_usable(prev) and not _row_usable(s):
+                # 实拉失败/半残：保留上一份完整指标，避免缓存被空行污染
+                keep = dict(prev)
+                keep["free_fixed"] = True
+                keep["data_source"] = "free_preview_kept_full"
+                merged_store.append(keep)
+            elif prev:
+                merged_store.append(_row_fresher(s, prev))
+            else:
+                merged_store.append(s)
         tagged, stale = _tag_stocks_date_freshness(merged_store)
         data["stocks"] = tagged
         data["summary"] = _sum_stocks(tagged)
         data["date_stale_count"] = len(stale)
         data["cache_date_stale"] = len(stale) > 0
-        # 仅当全部最新时写入长缓存时间戳；有 stale 也写，但后台会继续补
-        _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
+        # 有至少一只可用才写进程缓存，避免把双空行锁进 6h 缓存
+        if any(_row_usable(s) for s in tagged if isinstance(s, dict)):
+            _FREE_PREVIEW_CACHE = {"ts": now, "data": data}
         if stale:
             from watchlist import _schedule_price_date_refresh
             _schedule_price_date_refresh("__free_preview__", stale)

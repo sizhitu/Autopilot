@@ -641,8 +641,29 @@ def _bar_date_str(row) -> str:
     return d[:10] if d else ""
 
 
+def _row_richness(s: dict) -> int:
+    """指标完整度：防止半残行（仅有价/空指标）盖住完整行。"""
+    if not s or not isinstance(s, dict):
+        return 0
+    n = 0
+    px = s.get("price")
+    if px not in (None, "", "-", "…"):
+        n += 2
+    if _bar_date_str(s):
+        n += 2
+    for k in ("timing", "trend_filter", "action", "signal", "nine_turn"):
+        v = s.get(k)
+        if v not in (None, "", "-", "—", "…", "计算中"):
+            n += 1
+    if s.get("error"):
+        n -= 3
+    if s.get("pending"):
+        n -= 2
+    return n
+
+
 def _row_fresher(a: dict, b: dict) -> dict:
-    """两者都可用时取 bar_date 更新的；缺日期/更陈旧的不覆盖。"""
+    """两者都可用时取 bar_date 更新的；缺日期/更陈旧的不覆盖；同日取指标更完整的。"""
     ua = _row_usable(a) if a else False
     ub = _row_usable(b) if b else False
     if ua and not ub:
@@ -650,6 +671,10 @@ def _row_fresher(a: dict, b: dict) -> dict:
     if ub and not ua:
         return b
     if not ua and not ub:
+        # 都不可用：仍选相对更完整的，避免空行
+        ra, rb = _row_richness(a), _row_richness(b)
+        if rb > ra:
+            return b
         return a if a else b
     da, db = _bar_date_str(a), _bar_date_str(b)
     if da and db:
@@ -657,33 +682,46 @@ def _row_fresher(a: dict, b: dict) -> dict:
             return b
         if da > db:
             return a
-        # 同日：优先非 bar_stale
+        # 同日：优先非 bar_stale，再比完整度
         sa = bool((a or {}).get("bar_stale"))
         sb = bool((b or {}).get("bar_stale"))
         if sa and not sb:
             return b
         if sb and not sa:
             return a
+        ra, rb = _row_richness(a), _row_richness(b)
+        if rb > ra:
+            return b
         return a
     if db and not da:
         return b
     if da and not db:
         return a
+    ra, rb = _row_richness(a), _row_richness(b)
+    if rb > ra:
+        return b
     return a if a else b
 
 
 def _status_cache_put(k: str, data: dict) -> None:
     now = time.time()
-    # 禁止用更旧 bar_date 覆盖状态缓存（刷新回退前一天的根因）
+    # 禁止用更旧 bar_date / 半残指标行覆盖状态缓存
     try:
         hit = _STATUS_CACHE.get(k)
         if hit and isinstance(hit.get("data"), dict) and isinstance(data, dict):
-            old_d = _bar_date_str(hit["data"])
+            old = hit["data"]
+            old_d = _bar_date_str(old)
             new_d = _bar_date_str(data)
             if old_d and new_d and old_d > new_d:
                 return
             if old_d and not new_d:
                 return
+            # 同日或新行不可用：旧行更完整则保留
+            if _row_usable(old) and not _row_usable(data):
+                return
+            if old_d and new_d and old_d == new_d:
+                if _row_richness(old) > _row_richness(data):
+                    return
     except Exception:
         pass
     _STATUS_CACHE[k] = {"ts": now, "data": data}

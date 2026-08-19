@@ -3693,11 +3693,12 @@ async function _loadWatchlistBody(forceRefresh) {
         } catch (e) {}
         return;
       } catch (e) {
-        const stocks = getDemoWatchlistRows();
+        // 失败时保留上一帧完整数据，避免整页刷新把指标冲成空
+        let stocks = (_lastWatchRows && _lastWatchRows.length) ? _lastWatchRows.slice() : getDemoWatchlistRows();
         watchNotes = {};
-        _lastWatchRows = stocks;
         setDemoBanner(true);
         renderWatchlist(stocks);
+        try { renderWatchlistSummary(buildWatchlistSummaryFromStocks(stocks)); } catch (e2) {}
         loading.classList.add('hidden');
         return;
       }
