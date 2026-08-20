@@ -629,7 +629,8 @@ _STATUS_TTL = 180
 _STATUS_CACHE_MAX = 64
 _CACHES_MAX = 12            # 最多保留多少套看板缓存
 _refresh_lock = threading.Lock()
-_BG_SEM = threading.Semaphore(2)  # 同时最多 2 个看板/补价后台任务，防线程打爆内存
+_BG_SEM = threading.Semaphore(1)  # 同时最多 1 个看板后台任务（免费实例内存紧）
+_HEAVY_SEM = threading.Semaphore(2)  # 全局重计算（状态/行情分析）并发上限
 _LAST_TRIM_TS = 0.0
 
 
@@ -811,7 +812,14 @@ def _status_dict_cached(code: str, name: str, days: int = 200, force_live: bool 
             invalidate_kline_cache(k)
         except Exception:
             pass
-    st = get_stock_status(code, name, days=days)
+    try:
+        _HEAVY_SEM.acquire()
+        try:
+            st = get_stock_status(code, name, days=days)
+        finally:
+            _HEAVY_SEM.release()
+    except NameError:
+        st = get_stock_status(code, name, days=days)
     d = _status_to_dict(st)
     d["pending"] = False
     d["data_source"] = "live_fetch"
@@ -1329,7 +1337,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
     # 并行计算；每完成 1～3 个写进度（大列表更密），避免只见前 5 只
     _batch = 1 if total <= 8 else 3
     _done_n = 0
-    _workers = min(4, max(2, len(items)))  # Render 小实例控制并发，降内存峰值
+    _workers = min(2, max(1, len(items)))  # Render 免费实例：最多 2 路并行，防分析页并发时 OOM
     with ThreadPoolExecutor(max_workers=_workers) as ex:
         def _one(code, name):
             cu = str(code).upper()

@@ -18,6 +18,7 @@ import json
 import math
 import re
 import time
+import asyncio
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -261,6 +262,31 @@ def result_to_dict(result) -> dict:
 
 
 CHART_BARS = 300  # 全站分析/行情图固定展示根数
+
+
+def _run_heavy(fn, *args, **kwargs):
+    """限制同时进行的行情/策略重计算，降低 Render 免费实例 OOM 重启概率。"""
+    import threading
+    import gc
+    try:
+        from watchlist import _HEAVY_SEM
+    except Exception:
+        _HEAVY_SEM = getattr(_run_heavy, "_sem", None)
+        if _HEAVY_SEM is None:
+            _run_heavy._sem = threading.Semaphore(2)
+            _HEAVY_SEM = _run_heavy._sem
+    _HEAVY_SEM.acquire()
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        try:
+            gc.collect()
+        except Exception:
+            pass
+        try:
+            _HEAVY_SEM.release()
+        except Exception:
+            pass
 
 
 def _clamp_quote_chart(payload: dict) -> dict:
@@ -845,7 +871,7 @@ async def cron_prewarm_cache(
             except Exception:
                 end_s = ""
             strategy = FujimotoStrategy(total_capital=100000)
-            result = strategy.analyze(df)
+            result = _run_heavy(strategy.analyze, df)
             nine_turn = calc_nine_turn_display(df)
             extra = _extra_metrics(df, sym)
             payload = _to_jsonable({
@@ -1048,16 +1074,20 @@ async def get_quote(req: QuoteRequest, request: Request = None,
                 cache.set_quote_cache(req.symbol, None)
             except Exception:
                 pass
-    try:
+    def _quote_fetch_df():
         _days = CHART_BARS
-        df = fetcher.fetch(req.symbol, _days)
-        if df is None or len(df) < 200:
+        df0 = fetcher.fetch(req.symbol, _days)
+        if df0 is None or len(df0) < 200:
             try:
                 from data_fetcher import invalidate_kline_cache
                 invalidate_kline_cache(req.symbol)
             except Exception:
                 pass
-            df = fetcher.fetch(req.symbol, CHART_BARS)
+            df0 = fetcher.fetch(req.symbol, CHART_BARS)
+        return df0
+
+    try:
+        df = _run_heavy(_quote_fetch_df)
         source = "live"
         stale = False
     except Exception as e:
