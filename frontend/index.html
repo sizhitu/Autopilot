@@ -3615,7 +3615,7 @@ let _lastProgKey = '';
 function _watchRowsSig(stocks) {
   if (!stocks || !stocks.length) return '';
   return stocks.map(function (s) {
-    return [s.code, s.price, s.signal, s.change_1d, s.pending ? 1 : 0].join(':');
+    return [s.code, s.price, s.bar_date || '', s.signal, s.action || '', s.change_1d, s.pending ? 1 : 0].join(':');
   }).join('|');
 }
 
@@ -3724,6 +3724,10 @@ async function _loadWatchlistBody(forceRefresh) {
     if (!json.success) throw new Error(json.detail || '获取失败');
     if (json.hard_refresh && (json.hard_purged || []).length) {
       try { showToast('已强制更新 ' + json.hard_purged.length + ' 只非最新代码', 'ok'); } catch (e) {}
+      _watchWasComputing = true;
+      // 强制清签名，后续轮询结果必须重绘
+      _lastWatchSig = '';
+      _lastProgKey = '';
     }
 
     if (json.computing) {
@@ -3817,8 +3821,9 @@ async function _loadWatchlistBody(forceRefresh) {
     renderWatchlist(merged);
     _lastWatchRows = merged.slice();
     _lastWatchSkeleton = merged.map(s => ({ code: s.code, name: s.name, market: s.market }));
-    if (_watchWasComputing && forceRefresh && json.updated_at) {
-      showToast('看板已更新至 ' + json.updated_at + '，正在校验日期…', 'ok');
+    _lastWatchSig = _watchRowsSig(merged);
+    if (_watchWasComputing && json.updated_at) {
+      try { showToast('看板已更新至 ' + json.updated_at, 'ok'); } catch (e) {}
     }
     _watchWasComputing = false;
     // 二次校验（不阻塞首屏；完成后若有更新再重绘）

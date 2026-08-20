@@ -1553,7 +1553,9 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         hard_purged = _hard_purge_stale_symbols(items)
 
     # 软 TTL：完整可用数据 → 毫秒级返回；但必须与当前自选 codes 对齐
+    # 若后台仍在 refreshing（例如刚点了二次强制刷新），禁止早退，否则前端停轮询、页面不重绘
     if (not force and cache and isinstance(cache.get('data'), dict)
+            and not cache.get('refreshing')
             and (now - cache.get('ts', 0)) < _WATCHLIST_SOFT_TTL
             and _has_usable_stocks(cache['data'])):
         out = dict(cache['data'])
