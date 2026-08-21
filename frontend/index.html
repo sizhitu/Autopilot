@@ -3407,12 +3407,12 @@ function buildSkeletonRows(symbols) {
 /** 友好预估等待文案（按代码数量/任务类型粗估，减少狂点刷新） */
 function _formatEtaSeconds(sec) {
   sec = Math.max(0, Math.ceil(Number(sec) || 0));
-  if (sec <= 20) return '约半分钟内';
-  if (sec <= 50) return '约1分钟内';
-  if (sec <= 100) return '约1–2分钟';
-  if (sec <= 180) return '约2–3分钟';
-  if (sec <= 300) return '约3–5分钟';
-  return '约5分钟以上（代码较多，请耐心等待）';
+  // 1 分钟及以内统一「预计1分钟」
+  if (sec <= 60) return '预计1分钟';
+  if (sec <= 120) return '预计2分钟';
+  if (sec <= 180) return '预计3分钟';
+  if (sec <= 300) return '预计5分钟';
+  return '预计5分钟以上';
 }
 
 function _watchlistEtaSec(json) {
@@ -3672,7 +3672,7 @@ function manualWatchlistRefresh() {
   if (_wlInflight) {
     try {
       const eta = _formatEtaSeconds(_watchlistEtaSec({ computing: true, progress: { done: 0, total: (_lastWatchRows && _lastWatchRows.length) || (_lastWatchSkeleton && _lastWatchSkeleton.length) || 0 } }));
-      showToast('正在刷新中，' + eta + '，请勿频繁点击', 'info');
+      showToast('正在刷新中，' + eta, 'info');
     } catch (e) {}
     return;
   }
@@ -4651,7 +4651,7 @@ async function runBacktest() {
 
   const _btDays = parseInt((document.getElementById('btDays') || {}).value) || 300;
   const _btEta = _formatEtaSeconds(_backtestEtaSec(_btDays));
-  document.getElementById('chartMeta').textContent = '回测中… ' + _btEta + '（请勿重复点击）';
+  document.getElementById('chartMeta').textContent = '回测中… ' + _btEta;
   switchView('backtest');
 
   try {
