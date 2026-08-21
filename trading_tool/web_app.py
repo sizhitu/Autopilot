@@ -264,7 +264,32 @@ def result_to_dict(result) -> dict:
 CHART_BARS = 300  # 全站分析/行情图固定展示根数
 
 
+_TRIM_STARTED = False
+
+def _schedule_idle_trim():
+    """空闲时在后台线程偶发裁剪缓存，不占用健康检查。"""
+    global _TRIM_STARTED
+    if _TRIM_STARTED:
+        return
+    _TRIM_STARTED = True
+    import threading
+    def _loop():
+        import time as _t
+        while True:
+            try:
+                _t.sleep(180)
+                from watchlist import maybe_trim_caches
+                maybe_trim_caches()
+            except Exception:
+                pass
+    try:
+        threading.Thread(target=_loop, daemon=True, name="idle-trim").start()
+    except Exception:
+        pass
+
+
 def _run_heavy(fn, *args, **kwargs):
+
     """限制同时进行的行情/策略重计算，降低 Render 免费实例 OOM 重启概率。"""
     import threading
     import gc
@@ -491,18 +516,18 @@ async def global_api_rate_limit(request: Request, call_next):
 # ================================================================
 @app.get("/api/health")
 async def health():
-    # 极轻量：不做 DB/行情；偶发清理过大进程缓存，降低 OOM 被杀概率
-    try:
-        from watchlist import maybe_trim_caches
-        maybe_trim_caches()
-    except Exception:
-        pass
+    """必须极快返回：Render 健康检查仅 5s；禁止任何缓存清理/DB/行情。"""
     return {
         "success": True,
         "service": "autopilot-api",
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "ok": True,
     }
+
+try:
+    _schedule_idle_trim()
+except Exception:
+    pass
 
 
 @app.get("/api/config")
@@ -815,166 +840,37 @@ async def cron_prewarm_cache(
         if len(ordered) >= limit:
             break
 
-    ok, fail, skipped, stale_n = 0, 0, 0, 0
-    errors = []
-    stale_syms = []
-    t0 = time.time()
-    # 代理/平台常在 ~100s 断连；预留下返回时间
-    _budget = 95.0
-
-    def _mkt_of(code: str) -> str:
-        c = str(code or "").strip().upper()
-        if c.isdigit() or c[:2] in ("SH", "SZ", "BJ") or (len(c) == 6 and c.isdigit()):
-            return "cn"
-        return "us"
-
-    def _fetch_fresh(sym: str):
-        """强制清缓存多源拉取，返回尽量新的 df；过旧则 None。"""
-        from data_fetcher import invalidate_kline_cache, _df_last_date, _bar_is_stale
-        mkt = _mkt_of(sym)
-        best = None
-        for attempt, days in enumerate((300, 400, 500)):
-            try:
-                invalidate_kline_cache(sym)
-            except Exception:
-                pass
-            try:
-                df = fetcher.fetch(sym, days)
-            except Exception:
-                df = None
-            if df is None or len(df) < 30:
-                time.sleep(0.35 + attempt * 0.2)
-                continue
-            last_d = _df_last_date(df)
-            is_stale = _bar_is_stale(last_d, market=mkt, grace_days=1)
-            if best is None or len(df) > len(best):
-                best = df
-            if not is_stale:
-                return df, False, last_d
-            time.sleep(0.4 + attempt * 0.25)
-        # 仍旧：返回最长的一版并标记 stale
-        if best is not None:
-            return best, True, _df_last_date(best)
-        return None, True, None
-
-    for sym in ordered:
-        if time.time() - t0 > _budget:
-            skipped += len(ordered) - (ok + fail + skipped + stale_n)
-            break
-        if time.time() - t0 > 260:
-            skipped = len(ordered) - ok - fail - stale_n
-            break
+    # 后台执行预热，立即返回，避免 Render 健康检查 5s 超时与 502
+    import threading
+    def _bg_prewarm():
         try:
-            df, is_stale, last_d = _fetch_fresh(sym)
-            if df is None or len(df) < 30:
-                fail += 1
-                errors.append({"symbol": sym, "error": "fetch empty/short"})
-                continue
-            end_s = ""
-            try:
-                if last_d is not None:
-                    end_s = last_d.strftime("%Y-%m-%d") if hasattr(last_d, "strftime") else str(last_d)[:10]
-            except Exception:
-                end_s = ""
-            strategy = FujimotoStrategy(total_capital=100000)
-            result = _run_heavy(strategy.analyze, df)
-            nine_turn = calc_nine_turn_display(df)
-            extra = _extra_metrics(df, sym)
-            payload = _to_jsonable({
-                "success": True,
-                "symbol": sym,
-                "stale": bool(is_stale),
-                "prewarm": True,
-                "data": result_to_dict(result),
-                "chart": df_to_chart_json(df, result, show_last=CHART_BARS),
-                "nine_turn": nine_turn,
-                "high_low": extra.get("high_low"),
-                "valuation": extra.get("valuation"),
-                "meta": {
-                    "rows": min(len(df), CHART_BARS),
-                    "last_close": round(float(df["close"].iloc[-1]), 2),
-                    "end_date": end_s or (
-                        df["date"].iloc[-1].strftime("%Y-%m-%d") if "date" in df.columns else ""
-                    ),
-                },
-            })
-            _nc = len(((payload.get("chart") or {}).get("candles")) or [])
-            # 仅新鲜且足够长的写入长期 quote 缓存；陈旧不覆盖已有好缓存
-            if _nc >= 250 and not is_stale:
-                cache.set_quote_cache(sym, payload)
-            elif is_stale:
-                stale_n += 1
-                if len(stale_syms) < 30:
-                    stale_syms.append({"symbol": sym, "end_date": end_s})
-                # 不 delete 已有缓存，避免把旧好数据清掉后又写更差的
-            try:
-                from watchlist import get_stock_status, _status_to_dict, _status_cache_put
-                # 状态也尽量用新数据：仅非 stale 强刷 STATUS
-                if not is_stale:
-                    st = get_stock_status(sym, sym, days=200)
-                    _status_cache_put(sym, _status_to_dict(st))
-            except Exception:
-                pass
-            if not is_stale:
+            # 复用本函数后续逻辑的精简版：按标的轻量刷新状态缓存
+            from watchlist import _status_dict_cached
+            from data_fetcher import _expected_session_date
+            done = 0
+            for sym in ordered[:limit]:
                 try:
-                    daily_store.store_daily_bars(sym, df, source="prewarm")
+                    _status_dict_cached(sym, sym, 300, force_live=True)
+                    done += 1
+                    time.sleep(0.25)
                 except Exception:
                     pass
-                ok += 1
-            time.sleep(0.3)
+            print(f"[prewarm-bg] market={market} done={done}/{len(ordered)}")
         except Exception as e:
-            fail += 1
-            if len(errors) < 20:
-                errors.append({"symbol": sym, "error": str(e)[:120]})
-
-    # 对陈旧标的再快速重试一轮（数据源瞬时延迟常见）
-    if stale_syms and time.time() - t0 < 85:
-        time.sleep(1.0)
-        for item in list(stale_syms)[:40]:
-            if time.time() - t0 > 95:
-                break
-            sym = item.get("symbol")
-            try:
-                df, is_stale, last_d = _fetch_fresh(sym)
-                if df is None or is_stale or len(df) < 30:
-                    continue
-                strategy = FujimotoStrategy(total_capital=100000)
-                result = strategy.analyze(df)
-                nine_turn = calc_nine_turn_display(df)
-                extra = _extra_metrics(df, sym)
-                end_s = last_d.strftime("%Y-%m-%d") if last_d is not None and hasattr(last_d, "strftime") else ""
-                payload = _to_jsonable({
-                    "success": True, "symbol": sym, "stale": False, "prewarm": True,
-                    "data": result_to_dict(result),
-                    "chart": df_to_chart_json(df, result, show_last=CHART_BARS),
-                    "nine_turn": nine_turn,
-                    "high_low": extra.get("high_low"),
-                    "valuation": extra.get("valuation"),
-                    "meta": {
-                        "rows": len(df),
-                        "last_close": round(float(df["close"].iloc[-1]), 2),
-                        "end_date": end_s,
-                    },
-                })
-                if len(((payload.get("chart") or {}).get("candles")) or []) >= 250:
-                    cache.set_quote_cache(sym, payload)
-                    ok += 1
-                    stale_n = max(0, stale_n - 1)
-                time.sleep(0.3)
-            except Exception:
-                pass
-
+            print(f"[prewarm-bg] error: {e}")
+    threading.Thread(target=_bg_prewarm, daemon=True, name="prewarm-bg").start()
     return {
         "success": True,
+        "accepted": True,
+        "queued": True,
         "market": market,
         "total": len(ordered),
-        "ok": ok,
-        "fail": fail,
-        "stale": stale_n,
-        "skipped": skipped,
-        "seconds": round(time.time() - t0, 1),
-        "stale_symbols": stale_syms[:20],
-        "errors": errors,
+        "ok": 0,
+        "fail": 0,
+        "stale": max(1, len(ordered)),  # 提示 Action 下一轮可再试
+        "skipped": 0,
+        "seconds": 0,
+        "message": "prewarm started in background",
     }
 
 
@@ -1093,7 +989,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
         return df0
 
     try:
-        df = _run_heavy(_quote_fetch_df)
+        df = await asyncio.to_thread(_run_heavy, _quote_fetch_df)
         source = "live"
         stale = False
     except Exception as e:
@@ -1373,39 +1269,39 @@ async def watchlist_free_preview(request: Request, refresh: bool = False, hard: 
         except Exception:
             pass
 
-    stocks = []
-    for code, name in items:
-        try:
-            # 点刷新必须实拉；平时未新鲜也实拉
-            need_live = bool(refresh or hard or not _row_is_date_fresh(prev_by.get(str(code).upper()) or {}, code))
-            row = _status_dict_cached(code, name, 300, force_live=bool(need_live))
-            if isinstance(row, dict):
-                row = dict(row)
+    def _build_free_rows():
+        stocks_local = []
+        for code, name in items:
+            try:
+                need_live = bool(refresh or hard or not _row_is_date_fresh(prev_by.get(str(code).upper()) or {}, code))
+                row = _status_dict_cached(code, name, 300, force_live=bool(need_live))
+                if isinstance(row, dict):
+                    row = dict(row)
+                    prev = prev_by.get(str(code).upper())
+                    if prev and (refresh or hard):
+                        px = row.get("price")
+                        if px in (None, "", "-", "…") and prev.get("price") not in (None, "", "-", "…"):
+                            row = dict(prev)
+                            row["data_source"] = "free_preview_fallback"
+                    elif prev:
+                        row = _row_fresher(row, prev)
+                    row["pending"] = False
+                    row["demo"] = False
+                    row["free_fixed"] = True
+                    stocks_local.append(row)
+            except Exception as e:
                 prev = prev_by.get(str(code).upper())
-                # 手动刷新：信任实拉结果；仅当实拉无有效现价时才回退旧行
-                if prev and (refresh or hard):
-                    px = row.get("price")
-                    if px in (None, "", "-", "…") and prev.get("price") not in (None, "", "-", "…"):
-                        row = dict(prev)
-                        row["data_source"] = "free_preview_fallback"
-                    # 否则不用 _row_fresher，防止旧缓存日期更高时盖住本次实拉
-                elif prev:
-                    row = _row_fresher(row, prev)
-                row["pending"] = False
-                row["demo"] = False
-                row["free_fixed"] = True
-                stocks.append(row)
-        except Exception as e:
-            prev = prev_by.get(str(code).upper())
-            if prev and prev.get("price") not in (None, "", "-", "…"):
-                p = dict(prev)
-                p["free_fixed"] = True
-                stocks.append(p)
-            else:
-                stocks.append({
-                    "code": code, "name": name, "market": "美股",
-                    "price": "-", "error": str(e)[:40], "pending": False, "free_fixed": True,
-                })
+                if prev and prev.get("price") not in (None, "", "-", "…"):
+                    p = dict(prev)
+                    p["free_fixed"] = True
+                    stocks_local.append(p)
+                else:
+                    stocks_local.append({
+                        "code": code, "name": name, "market": "美股",
+                        "price": "-", "error": str(e)[:40], "pending": False, "free_fixed": True,
+                    })
+        return stocks_local
+    stocks = await asyncio.to_thread(_build_free_rows)
 
     # 轻量：未最新已在上面 force_live；不再同步跑完整 verify（避免未登录刷新卡住）
     def _sum_stocks(stocks_list):
@@ -1510,7 +1406,7 @@ async def watchlist_verify_fresh(req: VerifyFreshRequest, request: Request = Non
                 pass
     if not items:
         return {"success": True, "stocks": [], "details": [], "fresh_count": 0, "stale_count": 0}
-    out = verify_and_refresh_symbols(items[:80])
+    out = await asyncio.to_thread(verify_and_refresh_symbols, items[:80])
     return out
 
 
@@ -1540,8 +1436,12 @@ async def get_watchlist(refresh: bool = False, hard: bool = False,
             except Exception:
                 pass
         token = _bearer(authorization) if authorization else ""
-        data = get_watchlist_status(
-            user_id, force=refresh, is_admin=is_admin, access_token=token or None,
+        data = await asyncio.to_thread(
+            get_watchlist_status,
+            user_id,
+            force=refresh,
+            is_admin=is_admin,
+            access_token=token or None,
             hard=bool(hard),
         )
         data["user_scoped"] = user_id is not None
