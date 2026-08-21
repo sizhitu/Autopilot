@@ -3751,8 +3751,12 @@ async function _loadWatchlistBody(forceRefresh) {
               if (!vrows || !vrows.length) return;
               if (_mainTab !== 'watchlist') return;
               const vmerged = mergeWatchRows(vrows, _lastWatchRows);
+              const stillGood = vmerged.some(function (s) {
+                return s && s.price != null && s.price !== '-' && s.price !== '';
+              });
+              if (!stillGood && _lastWatchRows && _lastWatchRows.length) return;
               _lastWatchRows = vmerged.slice();
-              _lastWatchSig = '';
+              _lastWatchSig = _watchRowsSig(vmerged);
               try { renderWatchlist(vmerged); } catch (e) {}
               try { renderWatchlistSummary(buildWatchlistSummaryFromStocks(vmerged)); } catch (e) {}
             }).catch(function () {});
@@ -3898,8 +3902,12 @@ async function _loadWatchlistBody(forceRefresh) {
       verifyWatchlistFreshness(merged).then(function (vrows) {
         if (!vrows || !vrows.length) return;
         const vmerged = mergeWatchRows(vrows, _lastWatchRows);
+        const stillGood = vmerged.some(function (s) {
+          return s && s.price != null && s.price !== '-' && s.price !== '';
+        });
+        if (!stillGood && _lastWatchRows && _lastWatchRows.length) return;
         _lastWatchRows = vmerged.slice();
-        _lastWatchSig = '';
+        _lastWatchSig = _watchRowsSig(vmerged);
         try { renderWatchlist(vmerged); } catch (e) {}
         try { renderWatchlistSummary(buildWatchlistSummaryFromStocks(vmerged)); } catch (e) {}
       });
