@@ -4347,26 +4347,6 @@ function updateResults(data, meta, nineTurn) {
     lh += `<div class="layer-item"><div class="${cls}">${icon}</div><div style="flex:1;"><div class="layer-name">${short}</div><div class="layer-status">${info['状态']}</div></div></div>`;
   }
   document.getElementById('layersContainer').innerHTML = lh;
-  try {
-    const boardMeta2 = _boardMetaForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
-    const boardAct = boardMeta2.action;
-    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers, boardMeta2.strength);
-    const tipLine = '综合：' + _formatSynAction(syn) + (boardAct ? '（看板：' + boardAct + (boardMeta2.strength ? ' ·' + boardMeta2.strength : '') + '）' : '') + (syn.strength >= 1 ? ' · 强度1–5同看板' : '');
-    const tip = document.getElementById('layersCompositeTip');
-    if (tip) {
-      tip.textContent = tipLine;
-      tip.style.display = 'block';
-    } else {
-      const box = document.getElementById('layersContainer');
-      if (box && !document.getElementById('layersCompositeTip')) {
-        const d = document.createElement('div');
-        d.id = 'layersCompositeTip';
-        d.style.cssText = 'margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.45;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);';
-        d.textContent = tipLine;
-        box.parentNode.insertBefore(d, box.nextSibling);
-      }
-    }
-  } catch (eTip) {}
 
   // 量价背离卡片
   try {
