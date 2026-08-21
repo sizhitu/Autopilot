@@ -637,6 +637,10 @@ def run_reports(period: str = "weekly", force: bool = False) -> dict:
     total = len(subs)
     throttle_skip = 0
     gen_fail = 0
+    if total == 0:
+        logger.warning(
+            "周报订阅者为 0：请确认用户已开启推送，且 plan 为 plus/lifetime/admin（list_profiles 须带 plan 字段）"
+        )
     for u in subs:
         email = u.get("email")
         uid = u.get("id")

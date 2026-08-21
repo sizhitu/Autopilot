@@ -78,22 +78,32 @@ def touch_profile_activity(uid: str, country: str = None) -> dict:
 
 
 def list_profiles(limit: int = 100, offset: int = 0) -> tuple:
-    """返回 (rows, total)。"""
+    """返回 (rows, total)。须含 plan 字段，否则周报权益判定会全部落成 free。"""
     if supabase_client.using_supabase():
         client = supabase_client.get_service_client()
         try:
             rows = (client.table("profiles")
                     .select(
                         "id,email,display_name,is_admin,created_at,"
-                        "last_login_at,last_seen_at,last_login_country,login_count"
+                        "last_login_at,last_seen_at,last_login_country,login_count,"
+                        "plan,plan_source,plan_expires_at"
                     )
                     .order("created_at", desc=True)
                     .limit(limit).offset(offset).execute()).data or []
         except Exception:
-            rows = (client.table("profiles")
-                    .select("id,email,display_name,is_admin,created_at")
-                    .order("created_at", desc=True)
-                    .limit(limit).offset(offset).execute()).data or []
+            try:
+                rows = (client.table("profiles")
+                        .select(
+                            "id,email,display_name,is_admin,created_at,"
+                            "plan,plan_source,plan_expires_at"
+                        )
+                        .order("created_at", desc=True)
+                        .limit(limit).offset(offset).execute()).data or []
+            except Exception:
+                rows = (client.table("profiles")
+                        .select("id,email,display_name,is_admin,created_at")
+                        .order("created_at", desc=True)
+                        .limit(limit).offset(offset).execute()).data or []
         total = (client.table("profiles").select("id", count="exact").execute()).count or len(rows)
         out = [{
             "id": r["id"], "email": r.get("email"), "display_name": r.get("display_name"),
@@ -103,6 +113,9 @@ def list_profiles(limit: int = 100, offset: int = 0) -> tuple:
             "last_seen": r.get("last_seen_at"),
             "last_login_country": r.get("last_login_country"),
             "login_count": int(r.get("login_count") or 0),
+            "plan": r.get("plan"),
+            "plan_source": r.get("plan_source"),
+            "plan_expires_at": r.get("plan_expires_at"),
         } for r in rows]
         return out, total
     return [], 0
