@@ -778,7 +778,8 @@ async def cron_prewarm_cache(
     market = (market or "all").strip().lower()
     if market not in ("us", "cn", "all"):
         raise HTTPException(400, "market 仅支持 us / cn / all")
-    limit = max(1, min(int(limit or 200), 500))
+    # 免费实例：单次不宜过大，否则同步分析易 502/超时/OOM
+    limit = max(1, min(int(limit or 40), 80))
 
     # 1) 全站自选去重 + 默认看板代码
     symbols = []
@@ -818,6 +819,8 @@ async def cron_prewarm_cache(
     errors = []
     stale_syms = []
     t0 = time.time()
+    # 代理/平台常在 ~100s 断连；预留下返回时间
+    _budget = 95.0
 
     def _mkt_of(code: str) -> str:
         c = str(code or "").strip().upper()
@@ -855,6 +858,9 @@ async def cron_prewarm_cache(
         return None, True, None
 
     for sym in ordered:
+        if time.time() - t0 > _budget:
+            skipped += len(ordered) - (ok + fail + skipped + stale_n)
+            break
         if time.time() - t0 > 260:
             skipped = len(ordered) - ok - fail - stale_n
             break
@@ -922,10 +928,10 @@ async def cron_prewarm_cache(
                 errors.append({"symbol": sym, "error": str(e)[:120]})
 
     # 对陈旧标的再快速重试一轮（数据源瞬时延迟常见）
-    if stale_syms and time.time() - t0 < 250:
+    if stale_syms and time.time() - t0 < 85:
         time.sleep(1.0)
         for item in list(stale_syms)[:40]:
-            if time.time() - t0 > 280:
+            if time.time() - t0 > 95:
                 break
             sym = item.get("symbol")
             try:
