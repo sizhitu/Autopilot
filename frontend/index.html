@@ -1111,7 +1111,7 @@ body.help-open { overflow: hidden; touch-action: none; }
         <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="三层说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>怎么读三层</b><br>打勾表示该层当前条件满足；叉号表示尚未齐备。看板「趋势过滤」只反映均线方向，<b>不等于</b>系统层已通过。</div>
-            <div class="hp-row"><b>综合建议怎么来</b><br>上方操作建议会把<strong>看板操盘动作</strong>与三层/主信号合并：看板观望时即使三层偏多也仍以观望为主；看板买侧且三层同向才偏「可关注买入」；看板卖侧与分析买向冲突时以卖/减为先。</div>
+            <div class="hp-row"><b>综合建议怎么来</b><br>上方操作建议会把<strong>看板操盘动作</strong>与三层/主信号合并：看板观望时即使三层偏多也仍以观望为主；看板买侧且三层同向才偏「可关注买入」；看板卖侧与分析买向冲突时以卖/减为先。后缀<strong>·N</strong>为综合强度（1–5，5最强），口径对齐看板操盘强度，并随三层是否对齐微调。</div>
             <div class="hp-row"><b>系统层 · 趋势把关</b><br><span class="hp-k">原则</span> 以均线排列判断大方向，指标作辅助加权，<b>不是</b>多个指标一票否决。<br><span class="hp-k">强趋势</span> 常见参考是短均线多头（或空头）排列，且相对更长周期均线明显拉开；拉开幅度会随标的波动自适应。<br><span class="hp-k">震荡时</span> 趋势降权，更多交给时机层，并倾向更克制的仓位。</div>
             <div class="hp-row"><b>工具层 · 结构位置</b><br><span class="hp-k">原则</span> 关注关键回撤位是否被触及、是否出现反应，减少半空追价。<br><span class="hp-k">用途</span> 回答「在什么位置做」，不单独决定买卖时机。</div>
             <div class="hp-row"><b>时机层 · 何时动手</b><br><span class="hp-k">优先级</span> 九转与量价配合为主；斐波那契需见到放量止跌等行为确认才提高分量；仅触及关键位通常不够；收敛形态只作环境辅助。<br><span class="hp-k">组合</span> 结构位上的止跌确认可以构成可用买点，与九转同向时信心更高；单独某一项不构成投资建议。</div>
@@ -4099,61 +4099,104 @@ function renderWatchlist(stocks) {
 
 
 // === 方案D：看板操盘动作 + 分析页信号 → 一条综合建议 ===
-function _boardActionForSymbol(sym) {
+function _boardMetaForSymbol(sym) {
   const code = String(sym || (typeof currentSymbol !== 'undefined' ? currentSymbol : '') || '').toUpperCase();
-  if (!code) return '';
+  const empty = { action: '', strength: 0, side: '' };
+  if (!code) return empty;
   const rows = (typeof _lastWatchRows !== 'undefined' && _lastWatchRows) ? _lastWatchRows : [];
   for (let i = 0; i < rows.length; i++) {
     const s = rows[i];
     if (s && String(s.code || '').toUpperCase() === code) {
-      return String(s.action || s.signal || '观望').trim();
+      return {
+        action: String(s.action || s.signal || '观望').trim(),
+        strength: Math.max(0, Math.min(5, Number(s.action_strength) || 0)),
+        side: String(s.action_side || ''),
+      };
     }
   }
-  return '';
+  return empty;
 }
 
-function synthesizeDecision(boardAction, analysisSignal, analysisAction, layers) {
+function _boardActionForSymbol(sym) {
+  return _boardMetaForSymbol(sym).action;
+}
+
+/** 综合强度 1–5（与看板一致：5 最强）；观望为 0 */
+function _compositeStrength(level, boardStr, allPass, passCount, layerTotal, boardBuy, boardSell, anaBuy) {
+  const bs = Math.max(0, Math.min(5, Number(boardStr) || 0));
+  if (level === 'wait') {
+    // 观望偏多：保留弱强度提示（1–2），纯观望为 0
+    if (boardBuy && !anaBuy) return Math.max(1, Math.min(2, bs || 1));
+    return 0;
+  }
+  let n = 0;
+  if (level === 'buy') {
+    // 看板买侧强度为底，三层全过 +1，部分通过按比例，主信号买入再微调
+    n = bs >= 1 ? bs : 3;
+    if (allPass) n = Math.min(5, n + 1);
+    else if (layerTotal > 0 && passCount > 0) {
+      if (passCount >= layerTotal - 1) n = Math.min(5, n);
+      else n = Math.max(2, n - 1);
+    }
+    if (!boardBuy && anaBuy) n = allPass ? 3 : 2;
+  } else if (level === 'sell') {
+    n = bs >= 1 ? bs : 3;
+    if (boardSell && anaBuy) n = Math.max(n, Math.min(5, bs || 3)); // 冲突仍突出看板卖侧
+    if (allPass && boardSell) n = Math.min(5, Math.max(n, 3));
+  }
+  return Math.max(1, Math.min(5, Math.round(n)));
+}
+
+function synthesizeDecision(boardAction, analysisSignal, analysisAction, layers, boardStrength) {
   const ba = String(boardAction || '').trim() || '观望';
   const sig = String(analysisSignal || '').trim();
   let allPass = false;
+  let passCount = 0;
+  let layerTotal = 0;
   try {
     if (layers && typeof layers === 'object') {
       const vals = Object.values(layers);
-      allPass = vals.length > 0 && vals.every(function (info) { return info && info['通过']; });
+      layerTotal = vals.length;
+      passCount = vals.filter(function (info) { return info && info['通过']; }).length;
+      allPass = layerTotal > 0 && passCount === layerTotal;
     }
   } catch (e) { allPass = false; }
   const boardBuy = /关注买入|阶梯抄底/.test(ba);
   const boardSell = /关注卖出|阶梯止盈/.test(ba);
   const anaBuy = (sig === '买入' || sig === '加仓' || allPass);
   const anaSell = (sig === '卖出');
+  const bs = Math.max(0, Math.min(5, Number(boardStrength) || 0));
 
-  // 无看板动作时：仅分析页
+  function pack(text, level) {
+    const strength = _compositeStrength(level, bs, allPass, passCount, layerTotal, boardBuy, boardSell, anaBuy);
+    return { text: text, level: level, board: boardAction ? ba : '', strength: strength };
+  }
+
   if (!boardAction) {
-    if (anaBuy) return { text: '分析偏多（当前无看板操盘动作可对照，仍建议结合自选节奏）', level: 'buy', board: '' };
-    if (anaSell) return { text: '分析偏空/减仓向（无看板对照）', level: 'sell', board: '' };
-    return { text: analysisAction || '观望', level: 'wait', board: '' };
+    if (anaBuy) return pack('分析偏多（当前无看板操盘动作可对照，仍建议结合自选节奏）', 'buy');
+    if (anaSell) return pack('分析偏空/减仓向（无看板对照）', 'sell');
+    return pack(analysisAction || '观望', 'wait');
   }
 
   if (boardBuy) {
-    if (anaBuy) {
-      return { text: '可关注买入（看板买侧 + 三层/主信号同向）', level: 'buy', board: ba };
-    }
-    return { text: '观望偏多：看板有买侧关注，三层尚未齐备，等待结构对齐', level: 'wait', board: ba };
+    if (anaBuy) return pack('可关注买入（看板买侧 + 三层/主信号同向）', 'buy');
+    return pack('观望偏多：看板有买侧关注，三层尚未齐备，等待结构对齐', 'wait');
   }
   if (boardSell) {
-    if (anaBuy) {
-      return { text: '以卖/减为先（看板卖侧与分析买向冲突，优先看板节奏）', level: 'sell', board: ba };
-    }
-    return { text: '关注减仓/兑现（看板卖侧' + (allPass ? '；结构仍偏强宜分批' : '') + '）', level: 'sell', board: ba };
+    if (anaBuy) return pack('以卖/减为先（看板卖侧与分析买向冲突，优先看板节奏）', 'sell');
+    return pack('关注减仓/兑现（看板卖侧' + (allPass ? '；结构仍偏强宜分批' : '') + '）', 'sell');
   }
-  // 看板观望
-  if (anaBuy) {
-    return { text: '观望（结构尚可，等看板出现关注买入）', level: 'wait', board: ba };
-  }
-  if (anaSell) {
-    return { text: '观望/偏空：看板观望且分析偏卖，不宜新开多', level: 'wait', board: ba };
-  }
-  return { text: '观望（看板与分析均未给出明确动手信号）', level: 'wait', board: ba };
+  if (anaBuy) return pack('观望（结构尚可，等看板出现关注买入）', 'wait');
+  if (anaSell) return pack('观望/偏空：看板观望且分析偏卖，不宜新开多', 'wait');
+  return pack('观望（看板与分析均未给出明确动手信号）', 'wait');
+}
+
+function _formatSynAction(syn) {
+  const t = syn && syn.text ? syn.text : '';
+  const n = syn && syn.strength ? Number(syn.strength) : 0;
+  if (n >= 1 && syn.level !== 'wait') return t + ' ·' + n;
+  if (n >= 1 && syn.level === 'wait' && /偏多/.test(t)) return t + ' ·' + n;
+  return t;
 }
 
 // === 更新结果 ===
@@ -4165,13 +4208,15 @@ function updateResults(data, meta, nineTurn) {
   document.getElementById('signalText').textContent = data.signal;
   document.getElementById('signalText').style.color = sc[data.signal] || 'var(--text)';
   try {
-    const boardAct = _boardActionForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
-    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers);
+    const boardMeta = _boardMetaForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
+    const boardAct = boardMeta.action;
+    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers, boardMeta.strength);
     const el = document.getElementById('actionText');
-    el.textContent = syn.text;
+    el.textContent = _formatSynAction(syn);
     const lc = { buy: 'var(--red)', sell: 'var(--green)', wait: 'var(--gold)' };
     el.style.color = lc[syn.level] || 'var(--text)';
-    el.title = (boardAct ? ('看板操盘：' + boardAct + ' · ') : '') + '分析原建议：' + (data.action || '');
+    const strTip = syn.strength >= 1 ? ('综合强度 ·' + syn.strength + '/5（5最强，与看板同口径）· ') : '';
+    el.title = strTip + (boardAct ? ('看板操盘：' + boardAct + (boardMeta.strength ? ' ·' + boardMeta.strength : '') + ' · ') : '') + '分析原建议：' + (data.action || '');
   } catch (eSyn) {
     document.getElementById('actionText').textContent = data.action;
   }
@@ -4191,11 +4236,13 @@ function updateResults(data, meta, nineTurn) {
   }
   document.getElementById('layersContainer').innerHTML = lh;
   try {
-    const boardAct = _boardActionForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
-    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers);
+    const boardMeta2 = _boardMetaForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
+    const boardAct = boardMeta2.action;
+    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers, boardMeta2.strength);
+    const tipLine = '综合：' + _formatSynAction(syn) + (boardAct ? '（看板：' + boardAct + (boardMeta2.strength ? ' ·' + boardMeta2.strength : '') + '）' : '') + (syn.strength >= 1 ? ' · 强度1–5同看板' : '');
     const tip = document.getElementById('layersCompositeTip');
     if (tip) {
-      tip.textContent = '综合：' + syn.text + (boardAct ? '（看板：' + boardAct + '）' : '');
+      tip.textContent = tipLine;
       tip.style.display = 'block';
     } else {
       const box = document.getElementById('layersContainer');
@@ -4203,7 +4250,7 @@ function updateResults(data, meta, nineTurn) {
         const d = document.createElement('div');
         d.id = 'layersCompositeTip';
         d.style.cssText = 'margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.45;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);';
-        d.textContent = '综合：' + syn.text + (boardAct ? '（看板：' + boardAct + '）' : '');
+        d.textContent = tipLine;
         box.parentNode.insertBefore(d, box.nextSibling);
       }
     }
