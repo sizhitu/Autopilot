@@ -3409,10 +3409,9 @@ function _formatEtaSeconds(sec) {
   sec = Math.max(0, Math.ceil(Number(sec) || 0));
   // 1 分钟及以内统一「预计1分钟」
   if (sec <= 60) return '预计1分钟';
-  if (sec <= 120) return '预计2分钟';
-  if (sec <= 180) return '预计3分钟';
-  if (sec <= 300) return '预计5分钟';
-  return '预计5分钟以上';
+  if (sec <= 120) return '预计1-2分钟';
+  if (sec <= 180) return '预计1-3分钟';
+  return '预计3-5分钟';
 }
 
 function _watchlistEtaSec(json) {
