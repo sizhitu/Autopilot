@@ -3491,7 +3491,15 @@ async function verifyWatchlistFreshness(stocks) {
       if (!s || !s.code) return s;
       const n = by[String(s.code).toUpperCase()];
       if (!n) return s;
-      return _lockFresherRow(_preferFresherRow(n, s));
+      // 仅回写价/日期，禁止半残校验行盖掉指标
+      if (n.price === '-' || n.price === '' || n.price == null) return _lockFresherRow(s);
+      const out = Object.assign({}, s);
+      const keys = ['price', 'bar_date', 'bar_stale', 'change_1d', 'date_fresh', 'expected_bar_date', 'data_source'];
+      for (let ki = 0; ki < keys.length; ki++) {
+        const k = keys[ki];
+        if (n[k] != null && n[k] !== '') out[k] = n[k];
+      }
+      return _lockFresherRow(out);
     });
     const staleN = (json.stale_count != null) ? json.stale_count : 0;
     const freshN = (json.fresh_count != null) ? json.fresh_count : 0;
@@ -3695,9 +3703,35 @@ async function _loadWatchlistBody(forceRefresh) {
         }
         const json = await res.json();
         let stocks = (json && json.stocks) ? json.stocks : [];
-        if (!stocks.length) stocks = getDemoWatchlistRows();
+        // 接口空结果：保留上一帧完整数据，避免「有数→全空」闪一下
+        const prevGood = (_lastWatchRows || []).filter(function (s) {
+          return s && s.price != null && s.price !== '-' && s.price !== '' && s.signal !== '计算中';
+        });
+        if (!stocks.length) {
+          stocks = prevGood.length ? prevGood.slice() : getDemoWatchlistRows();
+        } else {
+          // 半残行（无价）用上一帧同代码补齐
+          const prevMap = {};
+          prevGood.forEach(function (s) { if (s && s.code) prevMap[String(s.code).toUpperCase()] = s; });
+          stocks = stocks.map(function (s) {
+            if (!s || !s.code) return s;
+            const p = prevMap[String(s.code).toUpperCase()];
+            if (!p) return s;
+            const emptyPx = s.price == null || s.price === '-' || s.price === '';
+            const emptySig = !s.signal || s.signal === '—' || s.signal === '计算中';
+            if (emptyPx || emptySig) {
+              const m = Object.assign({}, p, s);
+              if (emptyPx) { m.price = p.price; m.bar_date = m.bar_date || p.bar_date; }
+              if (emptySig) {
+                m.signal = p.signal; m.action = p.action || m.action;
+                m.timing = p.timing || m.timing; m.trend_filter = p.trend_filter || m.trend_filter;
+              }
+              return m;
+            }
+            return s;
+          });
+        }
         watchNotes = {};
-        // 与登录看板一致：merge + 会话锁，禁止旧日期覆盖
         stocks = mergeWatchRows(stocks, _lastWatchRows);
         _lastWatchRows = stocks.slice();
         _lastWatchSig = _watchRowsSig(stocks);
