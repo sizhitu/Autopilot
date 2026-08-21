@@ -1021,7 +1021,7 @@ body.help-open { overflow: hidden; touch-action: none; }
       <div class="card-title">策略信号
         <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
-            <div class="hp-row"><b>如何阅读</b><br>大字为主决策（已合并看板操盘与三层）；其下小字为综合说明。若与引擎原始信号不同，会另以灰色标注「结构信号」。仓位/入场在下方，三层卡片继续展开细节。</div>
+            <div class="hp-row"><b>如何阅读</b><br>大字为主决策（已合并看板操盘与三层）；其下小字为综合说明。若与引擎原始信号不同，会在趋势行后标注「结构信号（引擎）」。仓位/入场在下方，三层卡片继续展开细节。</div>
             <div class="hp-row"><b>买入更严</b><br>趋势市通常需系统层、结构与时机大致同向；震荡市更看时机，仓位更克制。</div>
             <div class="hp-row"><b>仓位</b><br>优先 ATR 风控；若已填建仓价，藤本茂阶梯仅作加减仓参考。</div>
           </span>
@@ -1029,7 +1029,6 @@ body.help-open { overflow: hidden; touch-action: none; }
       </div>
       <div class="signal-trend" id="trendText">趋势: -</div>
       <div class="signal-main" id="signalText" style="color:var(--text-dim);">-</div>
-      <div id="engineSignalText" style="display:none;font-size:11px;color:var(--text-dim);margin:2px 0 4px;text-align:center;"></div>
       <div class="signal-action" id="actionText">输入股票代码或点击"模拟数据"开始</div>
       <div class="signal-nine" id="nineTurnText">-</div>
       <div class="signal-grid">
@@ -4245,17 +4244,14 @@ function _formatSynAction(syn) {
 // === 更新结果 ===
 function updateResults(data, meta, nineTurn) {
   const tc = {'多头趋势':'var(--green)','空头趋势':'var(--red)','震荡':'var(--gold)'};
-  document.getElementById('trendText').textContent = `趋势: ${data.trend}`;
-  document.getElementById('trendText').style.color = tc[data.trend] || 'var(--text)';
   const sc = {'买入':'var(--red)','卖出':'var(--green)','持有':'var(--blue)','观望':'var(--gold)','加仓':'var(--orange)','可关注买入':'var(--red)','关注减仓':'var(--green)'};
-  // 大字主信号以「综合建议」为准，避免与下方观望文案打架
+  // 大字主信号以「综合建议」为准；结构信号挂在趋势行后
   try {
     const boardMeta = _boardMetaForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
     const boardAct = boardMeta.action;
     const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers, boardMeta.strength);
     const mainMap = { buy: '可关注买入', sell: '关注减仓', wait: '观望' };
     let mainLabel = mainMap[syn.level] || '观望';
-    // 观望偏多时大字仍观望，避免写成买入
     if (syn.level === 'wait' && /偏多/.test(syn.text || '')) mainLabel = '观望';
     if (syn.level === 'buy' && syn.strength >= 1) mainLabel = '可关注买入';
     const sigEl = document.getElementById('signalText');
@@ -4263,18 +4259,17 @@ function updateResults(data, meta, nineTurn) {
     const lc = { buy: 'var(--red)', sell: 'var(--green)', wait: 'var(--gold)' };
     sigEl.style.color = lc[syn.level] || sc[mainLabel] || 'var(--text)';
 
-    const eng = document.getElementById('engineSignalText');
     const rawSig = String(data.signal || '').trim();
-    if (eng) {
-      // 仅当引擎原始信号与主决策不一致时展示，减少噪音
-      if (rawSig && rawSig !== mainLabel && !(syn.level === 'buy' && (rawSig === '买入' || rawSig === '加仓')) && !(syn.level === 'wait' && rawSig === '观望') && !(syn.level === 'sell' && rawSig === '卖出')) {
-        eng.style.display = 'block';
-        eng.textContent = '结构信号（引擎）：' + rawSig + ' · 主决策已按看板节奏对齐';
-      } else {
-        eng.style.display = 'none';
-        eng.textContent = '';
-      }
-    }
+    const showStruct = rawSig && rawSig !== mainLabel
+      && !(syn.level === 'buy' && (rawSig === '买入' || rawSig === '加仓'))
+      && !(syn.level === 'wait' && rawSig === '观望')
+      && !(syn.level === 'sell' && rawSig === '卖出');
+    const trendEl = document.getElementById('trendText');
+    // 例：趋势: 震荡    结构信号（引擎）：买入
+    trendEl.textContent = showStruct
+      ? ('趋势: ' + data.trend + '　　结构信号（引擎）：' + rawSig)
+      : ('趋势: ' + data.trend);
+    trendEl.style.color = tc[data.trend] || 'var(--text)';
 
     const el = document.getElementById('actionText');
     el.textContent = _formatSynAction(syn);
@@ -4282,11 +4277,11 @@ function updateResults(data, meta, nineTurn) {
     const strTip = syn.strength >= 1 ? ('综合强度 ·' + syn.strength + '/5（5最强，与看板同口径）· ') : '';
     el.title = strTip + (boardAct ? ('看板操盘：' + boardAct + (boardMeta.strength ? ' ·' + boardMeta.strength : '') + ' · ') : '') + '引擎原信号：' + (data.signal || '') + ' · 分析原建议：' + (data.action || '');
   } catch (eSyn) {
+    document.getElementById('trendText').textContent = '趋势: ' + (data.trend || '-');
+    document.getElementById('trendText').style.color = tc[data.trend] || 'var(--text)';
     document.getElementById('signalText').textContent = data.signal;
     document.getElementById('signalText').style.color = sc[data.signal] || 'var(--text)';
     document.getElementById('actionText').textContent = data.action;
-    const eng0 = document.getElementById('engineSignalText');
-    if (eng0) { eng0.style.display = 'none'; }
   }
   document.getElementById('positionText').textContent = (data.position_pct > 0 ? '+' : '') + data.position_pct + '%';
   document.getElementById('entryText').textContent = data.entry_price || '-';
