@@ -1021,7 +1021,7 @@ body.help-open { overflow: hidden; touch-action: none; }
       <div class="card-title">策略信号
         <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
-            <div class="hp-row"><b>如何阅读</b><br>大字为主决策（已合并看板操盘与三层）；其下小字为综合说明。若与引擎原始信号不同，会在趋势行后标注「结构信号（引擎）」。仓位/入场在下方，三层卡片继续展开细节。</div>
+            <div class="hp-row"><b>如何阅读</b><br>大字为主决策（已合并看板操盘与三层）；其下小字为综合说明。趋势行后始终标注「结构信号（引擎）」，与大字主决策对照阅读。仓位/入场在下方，三层卡片继续展开细节。</div>
             <div class="hp-row"><b>买入更严</b><br>趋势市通常需系统层、结构与时机大致同向；震荡市更看时机，仓位更克制。</div>
             <div class="hp-row"><b>仓位</b><br>优先 ATR 风控；若已填建仓价，藤本茂阶梯仅作加减仓参考。</div>
           </span>
@@ -4309,13 +4309,9 @@ function updateResults(data, meta, nineTurn) {
     sigEl.style.color = lc[syn.level] || sc[mainLabel] || 'var(--text)';
 
     const rawSig = String(data.signal || '').trim();
-    const showStruct = rawSig && rawSig !== mainLabel
-      && !(syn.level === 'buy' && (rawSig === '买入' || rawSig === '加仓'))
-      && !(syn.level === 'wait' && rawSig === '观望')
-      && !(syn.level === 'sell' && rawSig === '卖出');
     const trendEl = document.getElementById('trendText');
-    // 例：趋势: 震荡    结构信号（引擎）：买入
-    trendEl.textContent = showStruct
+    // 始终展示引擎结构信号，便于与主决策对照
+    trendEl.textContent = rawSig
       ? ('趋势: ' + data.trend + '　　结构信号（引擎）：' + rawSig)
       : ('趋势: ' + data.trend);
     trendEl.style.color = tc[data.trend] || 'var(--text)';
