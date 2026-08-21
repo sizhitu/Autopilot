@@ -1,8 +1,7 @@
 name: Prewarm quote cache after market close
 
-# 盘后分市场预热；先唤醒 Render，再小批量请求，避免 502/503
-# A股：UTC 08/10/12/14（约 CST 16–22 点）
-# 美股：UTC 22/00/02/04（约 ET 收盘后）
+# 流程：先唤醒并验证 /api/health=200，再请求 prewarm（避免冷启动 502/503）
+# A股：UTC 08/10/12/14；美股：UTC 22/00/02/04
 on:
   schedule:
     - cron: "0 8,10,12,14 * * 1-5"
@@ -28,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Trigger prewarm until fresh
+      - name: Wake, verify health, then prewarm
         env:
           API_BASE: ${{ secrets.DIGEST_API_BASE }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -52,27 +51,62 @@ jobs:
             MKT="all"
           fi
 
-          # 1) 唤醒免费实例（冷启动常导致首请求 502/503）
-          echo "Waking ${BASE}/api/health ..."
-          for w in 1 2 3 4 5 6; do
-            hc=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 30 "${BASE}/api/health" || true)
-            echo "health attempt $w → HTTP $hc"
-            if [ "$hc" = "200" ]; then
-              break
+          wake_and_verify() {
+            echo "=== Wake & verify ${BASE}/api/health ==="
+            local ok=0
+            local w
+            for w in 1 2 3 4 5 6 7 8; do
+              hc=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 45 "${BASE}/api/health" || true)
+              echo "health attempt $w → HTTP $hc"
+              if [ "$hc" = "200" ]; then
+                # 再确认一次，避免刚醒立刻抖动
+                sleep 5
+                hc2=$(curl -sS -o /tmp/health2.json -w "%{http_code}" --max-time 30 "${BASE}/api/health" || true)
+                echo "health confirm → HTTP $hc2"
+                if [ "$hc2" = "200" ]; then
+                  ok=1
+                  break
+                fi
+              fi
+              sleep $((15 + w * 5))
+            done
+            if [ "$ok" != "1" ]; then
+              echo "Health check failed: instance not ready"
+              return 1
             fi
-            sleep 20
-          done
-          sleep 8
+            echo "Health OK — proceed to prewarm"
+            return 0
+          }
+
+          if ! wake_and_verify; then
+            # 定时任务：实例长期起不来则 soft-fail；手动触发仍失败
+            if [ -n "${MARKET}" ]; then
+              exit 1
+            fi
+            echo "Scheduled run: soft-fail (health not ready)"
+            exit 0
+          fi
 
           URL="${BASE}/api/cron/prewarm-cache?market=${MKT}&limit=${LIMIT}"
-          echo "Calling ${URL}"
+          echo "=== Calling ${URL} ==="
 
-          # 2) 最多 4 轮；每轮最多 6 次 HTTP 重试
           last_stale=99
           for round in 1 2 3 4; do
+            # 每轮开始前再确认一次健康
+            if ! wake_and_verify; then
+              echo "Lost health before round $round"
+              if [ -n "${MARKET}" ]; then exit 1; fi
+              exit 0
+            fi
+
             ok=0
-            for i in 1 2 3 4 5 6; do
-              code=$(curl -sS -o /tmp/prewarm.json -w "%{http_code}"                 -X POST                 -H "X-Cron-Secret: ${CRON_SECRET}"                 -H "Content-Type: application/json"                 --max-time 120                 "${URL}" || true)
+            for i in 1 2 3 4 5; do
+              code=$(curl -sS -o /tmp/prewarm.json -w "%{http_code}" \
+                -X POST \
+                -H "X-Cron-Secret: ${CRON_SECRET}" \
+                -H "Content-Type: application/json" \
+                --max-time 120 \
+                "${URL}" || true)
               echo "Round $round attempt $i → HTTP $code"
               cat /tmp/prewarm.json 2>/dev/null || true
               echo
@@ -80,19 +114,18 @@ jobs:
                 ok=1
                 break
               fi
-              # 502/503：再唤醒 + 退避
-              curl -sS -o /dev/null --max-time 20 "${BASE}/api/health" || true
-              sleep $((15 + i * 10))
+              echo "Non-200 — re-wake then retry"
+              wake_and_verify || true
+              sleep $((20 + i * 10))
             done
+
             if [ "$ok" != "1" ]; then
-              echo "Prewarm HTTP still failing after retries (instance may be overloaded)"
-              # 不硬失败整次 schedule：留给下一 2h 窗口；workflow_dispatch 仍标失败便于发现
-              if [ -n "${{ github.event.inputs.market }}" ] || [ -n "${{ github.event.inputs.limit }}" ]; then
-                exit 1
-              fi
+              echo "Prewarm HTTP failed after health-verified retries"
+              if [ -n "${MARKET}" ]; then exit 1; fi
               echo "Scheduled run: soft-fail"
               exit 0
             fi
+
             STALE=$(python3 -c "import json;d=json.load(open('/tmp/prewarm.json'));print(int(d.get('stale') or 0))" 2>/dev/null || echo 99)
             last_stale=$STALE
             echo "stale_count=$STALE"
@@ -101,7 +134,7 @@ jobs:
               exit 0
             fi
             if [ "$round" -lt 4 ]; then
-              echo "Still stale, sleep 60s and retry..."
+              echo "Still stale, sleep 60s..."
               sleep 60
             fi
           done
