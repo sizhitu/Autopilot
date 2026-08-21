@@ -1111,6 +1111,7 @@ body.help-open { overflow: hidden; touch-action: none; }
         <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="三层说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>怎么读三层</b><br>打勾表示该层当前条件满足；叉号表示尚未齐备。看板「趋势过滤」只反映均线方向，<b>不等于</b>系统层已通过。</div>
+            <div class="hp-row"><b>综合建议怎么来</b><br>上方操作建议会把<strong>看板操盘动作</strong>与三层/主信号合并：看板观望时即使三层偏多也仍以观望为主；看板买侧且三层同向才偏「可关注买入」；看板卖侧与分析买向冲突时以卖/减为先。</div>
             <div class="hp-row"><b>系统层 · 趋势把关</b><br><span class="hp-k">原则</span> 以均线排列判断大方向，指标作辅助加权，<b>不是</b>多个指标一票否决。<br><span class="hp-k">强趋势</span> 常见参考是短均线多头（或空头）排列，且相对更长周期均线明显拉开；拉开幅度会随标的波动自适应。<br><span class="hp-k">震荡时</span> 趋势降权，更多交给时机层，并倾向更克制的仓位。</div>
             <div class="hp-row"><b>工具层 · 结构位置</b><br><span class="hp-k">原则</span> 关注关键回撤位是否被触及、是否出现反应，减少半空追价。<br><span class="hp-k">用途</span> 回答「在什么位置做」，不单独决定买卖时机。</div>
             <div class="hp-row"><b>时机层 · 何时动手</b><br><span class="hp-k">优先级</span> 九转与量价配合为主；斐波那契需见到放量止跌等行为确认才提高分量；仅触及关键位通常不够；收敛形态只作环境辅助。<br><span class="hp-k">组合</span> 结构位上的止跌确认可以构成可用买点，与九转同向时信心更高；单独某一项不构成投资建议。</div>
@@ -4096,6 +4097,65 @@ function renderWatchlist(stocks) {
   body.innerHTML = html;
 }
 
+
+// === 方案D：看板操盘动作 + 分析页信号 → 一条综合建议 ===
+function _boardActionForSymbol(sym) {
+  const code = String(sym || (typeof currentSymbol !== 'undefined' ? currentSymbol : '') || '').toUpperCase();
+  if (!code) return '';
+  const rows = (typeof _lastWatchRows !== 'undefined' && _lastWatchRows) ? _lastWatchRows : [];
+  for (let i = 0; i < rows.length; i++) {
+    const s = rows[i];
+    if (s && String(s.code || '').toUpperCase() === code) {
+      return String(s.action || s.signal || '观望').trim();
+    }
+  }
+  return '';
+}
+
+function synthesizeDecision(boardAction, analysisSignal, analysisAction, layers) {
+  const ba = String(boardAction || '').trim() || '观望';
+  const sig = String(analysisSignal || '').trim();
+  let allPass = false;
+  try {
+    if (layers && typeof layers === 'object') {
+      const vals = Object.values(layers);
+      allPass = vals.length > 0 && vals.every(function (info) { return info && info['通过']; });
+    }
+  } catch (e) { allPass = false; }
+  const boardBuy = /关注买入|阶梯抄底/.test(ba);
+  const boardSell = /关注卖出|阶梯止盈/.test(ba);
+  const anaBuy = (sig === '买入' || sig === '加仓' || allPass);
+  const anaSell = (sig === '卖出');
+
+  // 无看板动作时：仅分析页
+  if (!boardAction) {
+    if (anaBuy) return { text: '分析偏多（当前无看板操盘动作可对照，仍建议结合自选节奏）', level: 'buy', board: '' };
+    if (anaSell) return { text: '分析偏空/减仓向（无看板对照）', level: 'sell', board: '' };
+    return { text: analysisAction || '观望', level: 'wait', board: '' };
+  }
+
+  if (boardBuy) {
+    if (anaBuy) {
+      return { text: '可关注买入（看板买侧 + 三层/主信号同向）', level: 'buy', board: ba };
+    }
+    return { text: '观望偏多：看板有买侧关注，三层尚未齐备，等待结构对齐', level: 'wait', board: ba };
+  }
+  if (boardSell) {
+    if (anaBuy) {
+      return { text: '以卖/减为先（看板卖侧与分析买向冲突，优先看板节奏）', level: 'sell', board: ba };
+    }
+    return { text: '关注减仓/兑现（看板卖侧' + (allPass ? '；结构仍偏强宜分批' : '') + '）', level: 'sell', board: ba };
+  }
+  // 看板观望
+  if (anaBuy) {
+    return { text: '观望（结构尚可，等看板出现关注买入）', level: 'wait', board: ba };
+  }
+  if (anaSell) {
+    return { text: '观望/偏空：看板观望且分析偏卖，不宜新开多', level: 'wait', board: ba };
+  }
+  return { text: '观望（看板与分析均未给出明确动手信号）', level: 'wait', board: ba };
+}
+
 // === 更新结果 ===
 function updateResults(data, meta, nineTurn) {
   const tc = {'多头趋势':'var(--green)','空头趋势':'var(--red)','震荡':'var(--gold)'};
@@ -4104,7 +4164,17 @@ function updateResults(data, meta, nineTurn) {
   const sc = {'买入':'var(--red)','卖出':'var(--green)','持有':'var(--blue)','观望':'var(--gold)','加仓':'var(--orange)'};
   document.getElementById('signalText').textContent = data.signal;
   document.getElementById('signalText').style.color = sc[data.signal] || 'var(--text)';
-  document.getElementById('actionText').textContent = data.action;
+  try {
+    const boardAct = _boardActionForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
+    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers);
+    const el = document.getElementById('actionText');
+    el.textContent = syn.text;
+    const lc = { buy: 'var(--red)', sell: 'var(--green)', wait: 'var(--gold)' };
+    el.style.color = lc[syn.level] || 'var(--text)';
+    el.title = (boardAct ? ('看板操盘：' + boardAct + ' · ') : '') + '分析原建议：' + (data.action || '');
+  } catch (eSyn) {
+    document.getElementById('actionText').textContent = data.action;
+  }
   document.getElementById('positionText').textContent = (data.position_pct > 0 ? '+' : '') + data.position_pct + '%';
   document.getElementById('entryText').textContent = data.entry_price || '-';
   document.getElementById('stopText').textContent = data.stop_loss || '-';
@@ -4120,6 +4190,24 @@ function updateResults(data, meta, nineTurn) {
     lh += `<div class="layer-item"><div class="${cls}">${icon}</div><div style="flex:1;"><div class="layer-name">${short}</div><div class="layer-status">${info['状态']}</div></div></div>`;
   }
   document.getElementById('layersContainer').innerHTML = lh;
+  try {
+    const boardAct = _boardActionForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
+    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers);
+    const tip = document.getElementById('layersCompositeTip');
+    if (tip) {
+      tip.textContent = '综合：' + syn.text + (boardAct ? '（看板：' + boardAct + '）' : '');
+      tip.style.display = 'block';
+    } else {
+      const box = document.getElementById('layersContainer');
+      if (box && !document.getElementById('layersCompositeTip')) {
+        const d = document.createElement('div');
+        d.id = 'layersCompositeTip';
+        d.style.cssText = 'margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.45;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);';
+        d.textContent = '综合：' + syn.text + (boardAct ? '（看板：' + boardAct + '）' : '');
+        box.parentNode.insertBefore(d, box.nextSibling);
+      }
+    }
+  } catch (eTip) {}
 
   // 量价背离卡片
   try {
