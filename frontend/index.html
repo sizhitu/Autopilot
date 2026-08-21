@@ -3004,7 +3004,9 @@ async function fetchQuote(symbol, name, market) {
   document.getElementById('businessSummary').style.display = 'none';
   document.getElementById('industryTag').style.display = 'none';
   info.style.display = 'flex';
-  info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中...</span>`;
+  const _qEta = _formatEtaSeconds(_quoteEtaSec());
+  info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中… ${_qEta}</span>`;
+  try { document.getElementById('chartMeta').textContent = '获取数据中… ' + _qEta; } catch (eM) {}
 
   try {
     const res = await api('/api/quote', {
@@ -3401,6 +3403,44 @@ function buildSkeletonRows(symbols) {
   }));
 }
 
+
+/** 友好预估等待文案（按代码数量/任务类型粗估，减少狂点刷新） */
+function _formatEtaSeconds(sec) {
+  sec = Math.max(0, Math.ceil(Number(sec) || 0));
+  if (sec <= 20) return '约半分钟内';
+  if (sec <= 50) return '约1分钟内';
+  if (sec <= 100) return '约1–2分钟';
+  if (sec <= 180) return '约2–3分钟';
+  if (sec <= 300) return '约3–5分钟';
+  return '约5分钟以上（代码较多，请耐心等待）';
+}
+
+function _watchlistEtaSec(json) {
+  const pr = (json && json.progress) || {};
+  let tot = Number(pr.total);
+  let done = Number(pr.done);
+  if (!tot || isNaN(tot)) {
+    tot = (_lastWatchSkeleton && _lastWatchSkeleton.length) || (_lastWatchRows && _lastWatchRows.length) || 0;
+  }
+  if (isNaN(done) || done < 0) done = 0;
+  const left = Math.max(0, (tot || 0) - (done || 0));
+  // Free 实例约 2 路并行，单票状态约 2–3 秒
+  if (tot <= 0) return 45;
+  if (left > 0) return Math.max(25, left * 2.4);
+  // 尚无 progress 时按总量估
+  return Math.max(30, tot * 1.8);
+}
+
+function _quoteEtaSec() {
+  return 25; // 单票 300 根 K 线 + 分析
+}
+
+function _backtestEtaSec(days) {
+  const d = Number(days) || 300;
+  // 与天数大致线性，免费实例偏慢
+  return Math.max(40, Math.min(240, d * 0.28));
+}
+
 function setWatchUpdatedLabel(json) {
   const el = document.getElementById('watchlistUpdated');
   if (!el) return;
@@ -3409,7 +3449,14 @@ function setWatchUpdatedLabel(json) {
     const pr = json.progress || {};
     const d = pr.done, tot = pr.total;
     const prog = (d != null && tot) ? (` ${d}/${tot}`) : '';
-    el.textContent = t ? (`更新于 ${t} · 刷新中${prog}…`) : (`首次加载中${prog}…`);
+    const eta = _formatEtaSeconds(_watchlistEtaSec(json));
+    el.textContent = t
+      ? (`更新于 ${t} · 刷新中${prog}… ${eta}`)
+      : (`首次加载中${prog}… ${eta}`);
+    try {
+      const lo = document.querySelector('#watchlistLoading div:last-child');
+      if (lo) lo.textContent = `加载中… ${eta}` + (prog ? `（${String(prog).trim()}）` : '');
+    } catch (e0) {}
     return;
   }
   if (t) {
@@ -3623,7 +3670,10 @@ function manualWatchlistRefresh() {
     return;
   }
   if (_wlInflight) {
-    try { showToast('正在刷新中，请稍候…', 'info'); } catch (e) {}
+    try {
+      const eta = _formatEtaSeconds(_watchlistEtaSec({ computing: true, progress: { done: 0, total: (_lastWatchRows && _lastWatchRows.length) || (_lastWatchSkeleton && _lastWatchSkeleton.length) || 0 } }));
+      showToast('正在刷新中，' + eta + '，请勿频繁点击', 'info');
+    } catch (e) {}
     return;
   }
   _lastManualRefreshAt = now;
@@ -4577,7 +4627,9 @@ function clearBacktestUI(statusText) {
 
 async function runBacktest() {
   // 先清空上次结果，避免换代码/改参数后仍显示旧数据
-  clearBacktestUI('回测中...');
+  const _btDays0 = parseInt((document.getElementById('btDays') || {}).value) || 300;
+  const _btEta0 = _formatEtaSeconds(_backtestEtaSec(_btDays0));
+  clearBacktestUI('回测中… ' + _btEta0);
   const symbol = currentSymbol || '';
   // 优先用工具栏资金/建仓价/持仓；回测配置 Tab 可覆盖
   const capitalToolbar = parseFloat(document.getElementById('capital') && document.getElementById('capital').value);
@@ -4597,7 +4649,9 @@ async function runBacktest() {
   const commission = parseFloat(document.getElementById('btCommission').value) / 1000 || 0.0003;
   const warmup = parseInt(document.getElementById('btWarmup').value) || 60;
 
-  document.getElementById('chartMeta').textContent = '回测中...';
+  const _btDays = parseInt((document.getElementById('btDays') || {}).value) || 300;
+  const _btEta = _formatEtaSeconds(_backtestEtaSec(_btDays));
+  document.getElementById('chartMeta').textContent = '回测中… ' + _btEta + '（请勿重复点击）';
   switchView('backtest');
 
   try {
