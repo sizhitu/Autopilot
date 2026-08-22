@@ -146,6 +146,10 @@ STOCK_META = {
     'XLE': {'industry': '能源ETF', 'desc': '跟踪能源板块的行业 ETF。'},
     'XLF': {'industry': '金融ETF', 'desc': '跟踪金融板块的行业 ETF。'},
     'XLK': {'industry': '科技ETF', 'desc': '跟踪科技板块的行业 ETF。'},
+    'CF': {'industry': '化肥·农化', 'desc': 'CF Industries，北美氮肥龙头，主营氨、尿素等氮肥生产与销售。'},
+    'CEG': {'industry': '电力·清洁能源', 'desc': 'Constellation Energy，美国最大核电运营商之一，提供清洁电力与能源服务。'},
+    'CBT': {'industry': '特种化学品', 'desc': 'Cabot Corporation，主营炭黑、气相二氧化硅等特种化学品与高性能材料。'},
+    'B': {'industry': '黄金·矿业', 'desc': 'Barrick Mining（巴里克），全球主要金矿与铜矿生产商之一。'},
     # A股 ETF（基金，东财 F10 无 ORG_PROFILE，故人工维护兜底）
     '159880': {'industry': '有色金属ETF', 'desc': '跟踪有色金属指数的场内基金，覆盖铜、铝、黄金等工业金属与贵金属。'},
     '518850': {'industry': '黄金ETF', 'desc': '跟踪国内黄金现货价格，配置黄金资产的场内交易型基金。'},
@@ -316,6 +320,7 @@ class DataFetcher:
         'DIS': '迪士尼', 'BABA': '阿里巴巴', 'NKE': '耐克', 'KO': '可口可乐',
         'PEP': '百事可乐', 'PFE': '辉瑞', 'MRK': '默克', 'ABBV': '艾伯维',
         'CVX': '雪佛龙', 'XOM': '埃克森美孚', 'BA': '波音', 'INTC': '英特尔',
+        'CF': 'CF工业', 'CEG': '星座能源', 'CBT': '卡博特', 'B': '巴里克黄金',
         'CSCO': '思科', 'ORCL': '甲骨文', 'ADBE': 'Adobe', 'NFLX': '奈飞',
         'PYPL': 'PayPal', 'CRM': 'Salesforce', 'AMD': 'AMD', 'AVGO': '博通',
         'COST': '好市多', 'TMO': '赛默飞', 'ABT': '雅培', 'MCD': '麦当劳',
