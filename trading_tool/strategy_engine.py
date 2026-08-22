@@ -103,59 +103,7 @@ class FujimotoStrategy:
         (1.00, 1.00, "上涨100%清仓"),
     ]
 
-    # 相对「压舱石」基准的触发阈值放大系数（加减仓比例仍用基准 action_pct）
-    # 依据：波动越高，需更大涨跌才触发同一档，减少噪音交易
-    # 压舱石≈1；高赔率/周期/卫星按经验波动阶梯放大（非学术回测最优解）
-    ROLE_LADDER_SCALE = {
-        "压舱石": 1.00,
-        "高赔率": 1.20,
-        "周期弹性": 1.30,
-        "卫星仓": 1.50,
-    }
-    ROLE_BOARD_5D = {
-        # 看板近5日粗筛（相对成本阶梯的简化版）
-        "压舱石": (-0.12, 0.22),
-        "高赔率": (-0.18, 0.30),
-        "周期弹性": (-0.20, 0.32),
-        "卫星仓": (-0.28, 0.40),
-    }
-
     MA_PERIODS = [5, 10, 20, 30, 50, 100, 120, 150, 200, 250]
-
-    @classmethod
-    def ladder_for_role(cls, role: str = "压舱石"):
-        """返回某角色缩放后的买卖阶梯 [(threshold, action_pct, desc), ...]。"""
-        scale = float(cls.ROLE_LADDER_SCALE.get(role) or cls.ROLE_LADDER_SCALE.get("压舱石") or 1.0)
-        def _scale_buy(items):
-            out = []
-            for thr, pct, _desc in items:
-                t = thr * scale if thr < 0 else thr
-                # 文案用缩放后的整数百分比
-                tp = int(round(abs(t) * 100))
-                if pct <= 0:
-                    out.append((t, pct, f"下跌{tp}%不操作（噪音区间）" if thr < 0 else _desc))
-                else:
-                    out.append((t, pct, f"下跌{tp}%增持{int(pct*100)}%"))
-            return out
-        def _scale_sell(items):
-            out = []
-            for thr, pct, _desc in items:
-                t = thr * scale if thr > 0 else thr
-                tp = int(round(abs(t) * 100))
-                if pct <= 0:
-                    out.append((t, pct, f"上涨{tp}%继续持有"))
-                elif pct >= 1.0:
-                    out.append((t, pct, f"上涨{tp}%清仓"))
-                else:
-                    out.append((t, pct, f"上涨{tp}%卖出{int(pct*100)}%"))
-            return out
-        return {
-            "role": role,
-            "scale": scale,
-            "buy": _scale_buy(cls.BUY_LADDER),
-            "sell": _scale_sell(cls.SELL_LADDER),
-            "board_5d": cls.ROLE_BOARD_5D.get(role) or cls.ROLE_BOARD_5D["压舱石"],
-        }
 
     def __init__(self, total_capital: float = 100000,
                  risk_per_trade: float = 0.02,

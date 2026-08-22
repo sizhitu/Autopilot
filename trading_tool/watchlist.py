@@ -373,20 +373,9 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         nt_signal = result.signal.value  # 策略原始信号：买入/卖出/持有/加仓/观望
         nt = calc_nine_turn_display(df)
 
-        # 藤本茂阶梯：近5日粗筛，阈值按持仓定位缩放（勿在函数内再 import FujimotoStrategy，会 UnboundLocalError）
-        try:
-            _board = getattr(FujimotoStrategy, "ROLE_BOARD_5D", None) or {
-                "压舱石": (-0.12, 0.22),
-                "高赔率": (-0.18, 0.30),
-                "周期弹性": (-0.20, 0.32),
-                "卫星仓": (-0.28, 0.40),
-            }
-            _b5, _s5 = _board.get(status.role, _board.get("压舱石", (-0.15, 0.25)))
-            buy_ladder_hit = status.change_5d <= float(_b5) * 100.0
-            sell_ladder_hit = status.change_5d >= float(_s5) * 100.0
-        except Exception:
-            buy_ladder_hit = status.change_5d <= -15.0
-            sell_ladder_hit = status.change_5d >= 25.0
+        # 藤本茂阶梯：近5日相对涨跌触及档位（无成本价时的粗筛）
+        buy_ladder_hit = status.change_5d <= -15.0
+        sell_ladder_hit = status.change_5d >= 25.0
 
         # ---------- 1) 九转时机 ----------
         if nt.get('conflict'):

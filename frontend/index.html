@@ -923,7 +923,7 @@ body.help-open { overflow: hidden; touch-action: none; }
       <span class="help-q help-q-board" onclick="event.stopPropagation();toggleHelp(this)" title="藤本茂阶梯说明" role="button" aria-label="藤本茂阶梯说明">
         <span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
           <div class="hp-sec"><b>藤本茂是谁</b><p>日本个人投资者，因「相对成本分档加减仓」的阶梯式仓位管理思路在中文圈被引用较多。强调恐慌中有计划承接、上涨中分批兑现，用纪律对抗情绪。</p></div>
-          <div class="hp-sec"><b>阶梯是什么</b><p>相对<strong>持仓成本</strong>的分档加减：跌到某档考虑加仓，涨到某档考虑减仓。加减仓<strong>比例</strong>统一；触发涨跌幅按持仓定位（压舱石/高赔率/周期/卫星）放大，波动大的票阈值更宽。</p></div>
+          <div class="hp-sec"><b>阶梯是什么</b><p>相对<strong>持仓成本</strong>的固定涨跌幅档位表：跌到某档考虑加仓节奏，涨到某档考虑减仓兑现。全市场同一套百分比，不随个股单独计算。</p></div>
           <div class="hp-sec"><b>怎么用</b><p>先明确自己的成本价，再看现价相对成本的涨跌幅落在哪一档。下方「涨跌幅计算器」可快速对照。表中操作为研究备忘，不是下单指令。</p></div>
           <div class="hp-sec"><b>与分析页的关系</b><p>本页与「三层一致性校验」独立，不替代趋势/九转/量价判断。实际买卖请结合自选看板时机、趋势过滤与分析详情。</p></div>
           <div class="hp-sec"><b>提示</b><p>仅供研究学习，不构成投资建议。</p></div>
@@ -932,14 +932,10 @@ body.help-open { overflow: hidden; touch-action: none; }
     </div>
     <div style="font-size:12px;color:var(--text-dim);line-height:1.55;">
       <b style="color:var(--text);">藤本茂</b>：日本个人投资者，以按持仓成本涨跌分档加减仓的「阶梯」思路为人熟知——下跌分批承接、上涨分批兑现，强调节奏与纪律而非一次满仓。<br>
-      加减仓比例统一；用下方定位切换查看不同触发阈值。<b style="color:var(--green);">下跌档加仓</b>、<b style="color:var(--red);">上涨档减仓</b>。
+      本页将其整理为固定比例参考：<b style="color:var(--green);">下跌档加仓</b>、<b style="color:var(--red);">上涨档减仓</b>，简单对照即可。
     </div>
   </div>
   <div class="card" style="margin-bottom:10px;">
-    <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">持仓定位（触发阈值系数）</div>
-    <div id="ladderSymbolCtx" style="font-size:12px;color:var(--text);margin-bottom:6px;line-height:1.45;"></div>
-    <div id="ladderRoleBar" style="display:flex;flex-wrap:nowrap;gap:6px;margin-bottom:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;"></div>
-    <div id="ladderScaleNote" style="font-size:11px;color:var(--text-dim);line-height:1.5;margin-bottom:10px;"></div>
     <div style="margin-bottom:6px;"><b style="color:var(--green);font-size:12px;">▼ 下跌阶梯（加仓）</b></div>
     <table class="ladder-table" id="buyLadderTable"></table>
     <div style="margin:12px 0 6px;"><b style="color:var(--red);font-size:12px;">▲ 上涨阶梯（减仓）</b></div>
@@ -2999,14 +2995,9 @@ async function fetchQuote(symbol, name, market) {
   const reqId = ++_quoteReqSeq;
   document.getElementById('searchResults').style.display = 'none';
   document.getElementById('chartMeta').textContent = '获取数据中...';
-  const _prevSymForLadder = (typeof currentSymbol !== 'undefined' && currentSymbol) ? String(currentSymbol).toUpperCase() : '';
   currentSymbol = symbol;
   currentName = name || '';
   currentMarket = market || '';
-  if (_prevSymForLadder && _prevSymForLadder !== String(symbol).toUpperCase()) {
-    _ladderRoleManual = false;
-    _ladderLinkedCode = String(symbol).toUpperCase();
-  }
 
   // 立即显示股票头部（代码+名称），避免任何下游异常导致不展示
   const info = document.getElementById('stockInfo');
@@ -3277,9 +3268,6 @@ function switchMainTab(tab) {
   _lastMainTabSwitch = now;
   _mainTab = tab;
   try {
-    if (tab === 'ladder') {
-      try { syncLadderToSymbol(false); } catch (eL) {}
-    }
     if (tab === 'analysis' || tab === 'ladder') {
       try { clearTimeout(_wlPollTimer); _wlPollTimer = null; } catch (e0) {}
       try { _wlPollCount = 0; } catch (e0b) {}
@@ -3325,7 +3313,7 @@ function switchMainTab(tab) {
       else { wv.classList.add('hidden'); wv.style.display = 'none'; }
     }
     if (lv) {
-      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { syncLadderToSymbol(false); } catch (eL) {} }
+      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { loadLadderTable(); } catch (eL) {} }
       else { lv.classList.add('hidden'); lv.style.display = 'none'; }
     }
     if (tl) {
@@ -5001,125 +4989,16 @@ function _fillLadderTables(data) {
   });
 }
 
-let _ladderRole = '压舱石';
-let _ladderRoleManual = false; // 用户手动点了定位后暂不自动覆盖，直到换代码
-let _ladderLinkedCode = '';
-const _LADDER_ROLES = ['压舱石', '高赔率', '周期弹性', '卫星仓'];
-const _LADDER_SCALE_TIP = {
-  '压舱石': '×1.0 基准：阈值最紧，适合稳健标的',
-  '高赔率': '×1.2：成长股回撤更深，阈值略放宽',
-  '周期弹性': '×1.3：周期波动大，减少中段假信号',
-  '卫星仓': '×1.5：高波动小仓，阈值最宽，避免频繁触发',
-};
-// 与后端 STOCK_ROLE 常见默认对齐（看板无行时兜底）
-const _ROLE_BY_CODE = {
-  NVDA: '高赔率', MU: '高赔率', AVGO: '高赔率', APP: '高赔率', HIMS: '高赔率', GEV: '高赔率', LITE: '高赔率',
-  FCX: '周期弹性', WTI: '周期弹性', INTC: '周期弹性',
-  OUST: '卫星仓', FLY: '卫星仓', SPCX: '卫星仓', FIGR: '卫星仓', ASTS: '卫星仓', EUV: '卫星仓',
-  AAPL: '压舱石', MSFT: '压舱石', GOOG: '压舱石', GOOGL: '压舱石', ETN: '压舱石', ICE: '压舱石',
-};
-
-function _ladderDefaultSymbol() {
-  try {
-    if (currentSymbol) return { code: String(currentSymbol).toUpperCase(), name: currentName || '' };
-  } catch (e0) {}
-  try {
-    const def = (typeof isFreeUser === 'function' && isFreeUser()) ? FREE_DEFAULT_ANALYSIS : DEFAULT_ANALYSIS;
-    return { code: String(def.code || 'NVDA').toUpperCase(), name: def.name || '' };
-  } catch (e1) {
-    return { code: 'NVDA', name: '英伟达' };
-  }
-}
-
-function _roleForSymbol(code) {
-  code = String(code || '').trim().toUpperCase();
-  if (!code) return '压舱石';
-  const rows = (typeof _lastWatchRows !== 'undefined' && _lastWatchRows) ? _lastWatchRows : [];
-  for (let i = 0; i < rows.length; i++) {
-    const s = rows[i];
-    if (s && String(s.code || '').toUpperCase() === code && s.role) return s.role;
-  }
-  if (_ROLE_BY_CODE[code]) return _ROLE_BY_CODE[code];
-  return '压舱石';
-}
-
-function _updateLadderSymbolCtx(code, name, role, linked) {
-  const el = document.getElementById('ladderSymbolCtx');
-  if (!el) return;
-  const nm = name ? (' · ' + name) : '';
-  if (linked) {
-    el.innerHTML = '当前联动：<b style="color:var(--gold);">' + escapeHtml(code) + '</b>' + escapeHtml(nm) +
-      ' → 定位 <b style="color:var(--text);">' + escapeHtml(role) + '</b>' +
-      ' <span style="color:var(--text-dim);font-size:11px;">（可左右滑动或点选查看其他定位）</span>';
-  } else {
-    el.innerHTML = '对照定位：<b style="color:var(--text);">' + escapeHtml(role) + '</b>' +
-      ' <span style="color:var(--text-dim);font-size:11px;">（未按代码锁定，点选切换）</span>';
-  }
-}
-
-function _renderLadderRoleBar(active, scaleMap, boardMap, note) {
-  const bar = document.getElementById('ladderRoleBar');
-  const noteEl = document.getElementById('ladderScaleNote');
-  if (!bar) return;
-  let h = '';
-  _LADDER_ROLES.forEach(function (r) {
-    const on = r === active;
-    const sc = (scaleMap && scaleMap[r] != null) ? (' ×' + scaleMap[r]) : '';
-    h += '<button type="button" class="btn btn-sm ' + (on ? '' : 'btn-outline') + '" style="padding:4px 10px;font-size:11px;flex:0 0 auto;' +
-      (on ? 'background:var(--gold);color:#111;border-color:var(--gold);' : '') +
-      '" onclick="selectLadderRole(\'' + r + '\')">' + r + sc + '</button>';
-  });
-  bar.innerHTML = h;
-  if (noteEl) {
-    const b = (boardMap && boardMap[active]) || {};
-    const tip = _LADDER_SCALE_TIP[active] || '';
-    noteEl.innerHTML = '<b style="color:var(--text);">' + active + '</b> ' + tip +
-      (b.buy_5d ? (' · 看板近5日粗筛：跌' + b.buy_5d + ' 抄底关注 / 涨' + b.sell_5d + ' 止盈关注') : '') +
-      (note ? ('<br>' + note) : '');
-  }
-}
-
-function selectLadderRole(role) {
-  _ladderRoleManual = true;
-  _ladderRole = role || '压舱石';
-  const sym = _ladderDefaultSymbol();
-  _updateLadderSymbolCtx(sym.code, sym.name, _ladderRole, false);
-  loadLadderTable(_ladderRole, { keepManual: true });
-}
-
-/** 按当前分析/默认代码联动定位并加载阶梯表 */
-function syncLadderToSymbol(force) {
-  const sym = _ladderDefaultSymbol();
-  const code = sym.code;
-  if (!force && _ladderRoleManual && _ladderLinkedCode === code) {
-    // 同代码下用户已手动切换定位，保留
-    loadLadderTable(_ladderRole, { keepManual: true });
-    return;
-  }
-  if (_ladderLinkedCode && _ladderLinkedCode !== code) {
-    _ladderRoleManual = false; // 换代码后重新联动
-  }
-  _ladderLinkedCode = code;
-  if (!_ladderRoleManual) {
-    _ladderRole = _roleForSymbol(code);
-  }
-  _updateLadderSymbolCtx(code, sym.name, _ladderRole, !_ladderRoleManual);
-  loadLadderTable(_ladderRole, { keepManual: _ladderRoleManual });
-}
-
-async function loadLadderTable(role, opts) {
+async function loadLadderTable() {
   const bt = document.getElementById('buyLadderTable');
   const st = document.getElementById('sellLadderTable');
   if (!bt || !st) return;
-  opts = opts || {};
-  role = role || _ladderRole || '压舱石';
-  _ladderRole = role;
+  // 先本地填表，避免接口慢/失败时空白
   if (!bt.rows || bt.rows.length < 2) _fillLadderTables(_DEFAULT_LADDER);
   try {
-    const res = await api('/api/ladder_table?role=' + encodeURIComponent(role));
+    const res = await api('/api/ladder_table');
     if (!res.ok) {
       _fillLadderTables(_DEFAULT_LADDER);
-      _renderLadderRoleBar(role, { '压舱石': 1, '高赔率': 1.2, '周期弹性': 1.3, '卫星仓': 1.5 }, null, '');
       return;
     }
     const data = await res.json();
@@ -5128,14 +5007,11 @@ async function loadLadderTable(role, opts) {
     } else {
       _fillLadderTables(_DEFAULT_LADDER);
     }
-    _renderLadderRoleBar(data.role || role, data.scale_map, data.board_5d_map, data.note || '');
   } catch (e) {
     _fillLadderTables(_DEFAULT_LADDER);
-    _renderLadderRoleBar(role, { '压舱石': 1, '高赔率': 1.2, '周期弹性': 1.3, '卫星仓': 1.5 }, null, '');
   }
 }
-// 首屏：按默认分析代码联动，不写死压舱石
-try { syncLadderToSymbol(true); } catch (e0) { loadLadderTable('压舱石').catch(function () {}); }
+loadLadderTable().catch(()=>{});
 initAuth().then(function(){ try { maybeHandlePasswordRecovery(); } catch(e){} });
 if (document.getElementById('pageTs')) document.getElementById('pageTs').textContent = new Date().toLocaleString('zh-CN');
 </script>

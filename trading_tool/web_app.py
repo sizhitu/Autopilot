@@ -1722,55 +1722,24 @@ async def calc_ladder(req: LadderRequest, request: Request,
 
 
 @app.get("/api/ladder_table")
-async def ladder_table(role: str = Query("压舱石", description="压舱石|高赔率|周期弹性|卫星仓")):
-    """返回藤本茂阶梯表：统一基准 + 按持仓定位缩放触发阈值。"""
-    from strategy_engine import FujimotoStrategy
-    roles = ["压舱石", "高赔率", "周期弹性", "卫星仓"]
-    role = (role or "压舱石").strip()
-    if role not in roles:
-        role = "压舱石"
-
-    def _pack_buy(items):
-        rows = []
-        for thr, pct, desc in items:
-            trig = f"{thr*100:.0f}%"
-            if pct <= 0:
-                act, note = "不操作", "噪音区间"
-            else:
-                act, note = f"+{pct*100:.0f}%", desc
-            rows.append({"trigger": trig if thr < 0 else f"+{thr*100:.0f}%", "action": act, "desc": note})
-        # 最深档后附止损提示（展示用）
-        rows.append({"trigger": "更深", "action": "止损评估", "desc": "设硬止损，避免深套"})
-        return rows
-
-    def _pack_sell(items):
-        rows = []
-        for thr, pct, desc in items:
-            trig = f"+{thr*100:.0f}%"
-            if pct <= 0:
-                act = "持有"
-            elif pct >= 1.0:
-                act = "清仓"
-            else:
-                act = f"-{pct*100:.0f}%"
-            rows.append({"trigger": trig, "action": act, "desc": desc})
-        return rows
-
-    cfg = FujimotoStrategy.ladder_for_role(role)
-    scale_map = dict(FujimotoStrategy.ROLE_LADDER_SCALE)
-    board_map = {
-        k: {"buy_5d": f"{v[0]*100:.0f}%", "sell_5d": f"+{v[1]*100:.0f}%"}
-        for k, v in FujimotoStrategy.ROLE_BOARD_5D.items()
-    }
+async def ladder_table():
+    """返回藤本茂完整阶梯表（固定参考，无需登录）"""
     return {
-        "role": role,
-        "scale": cfg["scale"],
-        "scale_map": scale_map,
-        "board_5d_map": board_map,
-        "note": "加减仓比例沿用基准；仅触发涨跌幅按定位放大。系数按波动分档经验设定，供参考非收益保证。",
-        "buy_ladder": _pack_buy(cfg["buy"]),
-        "sell_ladder": _pack_sell(cfg["sell"]),
-        "roles": roles,
+        "buy_ladder": [
+            {"trigger": "-5%", "action": "不操作", "desc": "噪音区间，不动如山"},
+            {"trigger": "-15%", "action": "+10%", "desc": "第一档承接，试探性入场"},
+            {"trigger": "-25%", "action": "+25%", "desc": "加重仓，恐慌中接筹码"},
+            {"trigger": "-35%+", "action": "止损评估", "desc": "设硬止损，避免深套"},
+        ],
+        "sell_ladder": [
+            {"trigger": "+5%", "action": "持有", "desc": "趋势初期，让利润奔跑"},
+            {"trigger": "+15%", "action": "持有", "desc": "趋势确认，不动如山"},
+            {"trigger": "+25%", "action": "-10%", "desc": "开始兑现，落袋为安"},
+            {"trigger": "+35%", "action": "-20%", "desc": "加速兑现"},
+            {"trigger": "+45%", "action": "-30%", "desc": "大幅减仓"},
+            {"trigger": "+60%", "action": "-40%", "desc": "接近清仓"},
+            {"trigger": "+100%", "action": "清仓", "desc": "极端泡沫，离场观望"},
+        ]
     }
 
 
