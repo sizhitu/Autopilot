@@ -104,6 +104,48 @@ STOCK_META = {
     'TSLA': {'industry': '新能源车·自动驾驶', 'desc': '电动汽车与储能、机器人业务，主营整车销售与 FSD 软件。'},
     '159501': {'industry': '纳指ETF', 'desc': '嘉实跟踪纳斯达克100，配置美股科技龙头的 QDII-ETF。'},
     'INTC': {'industry': '半导体·CPU', 'desc': '全球主要 CPU 与晶圆代工供应商，覆盖 PC、数据中心与代工。'},
+    'AAPL': {'industry': '消费电子·软件', 'desc': '苹果公司，主营 iPhone、Mac、服务与可穿戴设备。'},
+    'MSFT': {'industry': '软件·云计算', 'desc': '微软，主营 Windows、Office、Azure 云与企业软件。'},
+    'AMZN': {'industry': '电商·云计算', 'desc': '亚马逊，主营电商、AWS 云服务与数字媒体。'},
+    'META': {'industry': '社交媒体·广告', 'desc': 'Meta（脸书），主营社交网络广告、短视频与 VR/元宇宙。'},
+    'GOOGL': {'industry': '互联网·广告', 'desc': '谷歌母公司 A 类股，主营搜索广告、YouTube、云与安卓。'},
+    'AMD': {'industry': '半导体·CPU/GPU', 'desc': '超威半导体，主营 PC/服务器 CPU 与数据中心 GPU。'},
+    'PLTR': {'industry': '软件·大数据', 'desc': 'Palantir，主营政府与企业大数据分析与 AI 平台。'},
+    'NFLX': {'industry': '流媒体', 'desc': '奈飞，全球流媒体订阅与内容制作平台。'},
+    'BABA': {'industry': '电商·云计算', 'desc': '阿里巴巴，主营中国电商、云与数字支付。'},
+    'PDD': {'industry': '电商', 'desc': '拼多多母公司，主营中国与跨境电商平台。'},
+    'JD': {'industry': '电商·物流', 'desc': '京东，主营自营电商与物流履约。'},
+    'CRM': {'industry': '软件·SaaS', 'desc': 'Salesforce，企业级 CRM 与云应用平台。'},
+    'ORCL': {'industry': '软件·数据库', 'desc': '甲骨文，主营数据库、云基础设施与企业软件。'},
+    'QCOM': {'industry': '半导体·通信', 'desc': '高通，主营手机与物联网通信芯片与授权。'},
+    'TXN': {'industry': '半导体·模拟', 'desc': '德州仪器，主营模拟与嵌入式处理芯片。'},
+    'ASML': {'industry': '半导体设备', 'desc': '阿斯麦，极紫外(EUV)光刻机龙头设备商。'},
+    'TSM': {'industry': '半导体·代工', 'desc': '台积电，全球领先晶圆代工企业。'},
+    'BRK.B': {'industry': '多元金融', 'desc': '伯克希尔·哈撒韦 B 类股，多元控股与保险投资。'},
+    'JPM': {'industry': '银行', 'desc': '摩根大通，全球系统重要性银行与投行。'},
+    'V': {'industry': '支付', 'desc': 'Visa，全球电子支付与清算网络。'},
+    'MA': {'industry': '支付', 'desc': '万事达，全球电子支付与清算网络。'},
+    'XOM': {'industry': '石油天然气', 'desc': '埃克森美孚，上下游一体化油气公司。'},
+    'CVX': {'industry': '石油天然气', 'desc': '雪佛龙，上下游一体化油气公司。'},
+    'COIN': {'industry': '加密货币交易', 'desc': 'Coinbase，美国主流加密货币交易与托管平台。'},
+    'SQ': {'industry': '金融科技', 'desc': 'Block（原 Square），移动支付与 Cash App 等金融服务。'},
+    'SHOP': {'industry': '电商软件', 'desc': 'Shopify，面向商家的电商建站与支付 SaaS。'},
+    'UBER': {'industry': '出行·本地生活', 'desc': '优步，网约车、外卖配送与货运平台。'},
+    'ABNB': {'industry': '在线旅游', 'desc': '爱彼迎，全球短租与住宿预订平台。'},
+    'SNOW': {'industry': '软件·数据云', 'desc': 'Snowflake，云数据仓库与数据云平台。'},
+    'NET': {'industry': '网络安全·CDN', 'desc': 'Cloudflare，CDN、安全与边缘计算服务。'},
+    'PANW': {'industry': '网络安全', 'desc': 'Palo Alto Networks，企业网络安全与云安全。'},
+    'CRWD': {'industry': '网络安全', 'desc': 'CrowdStrike，终端与云安全、威胁检测。'},
+    'MSTR': {'industry': '软件·比特币持仓', 'desc': 'MicroStrategy，企业分析软件并大规模持有比特币。'},
+    'IWM': {'industry': '指数ETF', 'desc': '跟踪罗素 2000 小盘股指数的 ETF。'},
+    'QQQ': {'industry': '纳指ETF', 'desc': '跟踪纳斯达克 100 的 ETF。'},
+    'SPY': {'industry': '宽基ETF', 'desc': '跟踪标普 500 的 ETF。'},
+    'GLD': {'industry': '黄金ETF', 'desc': '跟踪黄金现货价格的 ETF。'},
+    'SLV': {'industry': '白银ETF', 'desc': '跟踪白银现货价格的 ETF。'},
+    'USO': {'industry': '原油ETF', 'desc': '跟踪 WTI 原油相关期货的 ETF。'},
+    'XLE': {'industry': '能源ETF', 'desc': '跟踪能源板块的行业 ETF。'},
+    'XLF': {'industry': '金融ETF', 'desc': '跟踪金融板块的行业 ETF。'},
+    'XLK': {'industry': '科技ETF', 'desc': '跟踪科技板块的行业 ETF。'},
     # A股 ETF（基金，东财 F10 无 ORG_PROFILE，故人工维护兜底）
     '159880': {'industry': '有色金属ETF', 'desc': '跟踪有色金属指数的场内基金，覆盖铜、铝、黄金等工业金属与贵金属。'},
     '518850': {'industry': '黄金ETF', 'desc': '跟踪国内黄金现货价格，配置黄金资产的场内交易型基金。'},
@@ -141,6 +183,11 @@ _KLINE_CACHE = {}
 _KLINE_CACHE_TS = {}
 _KLINE_TTL = 120  # 秒
 _KLINE_CACHE_MAX = 32  # 最多缓存多少份 DataFrame，防止 OOM
+
+# 行业/简介短缓存（减少重复外呼，不进 quote 热路径阻塞）
+_PROFILE_META_CACHE = {}
+_PROFILE_META_CACHE_TS = {}
+_PROFILE_META_TTL = 6 * 3600
 
 
 def _kline_cache_prune(now=None):
@@ -1094,11 +1141,23 @@ class DataFetcher:
         任何失败均返回 None（前端隐藏该区域）。
         """
         sym = symbol.strip()
+        key = sym.upper()
+        now = time.time()
+        hit = _PROFILE_META_CACHE.get(('biz', key))
+        if hit is not None:
+            ts = _PROFILE_META_CACHE_TS.get(('biz', key)) or 0
+            if now - ts < _PROFILE_META_TTL:
+                return hit
+
+        def _cache_biz(val):
+            _PROFILE_META_CACHE[('biz', key)] = val
+            _PROFILE_META_CACHE_TS[('biz', key)] = time.time()
+            return val
 
         # 优先使用自选股人工维护的简短简介（含指数，避免指数代码被当成个股走东财）
-        meta = STOCK_META.get(sym.upper()) or STOCK_META.get(sym)
+        meta = STOCK_META.get(key) or STOCK_META.get(sym)
         if meta and meta.get('desc'):
-            return meta['desc']
+            return _cache_biz(meta['desc'])
 
         # —— A股：东方财富为主，Yahoo 兜底 ——
         if self._is_cn_stock(sym):
@@ -1108,31 +1167,25 @@ class DataFetcher:
             em_code = ('SH' if code.startswith('6') else 'SZ') + code
             s = self._fetch_em_profile(em_code)
             if s:
-                return s
+                return _cache_biz(s)
             if not _yahoo_in_cooldown():
                 y = f"{code}.SS" if code.startswith('6') else f"{code}.SZ"
                 s = self._fetch_yahoo_profile(y)
                 if s:
-                    return s
-            return None
+                    return _cache_biz(s)
+            return _cache_biz(None)
 
-        # —— 美股/ETF/指数：人工维护映射为主（沙箱/本机均可靠），Yahoo 兜底 ——
-        # 优先使用自选股人工维护的简短简介，保证详情页稳定展示；
-        # 不在表中的临时代码再走 Yahoo assetProfile（本机可用，沙箱常限流）。
-        meta = STOCK_META.get(sym.upper()) or STOCK_META.get(sym)
-        if meta and meta.get('desc'):
-            return meta['desc']
-
+        # —— 美股/ETF/指数：Yahoo / Nasdaq 兜底（人工表已在上方命中）——
         ysym = sym if sym.startswith('^') else sym.replace('.', '-').upper()
         if not _yahoo_in_cooldown():
             s = self._fetch_yahoo_profile(ysym)
             if s:
-                return s
+                return _cache_biz(s)
         if not sym.startswith('^'):
             s = self._fetch_nasdaq_profile(ysym)
             if s:
-                return s
-        return None
+                return _cache_biz(s)
+        return _cache_biz(None)
 
     # ================================================================
     #  行业分类（多数据源兜底）
@@ -1671,7 +1724,8 @@ class DataFetcher:
             if not result:
                 return None
             ap = result[0].get('assetProfile', {})
-            s = ap.get('sector') or ap.get('industry')
+            # industry 更细；sector 作兜底
+            s = ap.get('industry') or ap.get('sector')
             return s.strip() if s else None
         except Exception:
             return None
@@ -1681,31 +1735,41 @@ class DataFetcher:
         获取行业分类（最简短标签）。多数据源兜底，任一成功即返回：
 
           A股  ：东方财富 F10(INDUSTRYCSRC1) → 人工维护映射
-          美股/ETF/指数：人工维护映射（最可靠）→ Yahoo assetProfile(sector)
+          美股/ETF/指数：人工维护映射（最可靠）→ Yahoo assetProfile(industry/sector)
 
         说明：人工维护映射对本仓持有标的在沙箱/本机均稳定可用；
               临时搜索且不在表中的代码走动态源（沙箱下美股可能为空）。
         """
         sym = symbol.strip()
+        key = sym.upper()
+        now = time.time()
+        hit = _PROFILE_META_CACHE.get(('ind', key))
+        if hit is not None:
+            ts = _PROFILE_META_CACHE_TS.get(('ind', key)) or 0
+            if now - ts < _PROFILE_META_TTL:
+                return hit
+        out = None
         # 1) 自选股人工维护映射（优先，最可靠）
-        meta = STOCK_META.get(sym.upper()) or STOCK_META.get(sym)
+        meta = STOCK_META.get(key) or STOCK_META.get(sym)
         if meta and meta.get('industry'):
-            return meta['industry']
+            out = meta['industry']
         # 2) A股：东方财富行业
-        if self._is_cn_stock(sym):
+        elif self._is_cn_stock(sym):
             code = sym.lower()
             if code[:2] in ('sh', 'sz', 'bj'):
                 code = code[2:]
             em_code = ('SH' if code.startswith('6') else 'SZ') + code
-            s = self._fetch_em_industry(em_code)
-            if s:
-                return s
-        # 3) 美股/ETF/指数：Yahoo sector（本机可用）
-        ysym = sym if sym.startswith('^') else sym.replace('.', '-').upper()
-        s = self._fetch_yahoo_industry(ysym)
-        if s:
-            return s
-        return None
+            out = self._fetch_em_industry(em_code)
+            if not out:
+                ysym = f"{code}.SS" if code.startswith('6') else f"{code}.SZ"
+                out = self._fetch_yahoo_industry(ysym)
+        else:
+            # 3) 美股/ETF/指数：Yahoo industry（本机可用）
+            ysym = sym if sym.startswith('^') else sym.replace('.', '-').upper()
+            out = self._fetch_yahoo_industry(ysym)
+        _PROFILE_META_CACHE[('ind', key)] = out
+        _PROFILE_META_CACHE_TS[('ind', key)] = now
+        return out
 
 
 # ================================================================
