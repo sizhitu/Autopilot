@@ -3008,6 +3008,14 @@ async function fetchQuote(symbol, name, market) {
   info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中… ${_qEta}</span>`;
   try { document.getElementById('chartMeta').textContent = '获取数据中… ' + _qEta; } catch (eM) {}
 
+  // 先切到分析页再拉行情，避免看板空等 3–5 秒像卡死
+  try {
+    switchView('analysis');
+  } catch (eSv) {}
+  try {
+    switchMainTab('analysis');
+  } catch (eTab) {}
+
   try {
     const res = await api('/api/quote', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
