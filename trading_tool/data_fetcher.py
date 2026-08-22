@@ -1113,24 +1113,78 @@ class DataFetcher:
         except Exception:
             return None
 
+    def _nasdaq_headers(self) -> dict:
+        return {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Origin': 'https://www.nasdaq.com',
+            'Referer': 'https://www.nasdaq.com/',
+        }
+
     def _fetch_nasdaq_profile(self, ysym: str) -> "str | None":
+        """Nasdaq 公司简介：优先 company-profile，其次 quote/info。"""
+        sym = (ysym or '').strip().upper()
+        if not sym or sym.startswith('^'):
+            return None
+        nh = self._nasdaq_headers()
+        # 1) 官方 company-profile（描述最完整）
         try:
-            nh = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                              '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Origin': 'https://www.nasdaq.com',
-                'Referer': 'https://www.nasdaq.com/',
-            }
             r = self.session.get(
-                f"https://api.nasdaq.com/api/quote/{ysym}/info", headers=nh, timeout=12)
+                f"https://api.nasdaq.com/api/company/{sym}/company-profile",
+                headers=nh, timeout=12)
+            if r.status_code == 200:
+                data = (r.json() or {}).get('data') or {}
+                for key in ('CompanyDescription', 'companyDescription', 'Description'):
+                    node = data.get(key)
+                    if isinstance(node, dict):
+                        val = (node.get('value') or '').strip()
+                        if val:
+                            return val
+                    elif isinstance(node, str) and node.strip():
+                        return node.strip()
+        except Exception:
+            pass
+        # 2) quote/info 兜底
+        try:
+            r = self.session.get(
+                f"https://api.nasdaq.com/api/quote/{sym}/info",
+                params={'assetclass': 'stocks'}, headers=nh, timeout=12)
             if r.status_code != 200:
                 return None
-            d = r.json()
-            prof = (d.get('data') or {}).get('summary', {}).get('profile', {})
-            desc = prof.get('Description') or prof.get('description')
+            d = (r.json() or {}).get('data') or {}
+            prof = (d.get('summary') or {}).get('profile') or {}
+            desc = prof.get('Description') or prof.get('description') or d.get('keyStats', {}).get('Description')
+            if isinstance(desc, dict):
+                desc = desc.get('value')
             return desc.strip() if desc else None
+        except Exception:
+            return None
+
+    def _fetch_nasdaq_industry(self, ysym: str) -> "str | None":
+        """Nasdaq summary：Industry / Sector，美股个股较稳定。"""
+        sym = (ysym or '').strip().upper()
+        if not sym or sym.startswith('^'):
+            return None
+        try:
+            r = self.session.get(
+                f"https://api.nasdaq.com/api/quote/{sym}/summary",
+                params={'assetclass': 'stocks'},
+                headers=self._nasdaq_headers(),
+                timeout=12)
+            if r.status_code != 200:
+                return None
+            sd = ((r.json() or {}).get('data') or {}).get('summaryData') or {}
+            for key in ('Industry', 'Sector'):
+                node = sd.get(key) or {}
+                if isinstance(node, dict):
+                    val = (node.get('value') or '').strip()
+                    if val:
+                        return val
+                elif isinstance(node, str) and node.strip():
+                    return node.strip()
+            return None
         except Exception:
             return None
 
@@ -1139,10 +1193,10 @@ class DataFetcher:
         获取公司主营业务简介（最简短描述）。多数据源兜底，任一成功即返回：
 
           A股  ：东方财富 F10(公司简介/经营范围) → Yahoo .SS/.SZ assetProfile(受冷却保护)
-          美股/ETF：Yahoo quoteSummary assetProfile → Nasdaq /info Description
+          美股/ETF：Nasdaq company-profile / summary → Yahoo assetProfile → 本地映射兜底
           指数  ：Yahoo quoteSummary（无则 None）
 
-        说明：东方财富/新浪为独立源，不受 Yahoo 限流冷却影响；只有真正请求 Yahoo 时才检查冷却。
+        说明：美股行业/简介以 Nasdaq 公开 JSON 为主（相对稳定）；Yahoo 作次选并受冷却保护。
         任何失败均返回 None（前端隐藏该区域）。
         """
         sym = symbol.strip()
@@ -1159,12 +1213,7 @@ class DataFetcher:
             _PROFILE_META_CACHE_TS[('biz', key)] = time.time()
             return val
 
-        # 优先使用自选股人工维护的简短简介（含指数，避免指数代码被当成个股走东财）
-        meta = STOCK_META.get(key) or STOCK_META.get(sym)
-        if meta and meta.get('desc'):
-            return _cache_biz(meta['desc'])
-
-        # —— A股：东方财富为主，Yahoo 兜底 ——
+        # —— A股：东方财富为主，Yahoo 兜底；本地映射仅作最后兜底 ——
         if self._is_cn_stock(sym):
             code = sym.lower()
             if code[:2] in ('sh', 'sz', 'bj'):
@@ -1178,18 +1227,24 @@ class DataFetcher:
                 s = self._fetch_yahoo_profile(y)
                 if s:
                     return _cache_biz(s)
+            meta = STOCK_META.get(key) or STOCK_META.get(sym)
+            if meta and meta.get('desc'):
+                return _cache_biz(meta['desc'])
             return _cache_biz(None)
 
-        # —— 美股/ETF/指数：Yahoo / Nasdaq 兜底（人工表已在上方命中）——
+        # —— 美股/ETF：Nasdaq 公司简介优先（稳定、不依赖 Yahoo 冷却）——
         ysym = sym if sym.startswith('^') else sym.replace('.', '-').upper()
-        if not _yahoo_in_cooldown():
-            s = self._fetch_yahoo_profile(ysym)
-            if s:
-                return _cache_biz(s)
         if not sym.startswith('^'):
             s = self._fetch_nasdaq_profile(ysym)
             if s:
                 return _cache_biz(s)
+        if not _yahoo_in_cooldown():
+            s = self._fetch_yahoo_profile(ysym)
+            if s:
+                return _cache_biz(s)
+        meta = STOCK_META.get(key) or STOCK_META.get(sym)
+        if meta and meta.get('desc'):
+            return _cache_biz(meta['desc'])
         return _cache_biz(None)
 
     # ================================================================
@@ -1739,11 +1794,10 @@ class DataFetcher:
         """
         获取行业分类（最简短标签）。多数据源兜底，任一成功即返回：
 
-          A股  ：东方财富 F10(INDUSTRYCSRC1) → 人工维护映射
-          美股/ETF/指数：人工维护映射（最可靠）→ Yahoo assetProfile(industry/sector)
+          A股  ：东方财富 F10 → Yahoo → 本地映射兜底
+          美股/ETF：Nasdaq quote/summary（Industry/Sector）→ Yahoo → 本地映射兜底
 
-        说明：人工维护映射对本仓持有标的在沙箱/本机均稳定可用；
-              临时搜索且不在表中的代码走动态源（沙箱下美股可能为空）。
+        说明：优先接口自动拉取，本地映射仅在外源失败时兜底。
         """
         sym = symbol.strip()
         key = sym.upper()
@@ -1754,12 +1808,8 @@ class DataFetcher:
             if now - ts < _PROFILE_META_TTL:
                 return hit
         out = None
-        # 1) 自选股人工维护映射（优先，最可靠）
-        meta = STOCK_META.get(key) or STOCK_META.get(sym)
-        if meta and meta.get('industry'):
-            out = meta['industry']
-        # 2) A股：东方财富行业
-        elif self._is_cn_stock(sym):
+        # 1) A股：东方财富 → Yahoo → 本地映射兜底
+        if self._is_cn_stock(sym):
             code = sym.lower()
             if code[:2] in ('sh', 'sz', 'bj'):
                 code = code[2:]
@@ -1769,9 +1819,17 @@ class DataFetcher:
                 ysym = f"{code}.SS" if code.startswith('6') else f"{code}.SZ"
                 out = self._fetch_yahoo_industry(ysym)
         else:
-            # 3) 美股/ETF/指数：Yahoo industry（本机可用）
+            # 2) 美股/ETF：Nasdaq summary（Industry/Sector）优先，再 Yahoo
             ysym = sym if sym.startswith('^') else sym.replace('.', '-').upper()
-            out = self._fetch_yahoo_industry(ysym)
+            if not sym.startswith('^'):
+                out = self._fetch_nasdaq_industry(ysym)
+            if not out and not _yahoo_in_cooldown():
+                out = self._fetch_yahoo_industry(ysym)
+        # 3) 本地映射仅兜底（新股/外源失败时）
+        if not out:
+            meta = STOCK_META.get(key) or STOCK_META.get(sym)
+            if meta and meta.get('industry'):
+                out = meta['industry']
         _PROFILE_META_CACHE[('ind', key)] = out
         _PROFILE_META_CACHE_TS[('ind', key)] = now
         return out
