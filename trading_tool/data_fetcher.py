@@ -943,6 +943,136 @@ class DataFetcher:
                     pass
         return df
 
+
+    def _search_yahoo_quotes(self, keyword: str, limit: int = 8) -> list:
+        """Yahoo finance search（美股代码/英文名较稳；中文常 400）。"""
+        kw = (keyword or "").strip()
+        if not kw or _yahoo_in_cooldown():
+            return []
+        try:
+            r = self.session.get(
+                "https://query1.finance.yahoo.com/v1/finance/search",
+                params={"q": kw, "quotesCount": limit, "newsCount": 0, "listsCount": 0},
+                timeout=8,
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            )
+            if r.status_code == 429:
+                _trigger_yahoo_cooldown()
+                return []
+            if r.status_code != 200:
+                return []
+            out = []
+            for q in (r.json() or {}).get("quotes") or []:
+                sym = (q.get("symbol") or "").strip()
+                if not sym:
+                    continue
+                # 过滤权证/场外杂项
+                qt = (q.get("quoteType") or "").upper()
+                if qt in ("OPTION", "CRYPTOCURRENCY", "CURRENCY"):
+                    continue
+                name = (q.get("shortname") or q.get("longname") or q.get("shortName") or sym).strip()
+                exch = (q.get("exchDisp") or q.get("exchange") or "").upper()
+                # 粗分市场
+                if sym.startswith("^") or qt == "INDEX":
+                    mkt = "美股"
+                elif any(x in exch for x in ("SHANGHAI", "SHENZHEN", "SSE", "SZSE")) or sym.endswith((".SS", ".SZ")):
+                    mkt = "A股"
+                    sym = sym.replace(".SS", "").replace(".SZ", "")
+                else:
+                    mkt = "美股"
+                if "." in sym and not sym.startswith("^"):
+                    continue
+                out.append({"code": sym, "name": name, "market": mkt})
+                if len(out) >= limit:
+                    break
+            return out
+        except Exception:
+            return []
+
+    def _search_eastmoney(self, keyword: str, limit: int = 10) -> list:
+        """东方财富码表搜索：中文名/A股代码/部分美股均可用。"""
+        kw = (keyword or "").strip()
+        if not kw:
+            return []
+        try:
+            r = self.session.get(
+                "https://search-codetable.eastmoney.com/codetable/search",
+                params={"keyword": kw, "pageSize": limit, "pageIndex": 1},
+                timeout=8,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json",
+                    "Referer": "https://www.eastmoney.com/",
+                },
+            )
+            if r.status_code != 200:
+                return []
+            rows = (r.json() or {}).get("result") or []
+            out = []
+            for it in rows:
+                code = str(it.get("code") or "").strip()
+                name = str(it.get("shortName") or it.get("name") or "").strip()
+                if not code:
+                    continue
+                market_id = it.get("market")
+                # market: 0深 1沪 2北；中文检索只要沪深京六位
+                is_cn_mkt = (isinstance(market_id, int) and market_id in (0, 1, 2)) or (
+                    code.isdigit() and len(code) == 6
+                )
+                if is_cn_mkt:
+                    if not (code.isdigit() and len(code) == 6):
+                        continue
+                    mkt = "A股"
+                else:
+                    if code.isdigit():
+                        continue
+                    mkt = "美股"
+                    code = code.upper()
+                out.append({"code": code, "name": name or code, "market": mkt})
+                if len(out) >= limit:
+                    break
+            return out
+        except Exception:
+            return []
+
+    def _search_sina_suggest(self, keyword: str, limit: int = 10) -> list:
+        """新浪联想：中文名 → A股代码（如 茅台、宁德时代）。"""
+        kw = (keyword or "").strip()
+        if not kw:
+            return []
+        try:
+            r = self.session.get(
+                "https://suggest3.sinajs.cn/suggest/type=11,12,13,14,15&key=" + kw,
+                timeout=6,
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"},
+            )
+            if r.status_code != 200 or "suggestvalue=" not in r.text:
+                return []
+            # var suggestvalue="贵州茅台,11,600519,sh600519,...;...";
+            body = r.text.split("suggestvalue=", 1)[-1].strip().strip(";").strip('"')
+            if not body:
+                return []
+            out = []
+            for part in body.split(";"):
+                cols = part.split(",")
+                if len(cols) < 4:
+                    continue
+                name = (cols[0] or "").strip()
+                code6 = (cols[2] or "").strip()
+                sina = (cols[3] or "").strip().lower()
+                if code6.isdigit() and len(code6) == 6:
+                    code = code6
+                elif sina[:2] in ("sh", "sz", "bj") and len(sina) >= 8:
+                    code = sina[2:]
+                else:
+                    continue
+                out.append({"code": code, "name": name or code, "market": "A股"})
+                if len(out) >= limit:
+                    break
+            return out
+        except Exception:
+            return []
+
     def search(self, keyword: str) -> list:
         """搜索股票代码，精确匹配优先"""
         raw_kw = (keyword or "").strip()
@@ -996,17 +1126,90 @@ class DataFetcher:
                 results.insert(0, {'code': kw_lower, 'name': cn_name, 'market': 'A股'})
 
         # 美股代码可能包含字母、横线或点号（如 BRK-B, BRK.B）
-        # 标准化：点号转为横线
         normalized = keyword.replace('.', '-')
-        has_existing = any(r['code'] == normalized for r in results)
-        if not has_existing:
-            # 只匹配纯ASCII字母+横线/点号（排除中文）
-            cleaned = keyword.replace('-', '').replace('.', '')
-            if cleaned.isascii() and cleaned.isalpha() and len(keyword) <= 8:
-                us_name = self.lookup_us_name(normalized) or '自定义美股'
-                results.insert(0, {'code': normalized, 'name': us_name, 'market': '美股'})
+        cleaned = keyword.replace('-', '').replace('.', '')
+        is_us_ticker = cleaned.isascii() and cleaned.isalpha() and 1 <= len(keyword) <= 8
 
-        return results[:20]  # 最多返回20条
+        # —— 在线联想补全（本地表覆盖不全时关键）——
+        # A股中文名：新浪 + 东财；美股代码/英文：Yahoo + 东财
+        remote = []
+        has_cjk = any('\u4e00' <= ch <= '\u9fff' for ch in name_kw)
+        try:
+            if has_cjk or (keyword.isdigit() and len(keyword) <= 6):
+                remote.extend(self._search_sina_suggest(name_kw, limit=10))
+                remote.extend(self._search_eastmoney(name_kw, limit=10))
+            if is_us_ticker or (name_kw.isascii() and len(name_kw) >= 2):
+                remote.extend(self._search_yahoo_quotes(name_kw if not is_us_ticker else normalized, limit=10))
+                remote.extend(self._search_eastmoney(normalized if is_us_ticker else name_kw, limit=8))
+            elif has_cjk:
+                # 中文偶发也查东财美股映射
+                remote.extend(self._search_eastmoney(name_kw, limit=8))
+        except Exception:
+            pass
+
+        seen = set()
+        for r in results:
+            seen.add(str(r.get('code') or '').upper())
+
+        def _push(item, front=False):
+            code = str(item.get('code') or '').strip()
+            if not code:
+                return
+            key = code.upper()
+            if key in seen:
+                # 若已有「自定义美股」占位，用更好名称替换
+                for i, old in enumerate(results):
+                    if str(old.get('code') or '').upper() == key:
+                        if (old.get('name') in (None, '', '自定义美股', '自定义A股')) and item.get('name'):
+                            results[i] = {'code': code, 'name': item['name'], 'market': item.get('market') or old.get('market') or '美股'}
+                        break
+                return
+            seen.add(key)
+            row = {'code': code, 'name': item.get('name') or code, 'market': item.get('market') or '美股'}
+            if front:
+                results.insert(0, row)
+            else:
+                results.append(row)
+
+        # 精确代码优先插到最前
+        for item in remote:
+            code_u = str(item.get('code') or '').upper()
+            if is_us_ticker and code_u == normalized:
+                _push(item, front=True)
+            elif keyword.isdigit() and code_u == keyword:
+                _push(item, front=True)
+            else:
+                _push(item, front=False)
+
+        # 仍无结果时的美股 ticker 兜底（尽量带真名）
+        has_existing = any(str(r.get('code') or '').upper() == normalized for r in results)
+        if not has_existing and is_us_ticker:
+            us_name = self.lookup_us_name(normalized) or '自定义美股'
+            results.insert(0, {'code': normalized, 'name': us_name, 'market': '美股'})
+
+        # 排序：精确代码 > 名称含关键词 > 其它
+        def _rank(r):
+            c = str(r.get('code') or '').upper()
+            n = str(r.get('name') or '')
+            m = str(r.get('market') or '')
+            if c == keyword or c == normalized:
+                return (0, 0, c)
+            if has_cjk and m == 'A股' and c.isdigit() and len(c) == 6 and name_kw in n:
+                return (0, 1, c)
+            if has_cjk and m == 'A股' and c.isdigit() and len(c) == 6:
+                return (1, 0, c)
+            if name_kw and name_kw in n:
+                return (2, 0, c)
+            if keyword and keyword in c:
+                return (3, 0, c)
+            return (4, 0, c)
+        results.sort(key=_rank)
+        if has_cjk:
+            cn_first = [r for r in results if r.get('market') == 'A股'
+                        and str(r.get('code', '')).isdigit() and len(str(r.get('code'))) == 6]
+            if cn_first:
+                results = cn_first + [r for r in results if r not in cn_first]
+        return results[:20]
 
     # ================================================================
     #  公司名称反查（搜索兜底：避免展示"自定义股票"）
@@ -1050,23 +1253,54 @@ class DataFetcher:
         return None
 
     def lookup_us_name(self, symbol: str) -> "str | None":
-        """通过 Yahoo v8 chart 的 meta 反查美股/ETF/指数代码对应的公司名（best-effort）。"""
-        if _yahoo_in_cooldown():
+        """美股/ETF 名称反查：Yahoo chart → Yahoo search → Nasdaq info。"""
+        ysym = symbol.replace('.', '-').upper().strip()
+        if not ysym:
             return None
-        ysym = symbol.replace('.', '-').upper()
+        # 1) Yahoo chart meta
+        if not _yahoo_in_cooldown():
+            try:
+                r = self.session.get(
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{ysym}",
+                    params={'interval': '1d', 'range': '1d'}, timeout=8)
+                if r.status_code == 429:
+                    _trigger_yahoo_cooldown()
+                elif r.status_code == 200:
+                    meta = (r.json().get('chart') or {}).get('result') or [{}]
+                    meta = (meta[0] or {}).get('meta') or {}
+                    nm = meta.get('shortName') or meta.get('longName')
+                    if nm:
+                        return str(nm).strip()
+            except Exception:
+                pass
+        # 2) Yahoo search 精确代码
+        try:
+            for hit in self._search_yahoo_quotes(ysym, limit=6):
+                if str(hit.get('code') or '').upper() == ysym and hit.get('name'):
+                    return hit['name']
+        except Exception:
+            pass
+        # 3) Nasdaq quote info
         try:
             r = self.session.get(
-                f"https://query1.finance.yahoo.com/v8/finance/chart/{ysym}",
-                params={'interval': '1d', 'range': '1d'}, timeout=10)
-            if r.status_code == 429:
-                _trigger_yahoo_cooldown()
-                return None
-            if r.status_code != 200:
-                return None
-            meta = r.json().get('chart', {}).get('result', [{}])[0].get('meta', {})
-            return meta.get('shortName') or meta.get('longName')
+                f"https://api.nasdaq.com/api/quote/{ysym}/info",
+                params={'assetclass': 'stocks'},
+                headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Accept': 'application/json',
+                    'Origin': 'https://www.nasdaq.com',
+                    'Referer': 'https://www.nasdaq.com/',
+                },
+                timeout=8,
+            )
+            if r.status_code == 200:
+                d = (r.json() or {}).get('data') or {}
+                nm = d.get('companyName') or d.get('companyname')
+                if nm:
+                    return str(nm).strip().replace(' Common Stock', '').strip()
         except Exception:
-            return None
+            pass
+        return None
 
     def lookup_name(self, symbol: str) -> "str | None":
         """统一名称反查：A股走东方财富/新浪，其余走 Yahoo。"""
