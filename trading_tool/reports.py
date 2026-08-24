@@ -59,15 +59,25 @@ def _report_period_label(period: str = "weekly") -> Tuple[str, str]:
 
 
 def get_target_symbols(uid: str) -> list:
+    """返回 [(symbol, name), ...]，保留自选里已存名称。"""
     items = []
     if uid:
         try:
             items = watchlist_store.get_all(uid)
         except Exception:
             items = []
+    out = []
     if items:
-        return [i["symbol"] for i in items][:MAX_SYMBOLS]
-    return list(watchlist.WATCHLIST.keys())[:MAX_SYMBOLS]
+        for i in items[:MAX_SYMBOLS]:
+            sym = (i.get("symbol") or i.get("code") or "").strip()
+            if not sym:
+                continue
+            nm = (i.get("name") or "").strip()
+            out.append((sym, nm))
+        return out
+    for sym, nm in list(watchlist.WATCHLIST.items())[:MAX_SYMBOLS]:
+        out.append((sym, nm or ""))
+    return out
 
 
 def _bucket(st: dict) -> str:
@@ -105,13 +115,52 @@ def _get_fetcher():
     return _fetcher
 
 
-def analyze_symbol(symbol: str) -> dict:
-    name = watchlist.WATCHLIST.get(symbol, symbol)
+def _resolve_display_name(symbol: str, name: str = "") -> str:
+    """周报展示用名称：自选名 → 本地表 → 行情反查；避免只剩代码。"""
+    sym = (symbol or "").strip()
+    nm = (name or "").strip()
+    if nm and nm.upper() != sym.upper() and nm != sym:
+        return nm
+    # 本地默认看板 / 美股中文表
+    try:
+        local = watchlist.WATCHLIST.get(sym) or watchlist.WATCHLIST.get(sym.upper())
+        if local and str(local).upper() != sym.upper():
+            return str(local)
+    except Exception:
+        pass
+    try:
+        f = _get_fetcher()
+        # A股基金/个股
+        if sym.isdigit() or (len(sym) >= 6 and sym[:2].lower() in ("sh", "sz", "bj")):
+            hit = f.CN_STOCKS.get(sym) or f.CN_STOCKS.get(sym.lstrip("shszbjSHSZBJ")[-6:] if len(sym) > 6 else sym)
+            if hit:
+                return hit
+            looked = f.lookup_cn_name(sym) or f.lookup_name(sym)
+            if looked:
+                return looked
+        else:
+            hit = f.US_STOCKS.get(sym.upper())
+            if hit:
+                return hit
+            looked = f.lookup_us_name(sym) or f.lookup_name(sym)
+            if looked:
+                return looked
+    except Exception:
+        pass
+    return nm or sym
+
+
+def analyze_symbol(symbol: str, name: str = "") -> dict:
+    name = _resolve_display_name(symbol, name)
     try:
         st = watchlist.get_stock_status(symbol, name)
         d = watchlist._status_to_dict(st)
+        # 状态里若仍是代码占位，再补一次展示名
+        if not d.get("name") or str(d.get("name")).upper() == str(symbol).upper():
+            d["name"] = name
         if d.get("error"):
-            return {"symbol": symbol, "name": name, "error": d["error"]}
+            return {"symbol": symbol, "code": symbol, "name": name, "error": d["error"]}
+        d["code"] = d.get("code") or symbol
         d["bucket"] = _bucket(d)
         try:
             f = _get_fetcher()
@@ -122,7 +171,7 @@ def analyze_symbol(symbol: str) -> dict:
             d["business_summary"] = ""
         return d
     except Exception as e:
-        return {"symbol": symbol, "name": name, "error": str(e)[:80]}
+        return {"symbol": symbol, "code": symbol, "name": name, "error": str(e)[:80]}
 
 
 def classify_analyses(analyses: List[dict]) -> Dict[str, Any]:
@@ -234,13 +283,20 @@ def _build_board_table(analyses: List[dict]) -> str:
     parts = []
 
     def _card(a: dict, side_label: str, side_color: str) -> str:
-        code = a.get("code") or ""
+        code = a.get("code") or a.get("symbol") or ""
         name = a.get("name") or ""
+        if not name or str(name).strip().upper() == str(code).strip().upper():
+            name = _resolve_display_name(str(code), str(name or ""))
         px = a.get("price") if a.get("price") is not None else "—"
         chg1, chg5 = a.get("change_1d"), a.get("change_5d")
         timing = a.get("timing") or "—"
         trend = a.get("trend_filter") or a.get("trend") or "—"
         action = a.get("action") or a.get("signal") or "—"
+        name_html = (
+            f"<span style='color:{C_TEXT};font-size:13px;margin-left:6px;'>{name}</span>"
+            if name and str(name).strip().upper() != str(code).strip().upper()
+            else ""
+        )
         return (
             f"<div style='border-left:4px solid {side_color};border:1px solid {C_BORDER};"
             f"border-left:4px solid {side_color};border-radius:8px;background:{C_CARD};"
@@ -249,7 +305,7 @@ def _build_board_table(analyses: List[dict]) -> str:
             f"<span style='background:{side_color};color:#0f1218;font-size:11px;font-weight:700;"
             f"padding:2px 8px;border-radius:4px;margin-right:8px;'>{side_label}</span>"
             f"<span style='color:{C_GOLD};font-weight:700;font-size:15px;'>{code}</span>"
-            f"<span style='color:{C_TEXT};font-size:13px;margin-left:6px;'>{name}</span>"
+            f"{name_html}"
             f"</div>"
             f"<div style='font-size:12px;line-height:1.65;color:{C_TEXT};'>"
             f"现价 <strong>{px}</strong>"
@@ -531,8 +587,14 @@ def build_report_html(uid: str, email: str, period: str = "weekly") -> "str | No
     if not symbols:
         return None
     analyses = []
-    for s in symbols:
-        a = analyze_symbol(s)
+    for item in symbols:
+        if isinstance(item, (list, tuple)):
+            s, nm = item[0], (item[1] if len(item) > 1 else "")
+        elif isinstance(item, dict):
+            s, nm = item.get("symbol") or item.get("code"), item.get("name") or ""
+        else:
+            s, nm = item, ""
+        a = analyze_symbol(str(s), str(nm or ""))
         if not a.get("error"):
             analyses.append(a)
     if not analyses:
