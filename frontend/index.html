@@ -4135,9 +4135,20 @@ function renderWatchlist(stocks) {
     if (/^[A-Z][A-Z0-9.\-]*$/.test(c)) return 0;
     return 3;
   }
+  // 市场内再按定位：压舱石 → 高赔率 → 周期弹性 → 卫星仓（波动由稳到高）
+  function _roleBucket(s) {
+    const r = String((s && s.role) || '').trim();
+    if (r === '压舱石') return 0;
+    if (r === '高赔率') return 1;
+    if (r === '周期弹性') return 2;
+    if (r === '卫星仓') return 3;
+    return 1; // 未知默认夹在压舱石与周期之间
+  }
   stocks = (stocks || []).slice().sort((a, b) => {
     const ba = _mktBucket(a), bb = _mktBucket(b);
     if (ba !== bb) return ba - bb;
+    const ra = _roleBucket(a), rb = _roleBucket(b);
+    if (ra !== rb) return ra - rb;
     return String(a.code || '').localeCompare(String(b.code || ''), undefined, { sensitivity: 'base', numeric: true });
   });
   const body = document.getElementById('watchlistBody');
