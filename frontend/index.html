@@ -2274,11 +2274,68 @@ async function removeWatch(sym) {
   try {
     await apiJSON('/api/watchlist/remove?symbol=' + encodeURIComponent(sym), { method: 'DELETE' });
     showToast('已删除 ' + sym, 'ok');
-    loadWatchlist(true);  // 强制刷新，支持删光后展示空状态
+    // 仅本地移除该行并重绘，不触发全表 force 刷新
+    const up = String(sym || '').toUpperCase();
+    const cur = Array.isArray(_lastWatchRows) ? _lastWatchRows.filter(function (s) {
+      return s && String(s.code || '').toUpperCase() !== up;
+    }) : [];
+    _lastWatchRows = cur;
+    _lastWatchSkeleton = cur.map(function (s) { return { code: s.code, name: s.name, market: s.market }; });
+    _lastWatchSig = _watchRowsSig(cur);
+    try {
+      if (typeof _bestWatchByCode !== 'undefined' && _bestWatchByCode) delete _bestWatchByCode[up];
+    } catch (e0) {}
+    try {
+      renderWatchlist(cur);
+      renderWatchlistSummary(buildWatchlistSummaryFromStocks(cur));
+      setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt });
+    } catch (e1) {}
   } catch (e) {
     const m = String(e.message || e);
     if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
     else showToast('删除失败: ' + m);
+  }
+}
+
+/** 只计算并合并一只自选到当前列表，避免全表重算 */
+async function refreshOneWatchRow(code, name) {
+  code = String(code || '').trim();
+  if (!code) return;
+  try {
+    const res = await api('/api/watchlist/status-one', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: code, name: name || '' }),
+    });
+    if (!res.ok) return;
+    const json = await res.json();
+    const row = json && json.stock;
+    if (!row || !row.code) return;
+    row.pending = false;
+    const up = String(row.code).toUpperCase();
+    let cur = Array.isArray(_lastWatchRows) ? _lastWatchRows.slice() : [];
+    let found = false;
+    cur = cur.map(function (s) {
+      if (s && String(s.code || '').toUpperCase() === up) {
+        found = true;
+        return Object.assign({}, s, row, { name: row.name || s.name || name || code });
+      }
+      return s;
+    });
+    if (!found) {
+      cur.push(Object.assign({}, row, { name: row.name || name || code }));
+    }
+    try { cur = mergeWatchRows(cur, _lastWatchRows); } catch (eM) {}
+    _lastWatchRows = cur;
+    _lastWatchSkeleton = cur.map(function (s) { return { code: s.code, name: s.name, market: s.market }; });
+    _lastWatchSig = _watchRowsSig(cur);
+    if (_mainTab === 'watchlist') {
+      renderWatchlist(cur);
+      try { renderWatchlistSummary(buildWatchlistSummaryFromStocks(cur)); } catch (eS) {}
+      setWatchUpdatedLabel({ computing: false, updated_at: new Date().toLocaleString('zh-CN') });
+    }
+  } catch (e) {
+    try { console.warn('[refreshOneWatchRow]', e); } catch (e2) {}
   }
 }
 
@@ -2927,11 +2984,8 @@ async function addWatch() {
     document.getElementById('watchSuggest').style.display = 'none';
     showToast('已添加 ' + resolved.code + (resolved.name ? ('（' + resolved.name + '）') : ''), 'ok');
     optimisticWatchInsert(resolved.code, resolved.name || '');
-    // 取消进行中的非 force 轮询，立刻 force 拉齐指标
-    clearTimeout(_wlPollTimer);
-    _wlPollCount = 0;
-    _wlPendingForce = true;
-    if (!_wlInflight) loadWatchlist(true);
+    // 仅计算新加这一只，不重刷整表
+    refreshOneWatchRow(resolved.code, resolved.name || '');
   } catch (e) {
     const m = String(e.message || e);
     if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');
@@ -2947,10 +3001,7 @@ async function addWatchResolved(code, name) {
     document.getElementById('watchSuggest').style.display = 'none';
     showToast('已添加 ' + code + (name ? ('（' + name + '）') : ''), 'ok');
     optimisticWatchInsert(code, name || '');
-    clearTimeout(_wlPollTimer);
-    _wlPollCount = 0;
-    _wlPendingForce = true;
-    if (!_wlInflight) loadWatchlist(true);
+    refreshOneWatchRow(code, name || '');
   } catch (e) {
     const m = String(e.message || e);
     if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录后再管理自选');

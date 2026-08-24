@@ -1480,6 +1480,40 @@ class WatchAddRequest(BaseModel):
     name: str = ""
 
 
+
+class WatchStatusOneRequest(BaseModel):
+    symbol: str
+    name: str = ""
+
+
+@app.post("/api/watchlist/status-one")
+async def watchlist_status_one(req: WatchStatusOneRequest, request: Request,
+                               user: dict = Depends(auth.get_current_user),
+                               authorization: Optional[str] = Header(None)):
+    """只计算一只自选的完整看板指标，供增删后局部刷新，避免全表重算。"""
+    _rate_check(authorization, request, "watchlist_status_one", 40, 60)
+    raw = (req.symbol or "").strip()
+    if not raw:
+        raise HTTPException(400, "代码不能为空")
+    name = (req.name or "").strip()
+    try:
+        norm = symbols.normalize_symbol(raw)
+        code = norm.get("symbol") or raw
+    except Exception:
+        code = raw
+    if not name:
+        try:
+            name = fetcher.lookup_name(code) or name
+        except Exception:
+            pass
+    from watchlist import _status_dict_cached
+    row = await asyncio.to_thread(_status_dict_cached, code, name or code, 200, True)
+    if not isinstance(row, dict):
+        row = {"code": code, "name": name or code, "error": "计算失败"}
+    return JSONResponse(content=_to_jsonable({"success": True, "stock": row}),
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/watchlist/add")
 async def watchlist_add(req: WatchAddRequest, request: Request,
                         user: dict = Depends(auth.get_current_user),
