@@ -2348,10 +2348,13 @@ function refreshAuthUI() {
     syncDigestToggleUI();
     if (adminTab && isAdmin) adminTab.style.display = '';
   } else {
-    a.classList.remove('hidden');
+    // 落地门禁已有登录/注册主按钮时，顶栏不再重复展示
+    const gated = (typeof isDataGated === 'function') ? isDataGated() : true;
+    if (gated) a.classList.add('hidden');
+    else a.classList.remove('hidden');
     u.classList.add('hidden');
     document.getElementById('addWatchRow').style.display = 'none';
-    const h = document.getElementById('watchLoginHint'); if (h) h.style.display = '';
+    const h = document.getElementById('watchLoginHint'); if (h) h.style.display = gated ? 'none' : '';
     const dw = document.getElementById('digestToggleWrap');
     if (dw) dw.style.display = 'none';
     if (adminTab) adminTab.style.display = 'none';
@@ -3826,6 +3829,14 @@ function updateLandingGate() {
     const fb = document.getElementById('freeBanner');
     if (fb && gated) fb.style.display = 'none';
   } catch (e0) {}
+  // 未登录 + 门禁：隐藏顶栏登录/注册，避免与卡片按钮重复
+  try {
+    const a = document.getElementById('authArea');
+    if (a && !currentUser) {
+      if (gated) a.classList.add('hidden');
+      else a.classList.remove('hidden');
+    }
+  } catch (eAuth) {}
   if (!gated) {
     try {
       if ((!Array.isArray(_lastWatchRows) || !_lastWatchRows.length) && !_wlInflight) {
