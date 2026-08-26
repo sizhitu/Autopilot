@@ -710,27 +710,33 @@ body.help-open { overflow: hidden; touch-action: none; }
 #landingGate {
   display: none;
   position: fixed;
-  inset: 0;
-  z-index: 9500;
-  background: radial-gradient(ellipse 120% 80% at 50% -10%, rgba(212,175,55,0.14), transparent 55%),
-              radial-gradient(ellipse 80% 50% at 100% 100%, rgba(91,159,212,0.08), transparent 50%),
-              rgba(10, 12, 18, 0.92);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  /* 低于顶栏 z-index:6000，退出后顶栏「登录」可点；登录弹窗另抬到 10060 */
+  left: 0; right: 0; bottom: 0;
+  top: calc(52px + env(safe-area-inset-top, 0px));
+  z-index: 5500;
+  background: rgba(10, 12, 18, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  padding: 12px 14px max(20px, env(safe-area-inset-bottom));
   box-sizing: border-box;
+  pointer-events: auto;
 }
-#landingGate.open { display: flex; align-items: flex-start; justify-content: center; }
+#landingGate.open { display: flex; align-items: center; justify-content: center; }
+#authModal.hidden { display: none !important; }
+#authModal:not(.hidden) { display: flex !important; z-index: 10060 !important; }
+
 #landingGate .lg-card {
-  width: min(440px, 100%);
-  margin: 8vh auto 24px;
+  width: min(360px, 94%);
+  max-height: min(78vh, 560px);
+  overflow-y: auto;
+  margin: 0 auto;
   background: linear-gradient(165deg, rgba(30,36,48,0.98), rgba(18,22,32,0.98));
   border: 1px solid rgba(212,175,55,0.28);
-  border-radius: 16px;
-  box-shadow: 0 24px 64px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.04);
-  padding: 28px 22px 22px;
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.04);
+  padding: 18px 16px 16px;
   color: var(--text);
 }
 #landingGate .lg-kicker {
@@ -738,17 +744,17 @@ body.help-open { overflow: hidden; touch-action: none; }
   text-align: center; margin-bottom: 6px;
 }
 #landingGate .lg-brand h2 {
-  margin: 0; font-size: 22px; font-weight: 700; color: #f5f6f8; text-align: center;
+  margin: 0; font-size: 18px; font-weight: 700; color: #f5f6f8; text-align: center;
 }
 #landingGate .lg-brand h2 span { color: var(--gold); font-weight: 600; font-size: 15px; }
 #landingGate .lg-sub {
   text-align: center; font-size: 13px; color: var(--text-dim); line-height: 1.55; margin: 10px 0 0;
 }
-#landingGate .lg-values { margin: 20px 0 18px; display: flex; flex-direction: column; gap: 10px; }
+#landingGate .lg-values { margin: 12px 0 12px; display: flex; flex-direction: column; gap: 8px; }
 #landingGate .lg-item {
-  display: flex; gap: 12px; align-items: flex-start;
-  padding: 12px; background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06); border-radius: 10px;
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 9px 10px; background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06); border-radius: 9px;
 }
 #landingGate .lg-ico {
   flex: 0 0 36px; height: 36px; border-radius: 9px;
@@ -770,8 +776,8 @@ body.help-open { overflow: hidden; touch-action: none; }
 }
 body.landing-locked #freeBanner { display: none !important; }
 @media (max-width: 480px) {
-  #landingGate .lg-card { margin-top: 4vh; padding: 22px 16px 18px; }
-  #landingGate .lg-brand h2 { font-size: 19px; }
+  #landingGate .lg-card { padding: 16px 14px 14px; width: min(340px, 94%); }
+  #landingGate .lg-brand h2 { font-size: 17px; }
 }
 
 </style>
@@ -910,7 +916,7 @@ body.landing-locked #freeBanner { display: none !important; }
       研究工具，不构成投资建议</div>
   </div>
 </div>
-<div id="authModal" class="hidden glass-overlay" style="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));box-sizing:border-box;">
+<div id="authModal" class="hidden glass-overlay" style="position:fixed;inset:0;z-index:10060;display:flex;align-items:center;justify-content:center;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));box-sizing:border-box;">
   <div class="glass-dark card" style="width:360px;max-width:92vw;background:var(--glass-bg-solid);">
     <div class="card-title" id="authTitle">登录</div>
     <div id="authMsg" style="font-size:11px;margin-bottom:8px;min-height:14px;color:var(--orange);"></div>
@@ -1658,10 +1664,19 @@ function showAuth() {
   if (isPwd) btn.textContent = isReg ? '注册' : '登录';
   else btn.textContent = authSent ? '验证并登录' : '发送验证码';
   document.getElementById('authSwitchAction').textContent = isReg ? '登录' : '注册';
-  document.getElementById('authModal').classList.remove('hidden');
+  const am = document.getElementById('authModal');
+  if (am) {
+    am.classList.remove('hidden');
+    am.style.display = 'flex';
+    am.style.zIndex = '10060';
+  }
 }
 function closeAuth() {
-  document.getElementById('authModal').classList.add('hidden');
+  const am = document.getElementById('authModal');
+  if (am) {
+    am.classList.add('hidden');
+    am.style.display = 'none';
+  }
   const btn = document.getElementById('authSubmitBtn');
   if (btn) { btn.disabled = false; }
 }
@@ -2247,6 +2262,7 @@ function doLogout(opts) {
   localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user');
   clearSessionMeta();
   refreshAuthUI();
+  try { if (typeof updateLandingGate === 'function') updateLandingGate(); } catch (eLG) {}
   if (!opts.silent) showToast(opts.message || '已退出');
   else if (opts.message) showToast(opts.message, 'info');
   try { loadWatchlist(); } catch (e) {}
