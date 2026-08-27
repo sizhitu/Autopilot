@@ -726,6 +726,45 @@ body.help-open { overflow: hidden; touch-action: none; }
 }
 
 
+
+/* 切换标的时保留旧 K 线，半透明毛玻璃等待新数据 */
+#analysisCanvas { position: relative; }
+#analysisCanvas.chart-stale canvas {
+  filter: blur(2.5px) saturate(0.8);
+  opacity: 0.65;
+  transition: filter 0.2s ease, opacity 0.2s ease;
+  pointer-events: none;
+}
+#analysisCanvas:not(.chart-stale) canvas {
+  filter: none;
+  opacity: 1;
+  transition: filter 0.2s ease, opacity 0.2s ease;
+}
+#chartStaleMask {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 17, 23, 0.28);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  pointer-events: none;
+}
+#analysisCanvas.chart-stale #chartStaleMask {
+  display: flex;
+}
+#chartStaleMask span {
+  font-size: 12px;
+  color: rgba(232,234,237,0.92);
+  background: rgba(18,22,32,0.72);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 6px 12px;
+  letter-spacing: 0.02em;
+}
+
 /* 落地页门禁：未登录 / 免费用户 */
 #landingGate {
   display: none;
@@ -1152,6 +1191,7 @@ body.landing-locked #freeBanner { display: none !important; }
 
       <!-- 分析视图 -->
       <div id="analysisCanvas">
+        <div id="chartStaleMask" aria-hidden="true"><span>K线更新中…</span></div>
         <canvas id="chartCanvas" height="280"></canvas>
         <canvas id="volCanvas" height="70"></canvas>
         <canvas id="rsiCanvas" height="85"></canvas>
@@ -3205,6 +3245,24 @@ document.getElementById('watchInput').addEventListener('input', () => {
 });
 
 // === 获取行情 ===
+
+function setChartStale(on, label) {
+  const wrap = document.getElementById('analysisCanvas');
+  const mask = document.getElementById('chartStaleMask');
+  if (!wrap) return;
+  if (on) {
+    wrap.classList.add('chart-stale');
+    if (mask) {
+      const sp = mask.querySelector('span');
+      if (sp) sp.textContent = label || 'K线更新中…';
+      mask.setAttribute('aria-hidden', 'false');
+    }
+  } else {
+    wrap.classList.remove('chart-stale');
+    if (mask) mask.setAttribute('aria-hidden', 'true');
+  }
+}
+
 async function fetchQuote(symbol, name, market) {
   if (typeof isDataGated === "function" && isDataGated()) {
     try { updateLandingGate(); } catch (e) {}
@@ -3224,19 +3282,34 @@ async function fetchQuote(symbol, name, market) {
   symbol = String(symbol || '').trim().toUpperCase();
   const reqId = ++_quoteReqSeq;
   document.getElementById('searchResults').style.display = 'none';
-  document.getElementById('chartMeta').textContent = '获取数据中...';
   currentSymbol = symbol;
   currentName = name || '';
   currentMarket = market || '';
 
-  // 立即显示股票头部（代码+名称），避免任何下游异常导致不展示
+  // 头部：只提示行情价位状态；行业/简介走独立 /api/profile，不与 K 线共用文案
   const info = document.getElementById('stockInfo');
   document.getElementById('businessSummary').style.display = 'none';
   document.getElementById('industryTag').style.display = 'none';
   info.style.display = 'flex';
   const _qEta = _formatEtaSeconds(_quoteEtaSec());
-  info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">获取中… ${_qEta}</span>`;
-  try { document.getElementById('chartMeta').textContent = '获取数据中… ' + _qEta; } catch (eM) {}
+  info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price" style="color:var(--text-dim);">现价更新中…</span>`;
+  // K 线区单独状态：有旧图则毛玻璃保留，无旧图才写「获取中」
+  const _hasPrevChart = !!(lastChartData && lastChartData.candles && lastChartData.candles.length);
+  try {
+    const cm = document.getElementById('chartMeta');
+    if (cm) cm.textContent = (_hasPrevChart ? 'K线更新中… ' : 'K线获取中… ') + _qEta;
+  } catch (eM) {}
+  try {
+    if (_hasPrevChart) {
+      setChartStale(true, 'K线更新中… ' + _qEta);
+      try { drawChart(lastChartData); } catch (eD) {}
+    } else {
+      setChartStale(false);
+    }
+  } catch (eSt) {}
+
+  // 行业/简介并行请求，与 quote 互不阻塞
+  try { fetchProfile(symbol); } catch (ePf) {}
 
   // 先切到分析页再拉行情，避免看板空等 3–5 秒像卡死
   try {
@@ -3296,6 +3369,7 @@ async function fetchQuote(symbol, name, market) {
       }
       lastChartData = json.chart;
       lastChartSymbol = symbol;
+      setChartStale(false);
       drawChart(json.chart);
       const nBar = json.chart.candles.length;
       const cm = document.getElementById('chartMeta');
@@ -3304,9 +3378,11 @@ async function fetchQuote(symbol, name, market) {
         cm.textContent = (base && base.indexOf('错误') < 0 ? base + ' · ' : '') + 'K线 ' + nBar + ' 根';
       }
     } else {
+      try { setChartStale(false); } catch (eS2) {}
       document.getElementById('chartMeta').textContent = '行情已返回但缺少K线，请点刷新或重新搜索';
     }
   } catch(e) {
+    try { setChartStale(false); } catch (eS) {}
     document.getElementById('chartMeta').textContent = '错误: ' + e.message;
   }
 }
@@ -3332,12 +3408,24 @@ function applyProfileBits(industry, businessSummary) {
 async function fetchProfile(symbol) {
   const el = document.getElementById('businessSummary');
   const tagEl = document.getElementById('industryTag');
+  const want = String(symbol || '').trim().toUpperCase();
+  // 仅在尚无行业文案时给轻提示，不占用「获取中预计1分钟」主文案
+  try {
+    if (tagEl && tagEl.style.display === 'none') {
+      tagEl.textContent = '行业加载中…';
+      tagEl.style.display = 'inline-block';
+      tagEl.style.opacity = '0.65';
+    }
+  } catch (e0) {}
   try {
     const res = await api(`/api/profile?symbol=${encodeURIComponent(symbol)}`);
     const json = await res.json();
+    // 已切换代码则丢弃
+    if (String(currentSymbol || '').toUpperCase() !== want) return;
 
     // 行业分类小标签（代码/名称下方）
     const ind = (json.industry || '').trim();
+    if (tagEl) tagEl.style.opacity = '';
     if (ind) {
       tagEl.textContent = '行业：' + ind;
       tagEl.style.display = 'inline-block';
