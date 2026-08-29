@@ -1425,15 +1425,20 @@ function getBackend() {
 }
 const BACKEND = getBackend();
 
-/** 探测 Render 后端是否可用（短超时；结果缓存约 45 秒） */
+/** 探测 Render 后端是否可用（短超时；结果短缓存） */
 let _backendAliveCache = { ts: 0, ok: null };
+let _wlLoadStartedAt = 0;
+let _wlLastProgressKey = '';
+let _wlStalledPolls = 0;
+const _WL_HARD_MS = 55000; // 整次加载墙钟上限，超时则快照/停转圈
+
 async function probeBackendAlive(force) {
   const now = Date.now();
-  if (!force && _backendAliveCache.ok !== null && (now - _backendAliveCache.ts) < 45000) {
+  if (!force && _backendAliveCache.ok !== null && (now - _backendAliveCache.ts) < 20000) {
     return _backendAliveCache.ok;
   }
   const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-  const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 3500) : null;
+  const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 5000) : null;
   try {
     const res = await fetch(BACKEND + '/api/health', {
       method: 'GET',
@@ -1441,7 +1446,6 @@ async function probeBackendAlive(force) {
       signal: ctrl ? ctrl.signal : undefined,
     });
     if (timer) clearTimeout(timer);
-    // 2xx 视为可用；5xx/挂起/超时视为不可用
     const ok = !!(res && res.ok);
     _backendAliveCache = { ts: Date.now(), ok: ok };
     return ok;
@@ -1453,6 +1457,22 @@ async function probeBackendAlive(force) {
 }
 function markBackendDown() {
   _backendAliveCache = { ts: Date.now(), ok: false };
+}
+
+/** 带超时的 API，避免永久 pending 导致「首次加载中」卡死 */
+async function apiWithTimeout(path, opts, ms) {
+  ms = ms || 18000;
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, ms) : null;
+  try {
+    const res = await api(path, Object.assign({}, opts || {}, ctrl ? { signal: ctrl.signal } : {}));
+    if (timer) clearTimeout(timer);
+    return res;
+  } catch (e) {
+    if (timer) clearTimeout(timer);
+    try { markBackendDown(); } catch (e2) {}
+    throw e;
+  }
 }
 
 // 登录态
@@ -4198,6 +4218,11 @@ async function loadWatchlist(forceRefresh = false) {
     if (forceRefresh) _wlPendingForce = true;
     return _wlInflight;
   }
+  if (forceRefresh || !_wlLoadStartedAt) {
+    _wlLoadStartedAt = Date.now();
+    _wlStalledPolls = 0;
+    _wlLastProgressKey = '';
+  }
   _wlInflight = _loadWatchlistBody(forceRefresh).finally(function () {
     _wlInflight = null;
     // 未登录不连打第二次 force，避免刷新队列占住体验
@@ -4242,7 +4267,26 @@ async function _loadWatchlistBody(forceRefresh) {
   } else {
     loading.classList.remove('hidden');
   }
+  if (!_wlLoadStartedAt) _wlLoadStartedAt = Date.now();
   try {
+    // 墙钟超时：结束「首次加载中…预计x分钟」死等
+    if ((Date.now() - _wlLoadStartedAt) > _WL_HARD_MS) {
+      try {
+        const snap = await fetchWatchlistSnapshot();
+        applyWatchlistSnapshot(snap);
+        try { showToast('加载超时，已切换收盘快照', 'info'); } catch (eT0) {}
+      } catch (eH) {
+        setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt || '' });
+        if (!(_lastWatchRows && _lastWatchRows.length)) {
+          body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:24px;line-height:1.7;">加载超时<br><span style="font-size:12px;">后端较慢或异常，请稍后重试。</span></td></tr>';
+        }
+        try { showToast('看板加载超时，请稍后重试', 'info'); } catch (eT1) {}
+      }
+      _wlLoadStartedAt = 0;
+      _wlStalledPolls = 0;
+      return;
+    }
+
     // Cloudflare 静态前端可先探测 Render：不可用则直接走日更快照，不空等 API
     try {
       const alive = await probeBackendAlive(!!forceRefresh);
@@ -4282,7 +4326,7 @@ async function _loadWatchlistBody(forceRefresh) {
             showToast(hardQ ? '二次刷新：强制清除非最新代码缓存…' : '正在拉取最新收盘价…', 'ok');
           } catch (e) {}
         }
-        const res = await api('/api/watchlist/free-preview' + (forceRefresh ? ('?refresh=1' + hardQ) : ''));
+        const res = await apiWithTimeout('/api/watchlist/free-preview' + (forceRefresh ? ('?refresh=1' + hardQ) : ''), {}, 20000);
         if (res.status === 429) {
           const j = await res.json().catch(function () { return {}; });
           throw new Error((j && j.detail) || '请求过于频繁，请稍后再试');
@@ -4372,7 +4416,7 @@ async function _loadWatchlistBody(forceRefresh) {
         showToast(hardQ2 ? '二次刷新：强制清除非最新代码缓存并重拉…' : '正在更新自选行情…', 'ok');
       } catch (e) {}
     }
-    const res = await api('/api/watchlist' + (forceRefresh ? ('?refresh=1' + hardQ2) : ''));
+    const res = await apiWithTimeout('/api/watchlist' + (forceRefresh ? ('?refresh=1' + hardQ2) : ''), {}, 22000);
     if (res.status === 429) {
       const j = await res.json().catch(function () { return {}; });
       throw new Error((j && j.detail) || '请求过于频繁，请稍后再试');
@@ -4433,14 +4477,32 @@ async function _loadWatchlistBody(forceRefresh) {
         (!json.computing && total > 0 && usable.length >= total) ||
         (progDone && usable.length >= total);
       if (stillComputing || (!allReady && json.computing)) {
-        if (_wlPollCount < _WL_MAX_POLL) {
+        const pk = String(pr.done || 0) + '/' + String(pr.total || 0) + ':' + String(usable.length);
+        if (pk === _wlLastProgressKey) _wlStalledPolls += 1;
+        else { _wlLastProgressKey = pk; _wlStalledPolls = 0; }
+        const hardTimeout = _wlLoadStartedAt && ((Date.now() - _wlLoadStartedAt) > _WL_HARD_MS);
+        const stalled = _wlStalledPolls >= 5;
+        if (hardTimeout || stalled) {
+          _wlPollCount = 0;
+          _watchWasComputing = false;
+          _wlLoadStartedAt = 0;
+          _wlStalledPolls = 0;
+          try {
+            const snap = await fetchWatchlistSnapshot();
+            applyWatchlistSnapshot(snap);
+            try { showToast(stalled ? '计算停滞，已切换收盘快照' : '加载超时，已切换收盘快照', 'info'); } catch (eS) {}
+          } catch (eSnap) {
+            setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt || '' });
+            try { showToast('部分行情仍在计算，可稍后再点刷新', 'info'); } catch (e) {}
+          }
+        } else if (_wlPollCount < _WL_MAX_POLL) {
           _wlPollCount += 1;
-          // 数量大时间隔略加长，减轻压力
           const gap = total > 15 ? 2800 : 2200;
           _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, gap);
         } else {
           _wlPollCount = 0;
           _watchWasComputing = false;
+          _wlLoadStartedAt = 0;
           setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt || '' });
           try { showToast('部分行情仍在计算，可稍后再点刷新', 'info'); } catch (e) {}
         }
@@ -4457,6 +4519,8 @@ async function _loadWatchlistBody(forceRefresh) {
     }
     _wlPollCount = 0;
     clearTimeout(_wlPollTimer);
+    _wlLoadStartedAt = 0;
+    _wlStalledPolls = 0;
     _lastWatchSig = '';
 
     watchNotes = json.notes || {};
