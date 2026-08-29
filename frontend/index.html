@@ -4326,12 +4326,21 @@ function setSnapshotBanner(show, asOf) {
 }
 
 async function fetchUserWatchlistSymbolsFromSb() {
-  if (!sb || !currentUser) return null;
+  if (!sb) return null;
   try {
-    const uid = currentUser.id;
-    let q = sb.from('watchlists').select('symbol,name,market,note,sort_order');
-    if (uid) q = q.eq('user_id', uid);
-    const { data, error } = await q.order('sort_order', { ascending: true });
+    // 确保用当前会话身份做 RLS，避免 currentUser 与 JWT 不一致
+    let uid = currentUser && currentUser.id;
+    try {
+      const sess = await sb.auth.getSession();
+      const u = sess && sess.data && sess.data.session && sess.data.session.user;
+      if (u && u.id) uid = u.id;
+    } catch (eS) {}
+    if (!uid) return null;
+    const { data, error } = await sb
+      .from('watchlists')
+      .select('symbol,name,market,note,sort_order')
+      .eq('user_id', uid)
+      .order('sort_order', { ascending: true });
     if (error) {
       console.warn('Supabase 直读自选失败', error);
       return null;
@@ -4359,22 +4368,97 @@ function _lookupByCode(byCode, code) {
   return byCode[c] || byCode[c.toUpperCase()] || byCode[c.toLowerCase()] || null;
 }
 
-/** 自选代码 × 快照 by_code → 完整行；缺指标的代码仍占位展示 */
-function joinWatchlistWithSnapshot(items, publicSnap) {
-  const byCode = (publicSnap && publicSnap.by_code) || {};
-  // 无 by_code 时用 stocks 数组建索引
-  if (publicSnap && publicSnap.stocks && (!byCode || !Object.keys(byCode).length)) {
-    (publicSnap.stocks || []).forEach(function (s) {
-      if (s && s.code) {
-        byCode[s.code] = s;
-        byCode[String(s.code).toUpperCase()] = s;
-      }
+function _indexStocksIntoByCode(byCode, stocks) {
+  (stocks || []).forEach(function (s) {
+    if (!s || !s.code) return;
+    const c = String(s.code).trim();
+    // 本地/旧缓存可能更新；不覆盖已有「非 miss」优质行时仍允许用较新的覆盖
+    byCode[c] = s;
+    byCode[c.toUpperCase()] = s;
+  });
+  return byCode;
+}
+
+/** 合并公共快照 + 本机缓存指标，提高 join 命中率 */
+function buildMergedByCodeSnap(publicSnap, localSnap) {
+  const byCode = {};
+  if (publicSnap && publicSnap.by_code) {
+    Object.keys(publicSnap.by_code).forEach(function (k) {
+      byCode[k] = publicSnap.by_code[k];
     });
+  }
+  if (publicSnap && publicSnap.stocks) _indexStocksIntoByCode(byCode, publicSnap.stocks);
+  if (localSnap && localSnap.stocks) _indexStocksIntoByCode(byCode, localSnap.stocks);
+  if (localSnap && localSnap.by_code) {
+    Object.keys(localSnap.by_code).forEach(function (k) {
+      byCode[k] = localSnap.by_code[k];
+    });
+  }
+  // 内存中上次完整行
+  try {
+    if (_lastWatchRows && _lastWatchRows.length) _indexStocksIntoByCode(byCode, _lastWatchRows);
+  } catch (e0) {}
+  return {
+    by_code: byCode,
+    as_of: (publicSnap && publicSnap.as_of) || (localSnap && localSnap.as_of) || (localSnap && localSnap.saved_at) || '',
+    stocks: publicSnap && publicSnap.stocks,
+    _snapshotUrl: (publicSnap && publicSnap._snapshotUrl) || (localSnap && localSnap._snapshotUrl) || '',
+  };
+}
+
+/** 自选代码列表来源：SB > 本地缓存 > 内存骨架（绝不回落成公共 2 只） */
+function collectDegradedSymbolItems(sbItems, localSnap) {
+  if (sbItems && sbItems.length) return { items: sbItems, source: 'supabase' };
+  if (localSnap && localSnap.stocks && localSnap.stocks.length) {
+    return {
+      items: localSnap.stocks.map(function (s) {
+        return { code: s.code, symbol: s.code, name: s.name || s.code, market: s.market || '', note: s.note || '' };
+      }),
+      source: 'local',
+    };
+  }
+  try {
+    if (_lastWatchSkeleton && _lastWatchSkeleton.length) {
+      return {
+        items: _lastWatchSkeleton.map(function (s) {
+          return { code: s.code, symbol: s.code, name: s.name || s.code, market: s.market || '' };
+        }),
+        source: 'memory',
+      };
+    }
+    if (_lastWatchRows && _lastWatchRows.length) {
+      return {
+        items: _lastWatchRows.map(function (s) {
+          return { code: s.code, symbol: s.code, name: s.name || s.code, market: s.market || '' };
+        }),
+        source: 'memory',
+      };
+    }
+  } catch (e) {}
+  return { items: [], source: '' };
+}
+
+/** 自选代码 × 快照 by_code → 完整行；缺指标的代码仍占位展示 */
+function joinWatchlistWithSnapshot(items, metricSnap, meta) {
+  meta = meta || {};
+  const byCode = (metricSnap && metricSnap.by_code) || {};
+  if (metricSnap && metricSnap.stocks && (!byCode || !Object.keys(byCode).length)) {
+    _indexStocksIntoByCode(byCode, metricSnap.stocks);
   }
   const stocks = (items || []).map(function (it) {
     const code = it.code || it.symbol;
     const hit = _lookupByCode(byCode, code);
-    if (hit) {
+    if (hit && hit.data_source !== 'snapshot_miss' && hit.price !== '-' && hit.price != null && hit.price !== '') {
+      return Object.assign({}, hit, {
+        code: code,
+        name: hit.name || it.name || code,
+        market: hit.market || it.market || '',
+        pending: false,
+        data_source: hit.data_source || 'daily_snapshot',
+        note: it.note || hit.note || '',
+      });
+    }
+    if (hit && (hit.action || hit.timing || hit.price)) {
       return Object.assign({}, hit, {
         code: code,
         name: hit.name || it.name || code,
@@ -4410,14 +4494,14 @@ function joinWatchlistWithSnapshot(items, publicSnap) {
   return {
     success: true,
     snapshot: true,
-    from_local: false,
-    from_sb_join: true,
-    as_of: (publicSnap && publicSnap.as_of) || '',
-    bar_hint: 'Supabase 自选 × 冷备 by_code',
+    from_local: meta.from_local || false,
+    from_sb_join: !!meta.from_sb_join,
+    as_of: (metricSnap && metricSnap.as_of) || meta.as_of || '',
+    bar_hint: meta.bar_hint || '自选列表 × 指标快照',
     count: stocks.length,
     hit_count: hitN,
     stocks: stocks,
-    _snapshotUrl: (publicSnap && publicSnap._snapshotUrl) || '',
+    _snapshotUrl: (metricSnap && metricSnap._snapshotUrl) || '',
   };
 }
 
@@ -4447,44 +4531,46 @@ async function loadPublicSnapshotJson() {
 }
 
 async function fetchWatchlistSnapshot() {
-  // 1) 登录用户：Supabase 直读自选代码 + 公共 by_code join（完整只数）
   let publicSnap = null;
   try { publicSnap = await loadPublicSnapshotJson(); } catch (eP) { publicSnap = null; }
 
-  if (currentUser && sb) {
-    try {
-      const items = await fetchUserWatchlistSymbolsFromSb();
-      if (items && items.length && publicSnap) {
-        const joined = joinWatchlistWithSnapshot(items, publicSnap);
-        // 有命中或至少列出全部代码
-        if (joined.stocks.length) return joined;
-      }
-      // 有自选但无公共快照：仍列出代码占位
-      if (items && items.length && !publicSnap) {
-        return joinWatchlistWithSnapshot(items, { by_code: {}, as_of: '', stocks: [] });
-      }
-    } catch (eSb) {
-      console.warn('自选 join 快照失败', eSb);
-    }
+  let localSnap = null;
+  try { localSnap = loadWatchlistLocalCache(); } catch (eL) { localSnap = null; }
+
+  // 指标池：公共 by_code + 本机缓存行（用户曾成功加载的 20～30 只指标）
+  const metricSnap = buildMergedByCodeSnap(publicSnap, localSnap);
+
+  // 代码列表：登录优先 Supabase；失败则用本地/内存完整列表 —— 禁止用公共 2 只顶替
+  let sbItems = null;
+  if (sb && (currentUser || true)) {
+    try { sbItems = await fetchUserWatchlistSymbolsFromSb(); } catch (e) { sbItems = null; }
+  }
+  const collected = collectDegradedSymbolItems(sbItems, localSnap);
+
+  if (collected.items && collected.items.length) {
+    const joined = joinWatchlistWithSnapshot(collected.items, metricSnap, {
+      from_sb_join: collected.source === 'supabase',
+      from_local: collected.source === 'local' || collected.source === 'memory',
+      bar_hint: collected.source === 'supabase'
+        ? 'Supabase 自选 × 冷备/本地指标'
+        : '本地自选列表 × 冷备/缓存指标',
+      as_of: metricSnap.as_of,
+    });
+    if (joined.stocks.length) return joined;
   }
 
-  // 2) 本机上次成功加载的完整自选
-  try {
-    const local = loadWatchlistLocalCache();
-    if (local && local.stocks && local.stocks.length) {
-      local._snapshotUrl = 'localStorage';
-      return local;
-    }
-  } catch (eL) {}
-
-  // 3) 纯公共快照列表
+  // 仅当完全没有任何个人列表时，才展示公共池（可能只有 2 只）
   if (publicSnap) {
     if (!publicSnap.stocks || !publicSnap.stocks.length) {
-      // 仅有 by_code
-      const codes = Object.keys(publicSnap.by_code || {}).filter(function (k) {
-        return k === (publicSnap.by_code[k] && publicSnap.by_code[k].code);
+      const seen = {};
+      const arr = [];
+      Object.keys(publicSnap.by_code || {}).forEach(function (k) {
+        const row = publicSnap.by_code[k];
+        if (!row || !row.code || seen[row.code]) return;
+        seen[row.code] = true;
+        arr.push(row);
       });
-      publicSnap.stocks = codes.map(function (k) { return publicSnap.by_code[k]; });
+      publicSnap.stocks = arr;
     }
     publicSnap.from_local = false;
     publicSnap.from_sb_join = false;
