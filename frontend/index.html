@@ -4214,6 +4214,86 @@ function manualWatchlistRefresh() {
 }
 
 
+/** 用户上次成功加载的完整自选（localStorage，降级时优先于公共 2 只种子） */
+const WL_LOCAL_CACHE_KEY = 'autopilot_wl_cache_v1';
+
+function _wlCacheUserKey() {
+  try {
+    if (currentUser && (currentUser.id || currentUser.email)) {
+      return String(currentUser.id || currentUser.email);
+    }
+  } catch (e) {}
+  return 'anon';
+}
+
+function persistWatchlistCache(stocks, meta) {
+  try {
+    if (!Array.isArray(stocks) || !stocks.length) return;
+    // 只存可展示字段，控制体积
+    const slim = stocks.map(function (s) {
+      if (!s || !s.code) return null;
+      return {
+        code: s.code,
+        name: s.name || '',
+        market: s.market || '',
+        price: s.price,
+        bar_date: s.bar_date,
+        change_1d: s.change_1d,
+        change_5d: s.change_5d,
+        signal: s.signal,
+        signal_color: s.signal_color,
+        trend: s.trend,
+        timing: s.timing,
+        timing_color: s.timing_color,
+        trend_filter: s.trend_filter,
+        trend_filter_color: s.trend_filter_color,
+        action: s.action,
+        action_color: s.action_color,
+        action_strength: s.action_strength,
+        action_side: s.action_side,
+        action_reason: s.action_reason,
+        nine_turn: s.nine_turn,
+        pending: false,
+        data_source: 'local_cache',
+      };
+    }).filter(Boolean);
+    if (!slim.length) return;
+    const payload = {
+      user: _wlCacheUserKey(),
+      saved_at: (meta && meta.updated_at) || new Date().toISOString(),
+      count: slim.length,
+      stocks: slim,
+    };
+    localStorage.setItem(WL_LOCAL_CACHE_KEY + ':' + payload.user, JSON.stringify(payload));
+    // 兼容旧键
+    localStorage.setItem(WL_LOCAL_CACHE_KEY, JSON.stringify(payload));
+  } catch (e) { /* quota / private mode */ }
+}
+
+function loadWatchlistLocalCache() {
+  try {
+    const uk = _wlCacheUserKey();
+    let raw = localStorage.getItem(WL_LOCAL_CACHE_KEY + ':' + uk);
+    if (!raw) raw = localStorage.getItem(WL_LOCAL_CACHE_KEY);
+    if (!raw) return null;
+    const json = JSON.parse(raw);
+    if (!json || !Array.isArray(json.stocks) || !json.stocks.length) return null;
+    // 换账号时不要串数据
+    if (json.user && json.user !== 'anon' && uk !== 'anon' && json.user !== uk) return null;
+    return {
+      success: true,
+      snapshot: true,
+      from_local: true,
+      as_of: json.saved_at || '',
+      bar_hint: '本地缓存的自选（上次成功加载）',
+      count: json.stocks.length,
+      stocks: json.stocks,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 /** 静态日更快照 URL（Render 挂掉时仍可从同源或 GitHub/CDN 读） */
 const WATCHLIST_SNAPSHOT_URLS = [
   '/snapshots/watchlist_latest.json',
@@ -4246,7 +4326,18 @@ function setSnapshotBanner(show, asOf) {
 }
 
 async function fetchWatchlistSnapshot() {
+  // 1) 优先用户本地完整自选（二三十只也能在降级时展示）
+  try {
+    const local = loadWatchlistLocalCache();
+    if (local && local.stocks && local.stocks.length) {
+      local._snapshotUrl = 'localStorage';
+      return local;
+    }
+  } catch (eL) {}
+
+  // 2) 公共日更快照（符号表批算，非个人自选）
   let lastErr = null;
+  let publicSnap = null;
   for (const url of WATCHLIST_SNAPSHOT_URLS) {
     try {
       const res = await fetch(url, { cache: 'no-store' });
@@ -4260,11 +4351,14 @@ async function fetchWatchlistSnapshot() {
         continue;
       }
       json._snapshotUrl = url;
-      return json;
+      json.from_local = false;
+      publicSnap = json;
+      break;
     } catch (e) {
       lastErr = e;
     }
   }
+  if (publicSnap) return publicSnap;
   throw lastErr || new Error('无可用快照');
 }
 
@@ -4272,8 +4366,12 @@ function applyWatchlistSnapshot(json) {
   if (!json || !Array.isArray(json.stocks) || !json.stocks.length) {
     throw new Error('snapshot empty');
   }
+  const fromLocal = !!json.from_local;
   const stocks = (json.stocks || []).map(function (s) {
-    return Object.assign({}, s, { pending: false, data_source: s.data_source || 'daily_snapshot' });
+    return Object.assign({}, s, {
+      pending: false,
+      data_source: s.data_source || (fromLocal ? 'local_cache' : 'daily_snapshot'),
+    });
   });
   _lastWatchRows = stocks;
   _lastWatchSkeleton = stocks.map(function (s) {
@@ -4287,13 +4385,30 @@ function applyWatchlistSnapshot(json) {
       renderWatchlistSummary(buildWatchlistSummaryFromStocks(stocks));
     }
   } catch (e2) {}
+  const tag = fromLocal ? ('本地自选缓存 · ' + stocks.length + ' 只') : ('公共快照 · ' + stocks.length + ' 只');
   try {
     setWatchUpdatedLabel({
       computing: false,
-      updated_at: (json.as_of || '') + ' · 快照',
+      updated_at: (json.as_of || '') + ' · ' + tag,
     });
   } catch (e3) {}
   enterSnapshotMode(json.as_of || '');
+  try {
+    const el = document.getElementById('snapshotBanner');
+    if (el && el.style.display !== 'none') {
+      if (fromLocal) {
+        el.textContent = '后端暂不可用，已展示您本机缓存的自选（共 '
+          + stocks.length + ' 只）'
+          + (json.as_of ? (' · 缓存于 ' + json.as_of) : '')
+          + ' · 非实时，恢复后将自动同步';
+      } else {
+        el.textContent = '后端暂不可用，当前为公共收盘快照（共 '
+          + stocks.length + ' 只，非您的完整自选）'
+          + (json.as_of ? (' · 生成于 ' + json.as_of) : '')
+          + ' · 请跑日更 Action 扩大公共列表；有缓存后可覆盖个人自选';
+      }
+    }
+  } catch (e4) {}
   return stocks;
 }
 
@@ -4558,6 +4673,9 @@ async function _loadWatchlistBody(forceRefresh) {
           // 有任一可用行或强制刷新时更新底图
           if (usable.length > 0 || forceRefresh) {
             _lastWatchRows = stocks.slice();
+            if (usable.length > 0) {
+              try { persistWatchlistCache(usable, { updated_at: json.updated_at || _lastWatchUpdatedAt }); } catch (ePc) {}
+            }
           }
         }
       } else if (!hasRows) {
@@ -4639,6 +4757,7 @@ async function _loadWatchlistBody(forceRefresh) {
     _lastWatchRows = merged.slice();
     _lastWatchSkeleton = merged.map(s => ({ code: s.code, name: s.name, market: s.market }));
     _lastWatchSig = _watchRowsSig(merged);
+    try { persistWatchlistCache(merged, { updated_at: json.updated_at || _lastWatchUpdatedAt }); } catch (eP) {}
     if (_watchWasComputing && json.updated_at) {
       try { showToast('看板已更新至 ' + json.updated_at, 'ok'); } catch (e) {}
     }
