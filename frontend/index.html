@@ -1425,6 +1425,36 @@ function getBackend() {
 }
 const BACKEND = getBackend();
 
+/** 探测 Render 后端是否可用（短超时；结果缓存约 45 秒） */
+let _backendAliveCache = { ts: 0, ok: null };
+async function probeBackendAlive(force) {
+  const now = Date.now();
+  if (!force && _backendAliveCache.ok !== null && (now - _backendAliveCache.ts) < 45000) {
+    return _backendAliveCache.ok;
+  }
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 3500) : null;
+  try {
+    const res = await fetch(BACKEND + '/api/health', {
+      method: 'GET',
+      cache: 'no-store',
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+    if (timer) clearTimeout(timer);
+    // 2xx 视为可用；5xx/挂起/超时视为不可用
+    const ok = !!(res && res.ok);
+    _backendAliveCache = { ts: Date.now(), ok: ok };
+    return ok;
+  } catch (e) {
+    if (timer) clearTimeout(timer);
+    _backendAliveCache = { ts: Date.now(), ok: false };
+    return false;
+  }
+}
+function markBackendDown() {
+  _backendAliveCache = { ts: Date.now(), ok: false };
+}
+
 // 登录态
 // 用 try/catch 包裹 localStorage 读取：在隐私模式、iframe 沙箱、storage 被禁用等环境下，
 // 直接访问 localStorage 可能抛 SecurityError，若顶层抛错会导致整段脚本中止、登录态永久丢失；
@@ -1551,7 +1581,16 @@ async function ensureFreshToken() {
 async function api(path, opts = {}) {
   const headers = Object.assign({}, opts.headers || {});
   if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
-  return fetch(BACKEND + path, Object.assign({}, opts, { headers }));
+  try {
+    const res = await fetch(BACKEND + path, Object.assign({}, opts, { headers }));
+    if (res && (res.status >= 502 && res.status <= 504)) {
+      try { markBackendDown(); } catch (e0) {}
+    }
+    return res;
+  } catch (e) {
+    try { markBackendDown(); } catch (e1) {}
+    throw e;
+  }
 }
 // 取 JSON（带容错）：401 时先刷新 token 重试一次，避免误踢登录
 async function apiJSON(path, opts = {}, _retried = false) {
@@ -4115,6 +4154,9 @@ async function fetchWatchlistSnapshot() {
 }
 
 function applyWatchlistSnapshot(json) {
+  if (!json || !Array.isArray(json.stocks) || !json.stocks.length) {
+    throw new Error('snapshot empty');
+  }
   const stocks = (json.stocks || []).map(function (s) {
     return Object.assign({}, s, { pending: false, data_source: s.data_source || 'daily_snapshot' });
   });
@@ -4201,6 +4243,31 @@ async function _loadWatchlistBody(forceRefresh) {
     loading.classList.remove('hidden');
   }
   try {
+    // Cloudflare 静态前端可先探测 Render：不可用则直接走日更快照，不空等 API
+    try {
+      const alive = await probeBackendAlive(!!forceRefresh);
+      if (!alive) {
+        try {
+          const snap = await fetchWatchlistSnapshot();
+          applyWatchlistSnapshot(snap);
+          try { showToast('后端暂不可用，已加载收盘快照', 'info'); } catch (eT) {}
+          return;
+        } catch (eSnap) {
+          if (!(_lastWatchRows && _lastWatchRows.length)) {
+            body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:24px;line-height:1.7;">'
+              + '后端服务暂时不可用（可能超额或维护中）<br>'
+              + '<span style="font-size:12px;">收盘快照尚未生成时无法展示列表。请稍后重试或待 GitHub Action 日更完成。</span></td></tr>';
+            setWatchUpdatedLabel({ computing: false, updated_at: '' });
+            try { setSnapshotBanner(true, ''); } catch (eB) {}
+          } else {
+            try { setSnapshotBanner(true, _lastWatchUpdatedAt || ''); } catch (eB2) {}
+            showToast('后端不可用，仍显示本地已有数据', 'info');
+          }
+          return;
+        }
+      }
+    } catch (eProbe) { /* 探测异常则继续走原 API 逻辑 */ }
+
     // 免费 / 未登录：固定两只真实行情（服务端缓存），可点进分析
     if (isDemoMode()) {
       try {
