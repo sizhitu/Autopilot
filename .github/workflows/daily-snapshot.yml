@@ -59,8 +59,9 @@ jobs:
           PYTHONPATH=trading_tool python scripts/archive/build_watchlist_snapshot.py \
             --out /tmp/watchlist_latest.json \
             --symbols-file /tmp/symbols.txt \
-            --limit 80 \
-            --sleep 0.4
+            --parquet-root ../data-repo/data \
+            --limit 120 \
+            --sleep 0.25
           wc -c /tmp/watchlist_latest.json
           python -c "import json;d=json.load(open('/tmp/watchlist_latest.json'));print('stocks',d.get('count'),'as_of',d.get('as_of'))"
 

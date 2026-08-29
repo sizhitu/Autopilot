@@ -307,6 +307,205 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
     return ("合理", "fair", f"{used} {dev*100:+.0f}%")
 
 
+
+def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
+    """从已有 OHLCV DataFrame 计算看板状态（不访问网络）。冷备 parquet 还原 JSON 用。"""
+    market = '美股' if not str(code).isdigit() else 'A股'
+    status = StockStatus(code=code, name=name or code, market=market)
+    status.role = STOCK_ROLE.get(code, DEFAULT_ROLE)
+    try:
+        if df is None or len(df) < 10:
+            status.error = f"数据不足({0 if df is None else len(df)}根)"
+            return status
+        # 统一列名
+        colmap = {c.lower(): c for c in df.columns}
+        rename = {}
+        for need in ('date', 'open', 'high', 'low', 'close', 'volume'):
+            if need not in df.columns and need in colmap:
+                rename[colmap[need]] = need
+        if rename:
+            df = df.rename(columns=rename)
+        df = df.copy()
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            df = df.dropna(subset=['date', 'close']).sort_values('date').reset_index(drop=True)
+        if len(df) < 10:
+            status.error = f"数据不足({len(df)}根)"
+            return status
+
+        last_close = float(df['close'].iloc[-1])
+        status.price = round(last_close, 2)
+        try:
+            _ld = df['date'].iloc[-1]
+            status.bar_date = _ld.strftime('%Y-%m-%d') if hasattr(_ld, 'strftime') else str(_ld)[:10]
+        except Exception:
+            status.bar_date = ""
+        status.bar_stale = False
+
+        if len(df) >= 2:
+            prev_close = float(df['close'].iloc[-2])
+            status.change_1d = round((last_close - prev_close) / prev_close * 100, 2)
+        lookback_5 = min(5, len(df) - 1)
+        if lookback_5 > 0:
+            prev_5 = float(df['close'].iloc[-1 - lookback_5])
+            status.change_5d = round((last_close - prev_5) / prev_5 * 100, 2)
+
+        strategy = FujimotoStrategy(total_capital=100000)
+        result = strategy.analyze(df)
+        status.trend = result.trend.value
+        nt_signal = result.signal.value
+        nt = calc_nine_turn_display(df)
+
+        buy_ladder_hit = status.change_5d is not None and status.change_5d <= -15.0
+        sell_ladder_hit = status.change_5d is not None and status.change_5d >= 25.0
+
+        if nt.get('conflict'):
+            status.timing = "九转背离"
+            status.timing_color = "gray"
+        elif nt.get('is_complete') and nt.get('direction') == 'down':
+            status.timing = "下跌九转完成·买点"
+            status.timing_color = "orange"
+        elif nt.get('is_completing') and nt.get('direction') == 'down':
+            status.timing = "下跌九转临近"
+            status.timing_color = "orange"
+        elif nt.get('is_complete') and nt.get('direction') == 'up':
+            status.timing = "上涨九转完成·卖点"
+            status.timing_color = "red"
+        elif nt.get('is_completing') and nt.get('direction') == 'up':
+            status.timing = "上涨九转临近"
+            status.timing_color = "red"
+        else:
+            status.timing = "无明确九转"
+            status.timing_color = "gray"
+
+        trend = status.trend or "震荡"
+        sys_layer = (result.layers_consistent or {}).get("系统层（趋势+指标）") or {}
+        sys_ok = bool(sys_layer.get("通过"))
+        if trend == "多头趋势":
+            if sys_ok:
+                status.trend_filter = "多头趋势"
+                status.trend_filter_color = "green"
+            else:
+                status.trend_filter = "多·指标未齐"
+                status.trend_filter_color = "orange"
+        elif trend == "空头趋势":
+            if sys_ok:
+                status.trend_filter = "空头趋势"
+                status.trend_filter_color = "red"
+            else:
+                status.trend_filter = "空·指标未齐"
+                status.trend_filter_color = "orange"
+        else:
+            status.trend_filter = "震荡整理"
+            status.trend_filter_color = "gray"
+
+        timing_buy = status.timing_color == "orange" and "九转" in status.timing
+        timing_sell = status.timing_color == "red" and "九转" in status.timing
+        reasons = []
+        nt_complete = bool(nt.get("is_complete"))
+        nt_completing = bool(nt.get("is_completing"))
+        chg5 = float(status.change_5d or 0)
+
+        if nt.get('conflict'):
+            status.action = "观望"
+            status.action_color = "gray"
+            reasons.append("日/月九转方向冲突")
+        elif timing_buy and trend == "空头趋势":
+            status.action = "观望"
+            status.action_color = "gray"
+            reasons.append("九转买点与空头趋势背离，观望")
+        elif timing_sell and trend == "多头趋势":
+            status.action = "观望"
+            status.action_color = "gray"
+            reasons.append("九转卖点与多头趋势背离，观望")
+        elif timing_buy and trend == "多头趋势":
+            status.action = "关注买入"
+            status.action_color = "orange"
+            status.action_side = "buy"
+            status.action_strength = 5 if nt_complete else (4 if nt_completing else 3)
+            reasons.append("九转买点与多头同向")
+        elif timing_sell and trend == "空头趋势":
+            status.action = "关注卖出"
+            status.action_color = "red"
+            status.action_side = "sell"
+            status.action_strength = 5 if nt_complete else (4 if nt_completing else 3)
+            reasons.append("九转卖点与空头同向")
+        elif timing_buy:
+            status.action = "关注买入"
+            status.action_color = "orange"
+            status.action_side = "buy"
+            status.action_strength = 4 if nt_complete else (3 if nt_completing else 2)
+            reasons.append(status.timing)
+        elif timing_sell:
+            status.action = "关注卖出"
+            status.action_color = "red"
+            status.action_side = "sell"
+            status.action_strength = 4 if nt_complete else (3 if nt_completing else 2)
+            reasons.append(status.timing)
+        elif buy_ladder_hit:
+            status.action = "阶梯抄底关注"
+            status.action_color = "orange"
+            status.action_side = "buy"
+            status.action_strength = 3 if chg5 <= -30 else (2 if chg5 <= -20 else 1)
+            reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂买入档")
+        elif sell_ladder_hit:
+            status.action = "阶梯止盈关注"
+            status.action_color = "red"
+            status.action_side = "sell"
+            status.action_strength = 3 if chg5 >= 45 else (2 if chg5 >= 30 else 1)
+            reasons.append(f"近5日{status.change_5d:+.1f}%触及藤本茂卖出档")
+        else:
+            status.action = "观望"
+            status.action_color = "gray"
+            status.action_strength = 0
+            status.action_side = ""
+            if nt_signal in ('买入', '加仓', '卖出', '持有'):
+                reasons.append(f"无明确时机共振（策略信号仅供参考：{nt_signal}）")
+            else:
+                reasons.append("无共振时机")
+
+        if status.action == "观望":
+            status.action_strength = 0
+            status.action_side = ""
+        status.action_reason = "；".join(reasons)
+        if status.action_strength > 0:
+            side_cn = "买侧" if status.action_side == "buy" else ("卖侧" if status.action_side == "sell" else "")
+            status.action_reason += f"；{side_cn}强度{status.action_strength}/5"
+        if status.action in ("关注买入", "阶梯抄底关注"):
+            status.signal = "即将上涨关注"
+            status.signal_color = "orange"
+        elif status.action in ("关注卖出", "阶梯止盈关注"):
+            status.signal = "上涨见顶关注"
+            status.signal_color = "red"
+        else:
+            status.signal = "下跌观望"
+            status.signal_color = "gray"
+
+        status.nine_turn = nt['text']
+        status.nine_turn_dir = nt['direction']
+        status.nine_turn_level = nt['level']
+        status.nine_turn_daily = nt['daily_text']
+        status.nine_turn_monthly = nt['monthly_text']
+        status.nine_turn_daily_state = nt['daily_state']
+        status.nine_turn_monthly_state = nt['monthly_state']
+        status.nine_turn_complete = nt['is_complete']
+        status.nine_turn_completing = nt['is_completing']
+
+        hl_text, hl_type = _detect_high_low(df)
+        status.high_low = hl_text
+        status.high_low_type = hl_type
+        val_text, val_type, val_detail = _calc_valuation(df, status.role)
+        status.valuation = val_text
+        status.valuation_type = val_type
+        status.valuation_detail = val_detail
+        # 冷备路径不拉分析师目标价
+        status.analyst_target = None
+        status.analyst_upside_pct = None
+    except Exception as e:
+        status.error = str(e)[:80]
+    return status
+
+
 def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
     """获取单只股票完整状态"""
     market = '美股' if not code.isdigit() else 'A股'

@@ -4303,26 +4303,12 @@ const WATCHLIST_SNAPSHOT_URLS = [
 ];
 
 function setSnapshotBanner(show, asOf) {
-  let el = document.getElementById('snapshotBanner');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'snapshotBanner';
-    el.style.cssText = 'display:none;margin:8px 0 0;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.45;'
-      + 'background:rgba(241,196,15,0.12);border:1px solid rgba(241,196,15,0.35);color:var(--text);';
-    const anchor = document.getElementById('watchSummary') || document.getElementById('watchlistView');
-    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(el, anchor);
-    else if (anchor) anchor.insertBefore(el, anchor.firstChild);
-    else document.body.appendChild(el);
-  }
-  if (!show) {
+  // 产品要求：不在看板上方展示长说明黄条，仅保留状态行「自选×快照」
+  var el = document.getElementById('snapshotBanner');
+  if (el) {
     el.style.display = 'none';
     el.textContent = '';
-    return;
   }
-  el.style.display = 'block';
-  el.textContent = '当前为上一交易日收盘快照（服务暂不可用或限额）'
-    + (asOf ? (' · 生成于 ' + asOf) : '')
-    + ' · 非实时，恢复后请刷新';
 }
 
 async function fetchUserWatchlistSymbolsFromSb() {
@@ -4612,28 +4598,6 @@ function applyWatchlistSnapshot(json) {
     });
   } catch (e3) {}
   enterSnapshotMode(json.as_of || '');
-  try {
-    const el = document.getElementById('snapshotBanner');
-    if (el && el.style.display !== 'none') {
-      if (json.from_sb_join) {
-        const hit = json.hit_count != null ? json.hit_count : stocks.length;
-        el.textContent = '后端暂不可用：已用 Supabase 自选（'
-          + stocks.length + ' 只）与冷备指标 join（命中 ' + hit + ' 只）'
-          + (json.as_of ? (' · 快照 ' + json.as_of) : '')
-          + ' · 非实时；未命中代码显示「暂无快照」';
-      } else if (fromLocal) {
-        el.textContent = '后端暂不可用，已展示您本机缓存的自选（共 '
-          + stocks.length + ' 只）'
-          + (json.as_of ? (' · 缓存于 ' + json.as_of) : '')
-          + ' · 非实时，恢复后将自动同步';
-      } else {
-        el.textContent = '后端暂不可用，当前为公共收盘快照（共 '
-          + stocks.length + ' 只）'
-          + (json.as_of ? (' · 生成于 ' + json.as_of) : '')
-          + ' · 登录后将按您的自选与快照 join';
-      }
-    }
-  } catch (e4) {}
   return stocks;
 }
 
