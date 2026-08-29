@@ -44,7 +44,13 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DIGEST_API_BASE: ${{ secrets.DIGEST_API_BASE }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          echo "secret check: SUPABASE_URL=$([ -n \"$SUPABASE_URL\" ] && echo set || echo MISSING)"
+          echo "secret check: SERVICE_ROLE=$([ -n \"$SUPABASE_SERVICE_ROLE_KEY\" ] && echo set || echo MISSING)"
+          echo "secret check: DIGEST_API_BASE=$([ -n \"$DIGEST_API_BASE\" ] && echo set || echo MISSING)"
+          echo "secret check: CRON_SECRET=$([ -n \"$CRON_SECRET\" ] && echo set || echo MISSING)"
           python app/scripts/archive/collect_symbols.py \
             --default app/scripts/archive/symbols.default.txt \
             --data-repo data-repo \

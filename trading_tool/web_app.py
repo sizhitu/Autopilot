@@ -875,6 +875,26 @@ async def cron_prewarm_cache(
 
 
 
+@app.get("/api/cron/universe-symbols")
+async def cron_universe_symbols(
+    limit: int = Query(500, description="最多返回去重代码数"),
+    x_cron_secret: str = Header(None, alias="X-Cron-Secret"),
+):
+    """供 GitHub Action 拉取全站自选并集（service 逻辑），写入冷备 symbols。"""
+    expected = (os.getenv("CRON_SECRET") or "").strip()
+    if not expected:
+        raise HTTPException(503, "服务端未配置 CRON_SECRET")
+    if not x_cron_secret or x_cron_secret.strip() != expected:
+        raise HTTPException(401, "无效的 Cron 密钥")
+    limit = max(1, min(int(limit or 500), 2000))
+    symbols = []
+    try:
+        symbols = watchlist_store.list_all_distinct_symbols(limit=limit)
+    except Exception as e:
+        raise HTTPException(500, f"读取自选并集失败: {str(e)[:120]}")
+    return {"success": True, "count": len(symbols), "symbols": symbols}
+
+
 @app.post("/api/contact")
 async def api_contact(req: ContactRequest, request: Request):
     """公开咨询入口：收集 姓名/邮箱/国家/问题，落库并立即转发到 support 邮箱（自动建单）。"""

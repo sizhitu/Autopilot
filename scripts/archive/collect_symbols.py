@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""汇总归档符号表：默认文件 + 数据仓 symbols.txt + 全站用户自选（Supabase）。
+"""汇总归档符号表：默认文件 + 数据仓 symbols.txt + 全站用户自选。
 
-优于「每次加自选就改 git」：以 watchlists 表为实时真相源，日更/快照前合并一次。
-需要环境变量（GitHub Secrets）：
-  SUPABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY
+数据源优先级：
+  1) Supabase service_role 直读 watchlists（需 SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY）
+  2) 后端 Cron API /api/cron/universe-symbols（需 DIGEST_API_BASE + CRON_SECRET）
+  3) 仅文件列表（会保持约 18 只默认）
+
+GitHub Secrets 请配置至少一组：
+  - SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY（推荐）
+  - 或 DIGEST_API_BASE + CRON_SECRET
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
-import sys
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "trading_tool"))
 
 
-def _parse_file(path: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
+def _parse_file(path: Path) -> dict:
+    out = {}
     if not path.is_file():
         return out
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -27,7 +31,6 @@ def _parse_file(path: Path) -> dict[str, str]:
             continue
         parts = line.split(None, 1)
         code = parts[0].strip()
-        # A 股数字代码保持原样；美股统一大写
         if code.isdigit() or code.lower().startswith(("sh", "sz", "bj")):
             key = code
         else:
@@ -40,12 +43,21 @@ def _parse_file(path: Path) -> dict[str, str]:
     return out
 
 
-def _from_supabase(limit: int = 800) -> dict[str, str]:
-    out: dict[str, str] = {}
+def _norm_sym(sym) -> str:
+    sym = str(sym or "").strip()
+    if not sym:
+        return ""
+    if sym.isdigit() or sym.lower().startswith(("sh", "sz", "bj")):
+        return sym
+    return sym.upper()
+
+
+def _from_supabase(limit: int = 800) -> dict:
+    out = {}
     url = os.getenv("SUPABASE_URL", "").strip()
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     if not url or not key:
-        print("[collect] 无 SUPABASE_URL/SERVICE_ROLE_KEY，跳过用户自选并集", flush=True)
+        print("[collect] SKIP supabase: 未设置 SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY", flush=True)
         return out
     try:
         from supabase import create_client
@@ -64,11 +76,9 @@ def _from_supabase(limit: int = 800) -> dict[str, str]:
             if not rows:
                 break
             for r in rows:
-                sym = str((r or {}).get("symbol") or "").strip()
+                sym = _norm_sym((r or {}).get("symbol") or "")
                 if not sym:
                     continue
-                if not (sym.isdigit() or sym.lower().startswith(("sh", "sz", "bj"))):
-                    sym = sym.upper()
                 nm = str((r or {}).get("name") or "").strip()
                 if sym not in out:
                     out[sym] = nm
@@ -78,21 +88,49 @@ def _from_supabase(limit: int = 800) -> dict[str, str]:
                 break
             start += page
         print(f"[collect] supabase watchlists distinct={len(out)}", flush=True)
+        if not out:
+            print("[collect] WARN supabase 返回 0 行（表空或密钥不对）", flush=True)
     except Exception as e:
-        print(f"[collect] supabase failed: {e}", flush=True)
+        print(f"[collect] supabase failed: {type(e).__name__}: {e}", flush=True)
+    return out
+
+
+def _from_api(limit: int = 800) -> dict:
+    out = {}
+    base = (os.getenv("DIGEST_API_BASE") or os.getenv("API_BASE") or "").strip().rstrip("/")
+    secret = (os.getenv("CRON_SECRET") or "").strip()
+    if not base or not secret:
+        print("[collect] SKIP api: 未设置 DIGEST_API_BASE/API_BASE 或 CRON_SECRET", flush=True)
+        return out
+    url = f"{base}/api/cron/universe-symbols?limit={limit}"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"X-Cron-Secret": secret, "User-Agent": "collect-symbols"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        for s in body.get("symbols") or []:
+            sym = _norm_sym(s)
+            if sym and sym not in out:
+                out[sym] = ""
+        print(f"[collect] api universe-symbols distinct={len(out)} from {base}", flush=True)
+    except Exception as e:
+        print(f"[collect] api failed: {type(e).__name__}: {e}", flush=True)
     return out
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--default", default="", help="默认 symbols 文件")
-    ap.add_argument("--data-repo", default="", help="Autopilot-data 根目录")
-    ap.add_argument("--out", required=True, help="输出 symbols.txt")
+    ap.add_argument("--default", default="")
+    ap.add_argument("--data-repo", default="")
+    ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=500)
-    ap.add_argument("--write-data-repo", action="store_true", help="回写 data-repo/symbols.txt")
+    ap.add_argument("--write-data-repo", action="store_true")
     args = ap.parse_args()
 
-    merged: dict[str, str] = {}
+    merged = {}
     default_path = Path(args.default) if args.default else ROOT / "scripts/archive/symbols.default.txt"
     for p in (
         default_path,
@@ -109,6 +147,7 @@ def main() -> int:
         if part:
             print(f"[collect] file {p}: {len(part)}", flush=True)
 
+    file_only = len(merged)
     sb = _from_supabase(limit=max(50, args.limit))
     for k, v in sb.items():
         if k not in merged:
@@ -116,7 +155,12 @@ def main() -> int:
         elif v and not merged[k]:
             merged[k] = v
 
-    # 稳定排序：美股字母在前，A 股数字在后
+    if len(merged) <= file_only + 2:
+        api = _from_api(limit=max(50, args.limit))
+        for k, v in api.items():
+            if k not in merged:
+                merged[k] = v
+
     def sort_key(code: str):
         if code.isdigit() or code.lower().startswith(("sh", "sz", "bj")):
             return (1, code)
@@ -125,8 +169,8 @@ def main() -> int:
     items = sorted(merged.items(), key=lambda kv: sort_key(kv[0]))[: max(1, args.limit)]
 
     lines = [
-        "# 自动汇总：默认列表 + 数据仓 + 全站用户自选（Supabase watchlists）",
-        "# 由 scripts/archive/collect_symbols.py 生成，勿手改后指望持久——会在日更时重写",
+        "# 自动汇总：默认列表 + 数据仓 + 全站用户自选",
+        "# collect_symbols.py 生成",
         "",
     ]
     for code, name in items:
@@ -136,7 +180,15 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(lines) + "\n"
     out.write_text(text, encoding="utf-8")
-    print(f"[collect] wrote {out} count={len(items)}", flush=True)
+    print(f"[collect] wrote {out} count={len(items)} (file_base={file_only})", flush=True)
+
+    if len(items) <= file_only + 2:
+        print(
+            "[collect] WARN 合并结果几乎等于文件列表，未并入用户自选。"
+            "请在 GitHub Secrets 配置 SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY，"
+            "或 DIGEST_API_BASE + CRON_SECRET。",
+            flush=True,
+        )
 
     if args.write_data_repo and args.data_repo:
         dest = Path(args.data_repo) / "symbols.txt"
