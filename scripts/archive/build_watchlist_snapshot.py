@@ -61,9 +61,14 @@ def load_bars_from_parquet(parquet_root: Path) -> dict[str, pd.DataFrame]:
         # 保留最多 320 根供均线/九转
         if len(g) > 320:
             g = g.tail(320)
-        out[str(sym)] = g.reset_index(drop=True)
-        out[str(sym).upper()] = out[str(sym)]
-    print(f"parquet symbols={len(out)//2} (with upper keys)", flush=True)
+        g = g.reset_index(drop=True)
+        key = str(sym).strip()
+        out[key] = g
+        # 仅额外索引大写键，取值时禁止用 `df_a or df_b`（会触发 DataFrame 真值歧义）
+        up = key.upper()
+        if up != key:
+            out[up] = g
+    print(f"parquet symbols={len(set(str(k).upper() for k in out))}", flush=True)
     return out
 
 
@@ -100,7 +105,7 @@ def main() -> int:
             # 跳过重复 upper 映射产生的
             if k.isdigit() or k.isalpha() or any(ch.isdigit() for ch in k):
                 nm = ""
-                if "name" in df.columns and len(df):
+                if "name" in df.columns and len(df) > 0:
                     try:
                         nm = str(df["name"].iloc[-1] or "")
                     except Exception:
@@ -118,35 +123,56 @@ def main() -> int:
     src_counts = {"parquet": 0, "network": 0}
     t0 = time.time()
 
+    def _pick_df(code: str):
+        """安全取 parquet 帧：禁止用 DataFrame 做布尔 or。"""
+        c = str(code).strip()
+        df0 = pq_map.get(c)
+        if df0 is not None and isinstance(df0, pd.DataFrame) and len(df0) > 0:
+            return df0
+        df1 = pq_map.get(c.upper())
+        if df1 is not None and isinstance(df1, pd.DataFrame) and len(df1) > 0:
+            return df1
+        # 数字代码兼容
+        if c.isdigit():
+            for k, v in pq_map.items():
+                if str(k).strip() == c or str(k).lstrip("0") == c.lstrip("0"):
+                    if v is not None and isinstance(v, pd.DataFrame) and len(v) > 0:
+                        return v
+        return None
+
     for code, name in symbols:
+        df = None
         try:
-            df = pq_map.get(str(code))
-            if df is None:
-                df = pq_map.get(str(code).upper())
+            df = _pick_df(code)
             st = None
+            used_parquet = False
             if df is not None and len(df) >= 10:
-                st = compute_stock_status_from_df(code, name or code, df)
-                if not st.error:
-                    src_counts["parquet"] += 1
-                elif network:
+                try:
+                    st = compute_stock_status_from_df(code, name or code, df)
+                    if st is not None and not getattr(st, "error", None):
+                        used_parquet = True
+                        src_counts["parquet"] += 1
+                except Exception as e_pq:
+                    print(f"parquet-calc {code}: {e_pq}", flush=True)
+                    st = None
+            if st is None or getattr(st, "error", None):
+                if network:
                     st = get_stock_status(code, name or code, days=300)
                     src_counts["network"] += 1
-                else:
+                    used_parquet = False
+                elif st is None:
+                    errors.append({"code": code, "error": "no parquet/network"})
+                    print(f"fail {code}: no parquet/network", flush=True)
+                    continue
+                elif st.error:
                     errors.append({"code": code, "error": st.error})
                     print(f"fail {code}: {st.error}", flush=True)
                     continue
-            elif network:
-                st = get_stock_status(code, name or code, days=300)
-                src_counts["network"] += 1
-            else:
-                errors.append({"code": code, "error": "no parquet"})
-                print(f"fail {code}: no parquet", flush=True)
-                continue
 
             d = _status_to_dict(st)
             d["pending"] = False
-            d["data_source"] = "parquet_snapshot" if (df is not None) and (len(df) >= 10) and (not st.error) else "daily_snapshot"
-            if st.error and not d.get("price"):
+            d["data_source"] = "parquet_snapshot" if used_parquet else "daily_snapshot"
+            if getattr(st, "error", None) and not d.get("price"):
                 errors.append({"code": code, "error": st.error})
                 print(f"fail {code}: {st.error}", flush=True)
                 continue
@@ -156,7 +182,7 @@ def main() -> int:
             by_code[key.upper()] = d
             print(f"ok {code} src={d['data_source']} action={d.get('action')} px={d.get('price')}", flush=True)
         except Exception as e:
-            msg = str(e)[:120]
+            msg = str(e)[:200]
             errors.append({"code": code, "error": msg})
             print(f"fail {code}: {msg}", flush=True)
         if network:

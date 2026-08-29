@@ -379,7 +379,7 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
             status.timing_color = "gray"
 
         trend = status.trend or "震荡"
-        sys_layer = (result.layers_consistent or {}).get("系统层（趋势+指标）") or {}
+        sys_layer = (result.layers_consistent if isinstance(getattr(result, "layers_consistent", None), dict) else {}).get("系统层（趋势+指标）") or {}
         sys_ok = bool(sys_layer.get("通过"))
         if trend == "多头趋势":
             if sys_ok:
@@ -598,7 +598,7 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
 
         # ---------- 2) 趋势过滤（均线趋势标签；≠ 系统层是否通过）----------
         trend = status.trend or "震荡"
-        sys_layer = (result.layers_consistent or {}).get("系统层（趋势+指标）") or {}
+        sys_layer = (result.layers_consistent if isinstance(getattr(result, "layers_consistent", None), dict) else {}).get("系统层（趋势+指标）") or {}
         sys_ok = bool(sys_layer.get("通过"))
         if trend == "多头趋势":
             if sys_ok:
