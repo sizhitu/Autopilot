@@ -120,7 +120,9 @@ def main() -> int:
 
     for code, name in symbols:
         try:
-            df = pq_map.get(str(code)) or pq_map.get(str(code).upper())
+            df = pq_map.get(str(code))
+            if df is None:
+                df = pq_map.get(str(code).upper())
             st = None
             if df is not None and len(df) >= 10:
                 st = compute_stock_status_from_df(code, name or code, df)
@@ -143,7 +145,7 @@ def main() -> int:
 
             d = _status_to_dict(st)
             d["pending"] = False
-            d["data_source"] = "parquet_snapshot" if df is not None and len(df) >= 10 and not st.error else "daily_snapshot"
+            d["data_source"] = "parquet_snapshot" if (df is not None) and (len(df) >= 10) and (not st.error) else "daily_snapshot"
             if st.error and not d.get("price"):
                 errors.append({"code": code, "error": st.error})
                 print(f"fail {code}: {st.error}", flush=True)
