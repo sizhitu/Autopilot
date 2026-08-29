@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从默认/自选符号列表计算看板字段，写出 watchlist_latest.json（供静态降级）。"""
+"""批算看板字段，写出 watchlist_latest.json（含 by_code 索引，供前端与自选 join）。"""
 from __future__ import annotations
 
 import argparse
@@ -19,7 +19,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, help="输出 JSON 路径")
     ap.add_argument("--symbols-file", default="", help="符号列表文件")
-    ap.add_argument("--limit", type=int, default=40, help="最多计算只数")
+    ap.add_argument("--limit", type=int, default=80, help="最多计算只数")
     ap.add_argument("--sleep", type=float, default=0.35, help="每只间隔秒")
     args = ap.parse_args()
 
@@ -27,6 +27,7 @@ def main() -> int:
 
     symbols = load_symbols(args.symbols_file or None)[: max(1, args.limit)]
     stocks = []
+    by_code: dict = {}
     errors = []
     t0 = time.time()
     for code, name in symbols:
@@ -36,6 +37,10 @@ def main() -> int:
             d["pending"] = False
             d["data_source"] = "daily_snapshot"
             stocks.append(d)
+            key = str(d.get("code") or code).strip()
+            by_code[key] = d
+            if key.upper() != key:
+                by_code[key.upper()] = d
             print(f"ok {code} action={d.get('action')} px={d.get('price')}", flush=True)
         except Exception as e:
             msg = str(e)[:120]
@@ -47,16 +52,17 @@ def main() -> int:
         "success": True,
         "snapshot": True,
         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "bar_hint": "上一交易日收盘快照（GitHub Action 批算，非实时）",
+        "bar_hint": "按代码索引的收盘快照（GitHub Action 批算）；前端与自选列表 join",
         "count": len(stocks),
         "stocks": stocks,
+        "by_code": by_code,
         "errors": errors,
         "elapsed_sec": round(time.time() - t0, 1),
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"wrote {out} stocks={len(stocks)} errors={len(errors)}", flush=True)
+    print(f"wrote {out} stocks={len(stocks)} by_code={len(by_code)} errors={len(errors)}", flush=True)
     return 0 if stocks else 1
 
 

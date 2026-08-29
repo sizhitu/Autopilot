@@ -4325,19 +4325,104 @@ function setSnapshotBanner(show, asOf) {
     + ' · 非实时，恢复后请刷新';
 }
 
-async function fetchWatchlistSnapshot() {
-  // 1) 优先用户本地完整自选（二三十只也能在降级时展示）
+async function fetchUserWatchlistSymbolsFromSb() {
+  if (!sb || !currentUser) return null;
   try {
-    const local = loadWatchlistLocalCache();
-    if (local && local.stocks && local.stocks.length) {
-      local._snapshotUrl = 'localStorage';
-      return local;
+    const uid = currentUser.id;
+    let q = sb.from('watchlists').select('symbol,name,market,note,sort_order');
+    if (uid) q = q.eq('user_id', uid);
+    const { data, error } = await q.order('sort_order', { ascending: true });
+    if (error) {
+      console.warn('Supabase 直读自选失败', error);
+      return null;
     }
-  } catch (eL) {}
+    if (!data || !data.length) return [];
+    return data.map(function (r) {
+      return {
+        code: r.symbol,
+        symbol: r.symbol,
+        name: r.name || r.symbol,
+        market: r.market || '',
+        note: r.note || '',
+        sort_order: r.sort_order,
+      };
+    });
+  } catch (e) {
+    console.warn('Supabase 直读自选异常', e);
+    return null;
+  }
+}
 
-  // 2) 公共日更快照（符号表批算，非个人自选）
+function _lookupByCode(byCode, code) {
+  if (!byCode || !code) return null;
+  const c = String(code).trim();
+  return byCode[c] || byCode[c.toUpperCase()] || byCode[c.toLowerCase()] || null;
+}
+
+/** 自选代码 × 快照 by_code → 完整行；缺指标的代码仍占位展示 */
+function joinWatchlistWithSnapshot(items, publicSnap) {
+  const byCode = (publicSnap && publicSnap.by_code) || {};
+  // 无 by_code 时用 stocks 数组建索引
+  if (publicSnap && publicSnap.stocks && (!byCode || !Object.keys(byCode).length)) {
+    (publicSnap.stocks || []).forEach(function (s) {
+      if (s && s.code) {
+        byCode[s.code] = s;
+        byCode[String(s.code).toUpperCase()] = s;
+      }
+    });
+  }
+  const stocks = (items || []).map(function (it) {
+    const code = it.code || it.symbol;
+    const hit = _lookupByCode(byCode, code);
+    if (hit) {
+      return Object.assign({}, hit, {
+        code: code,
+        name: hit.name || it.name || code,
+        market: hit.market || it.market || '',
+        pending: false,
+        data_source: hit.data_source || 'daily_snapshot',
+        note: it.note || hit.note || '',
+      });
+    }
+    return {
+      code: code,
+      name: it.name || code,
+      market: it.market || '',
+      price: '-',
+      bar_date: '',
+      change_1d: null,
+      change_5d: null,
+      signal: '暂无快照',
+      signal_color: 'gray',
+      timing: '—',
+      timing_color: 'gray',
+      trend_filter: '—',
+      trend_filter_color: 'gray',
+      action: '暂无快照',
+      action_color: 'gray',
+      action_strength: 0,
+      pending: false,
+      data_source: 'snapshot_miss',
+      note: it.note || '',
+    };
+  });
+  const hitN = stocks.filter(function (s) { return s.data_source !== 'snapshot_miss'; }).length;
+  return {
+    success: true,
+    snapshot: true,
+    from_local: false,
+    from_sb_join: true,
+    as_of: (publicSnap && publicSnap.as_of) || '',
+    bar_hint: 'Supabase 自选 × 冷备 by_code',
+    count: stocks.length,
+    hit_count: hitN,
+    stocks: stocks,
+    _snapshotUrl: (publicSnap && publicSnap._snapshotUrl) || '',
+  };
+}
+
+async function loadPublicSnapshotJson() {
   let lastErr = null;
-  let publicSnap = null;
   for (const url of WATCHLIST_SNAPSHOT_URLS) {
     try {
       const res = await fetch(url, { cache: 'no-store' });
@@ -4346,27 +4431,73 @@ async function fetchWatchlistSnapshot() {
         continue;
       }
       const json = await res.json();
-      if (!json || !Array.isArray(json.stocks) || !json.stocks.length) {
+      const hasBy = json && json.by_code && Object.keys(json.by_code).length;
+      const hasStocks = json && Array.isArray(json.stocks) && json.stocks.length;
+      if (!hasBy && !hasStocks) {
         lastErr = new Error('snapshot empty');
         continue;
       }
       json._snapshotUrl = url;
-      json.from_local = false;
-      publicSnap = json;
-      break;
+      return json;
     } catch (e) {
       lastErr = e;
     }
   }
-  if (publicSnap) return publicSnap;
-  throw lastErr || new Error('无可用快照');
+  throw lastErr || new Error('无可用公共快照');
+}
+
+async function fetchWatchlistSnapshot() {
+  // 1) 登录用户：Supabase 直读自选代码 + 公共 by_code join（完整只数）
+  let publicSnap = null;
+  try { publicSnap = await loadPublicSnapshotJson(); } catch (eP) { publicSnap = null; }
+
+  if (currentUser && sb) {
+    try {
+      const items = await fetchUserWatchlistSymbolsFromSb();
+      if (items && items.length && publicSnap) {
+        const joined = joinWatchlistWithSnapshot(items, publicSnap);
+        // 有命中或至少列出全部代码
+        if (joined.stocks.length) return joined;
+      }
+      // 有自选但无公共快照：仍列出代码占位
+      if (items && items.length && !publicSnap) {
+        return joinWatchlistWithSnapshot(items, { by_code: {}, as_of: '', stocks: [] });
+      }
+    } catch (eSb) {
+      console.warn('自选 join 快照失败', eSb);
+    }
+  }
+
+  // 2) 本机上次成功加载的完整自选
+  try {
+    const local = loadWatchlistLocalCache();
+    if (local && local.stocks && local.stocks.length) {
+      local._snapshotUrl = 'localStorage';
+      return local;
+    }
+  } catch (eL) {}
+
+  // 3) 纯公共快照列表
+  if (publicSnap) {
+    if (!publicSnap.stocks || !publicSnap.stocks.length) {
+      // 仅有 by_code
+      const codes = Object.keys(publicSnap.by_code || {}).filter(function (k) {
+        return k === (publicSnap.by_code[k] && publicSnap.by_code[k].code);
+      });
+      publicSnap.stocks = codes.map(function (k) { return publicSnap.by_code[k]; });
+    }
+    publicSnap.from_local = false;
+    publicSnap.from_sb_join = false;
+    if (publicSnap.stocks && publicSnap.stocks.length) return publicSnap;
+  }
+  throw new Error('无可用快照');
 }
 
 function applyWatchlistSnapshot(json) {
   if (!json || !Array.isArray(json.stocks) || !json.stocks.length) {
     throw new Error('snapshot empty');
   }
-  const fromLocal = !!json.from_local;
+  const fromLocal = !!json.from_local && !json.from_sb_join;
   const stocks = (json.stocks || []).map(function (s) {
     return Object.assign({}, s, {
       pending: false,
@@ -4385,7 +4516,9 @@ function applyWatchlistSnapshot(json) {
       renderWatchlistSummary(buildWatchlistSummaryFromStocks(stocks));
     }
   } catch (e2) {}
-  const tag = fromLocal ? ('本地自选缓存 · ' + stocks.length + ' 只') : ('公共快照 · ' + stocks.length + ' 只');
+  const tag = json.from_sb_join
+    ? ('自选×快照 · ' + stocks.length + ' 只')
+    : (fromLocal ? ('本地自选缓存 · ' + stocks.length + ' 只') : ('公共快照 · ' + stocks.length + ' 只'));
   try {
     setWatchUpdatedLabel({
       computing: false,
@@ -4396,16 +4529,22 @@ function applyWatchlistSnapshot(json) {
   try {
     const el = document.getElementById('snapshotBanner');
     if (el && el.style.display !== 'none') {
-      if (fromLocal) {
+      if (json.from_sb_join) {
+        const hit = json.hit_count != null ? json.hit_count : stocks.length;
+        el.textContent = '后端暂不可用：已用 Supabase 自选（'
+          + stocks.length + ' 只）与冷备指标 join（命中 ' + hit + ' 只）'
+          + (json.as_of ? (' · 快照 ' + json.as_of) : '')
+          + ' · 非实时；未命中代码显示「暂无快照」';
+      } else if (fromLocal) {
         el.textContent = '后端暂不可用，已展示您本机缓存的自选（共 '
           + stocks.length + ' 只）'
           + (json.as_of ? (' · 缓存于 ' + json.as_of) : '')
           + ' · 非实时，恢复后将自动同步';
       } else {
         el.textContent = '后端暂不可用，当前为公共收盘快照（共 '
-          + stocks.length + ' 只，非您的完整自选）'
+          + stocks.length + ' 只）'
           + (json.as_of ? (' · 生成于 ' + json.as_of) : '')
-          + ' · 请跑日更 Action 扩大公共列表；有缓存后可覆盖个人自选';
+          + ' · 登录后将按您的自选与快照 join';
       }
     }
   } catch (e4) {}
