@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "snapshot": true,
+  "as_of": "1970-01-01T00:00:00Z",
+  "bar_hint": "占位文件；由 daily-snapshot Action 覆盖为真实看板结果",
+  "count": 0,
+  "stocks": [],
+  "errors": []
+}

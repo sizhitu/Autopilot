@@ -4059,6 +4059,87 @@ function manualWatchlistRefresh() {
   loadWatchlist(true);
 }
 
+
+/** 静态日更快照 URL（Render 挂掉时仍可从同源或 GitHub/CDN 读） */
+const WATCHLIST_SNAPSHOT_URLS = [
+  '/snapshots/watchlist_latest.json',
+  '/frontend/snapshots/watchlist_latest.json',
+  'https://cdn.jsdelivr.net/gh/sizhitu/Autopilot-data@main/snapshots/watchlist_latest.json',
+  'https://raw.githubusercontent.com/sizhitu/Autopilot-data/main/snapshots/watchlist_latest.json',
+];
+
+function setSnapshotBanner(show, asOf) {
+  let el = document.getElementById('snapshotBanner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'snapshotBanner';
+    el.style.cssText = 'display:none;margin:8px 0 0;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.45;'
+      + 'background:rgba(241,196,15,0.12);border:1px solid rgba(241,196,15,0.35);color:var(--text);';
+    const anchor = document.getElementById('watchSummary') || document.getElementById('watchlistView');
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(el, anchor);
+    else if (anchor) anchor.insertBefore(el, anchor.firstChild);
+    else document.body.appendChild(el);
+  }
+  if (!show) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  el.style.display = 'block';
+  el.textContent = '当前为上一交易日收盘快照（服务暂不可用或限额）'
+    + (asOf ? (' · 生成于 ' + asOf) : '')
+    + ' · 非实时，恢复后请刷新';
+}
+
+async function fetchWatchlistSnapshot() {
+  let lastErr = null;
+  for (const url of WATCHLIST_SNAPSHOT_URLS) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        lastErr = new Error('snapshot HTTP ' + res.status);
+        continue;
+      }
+      const json = await res.json();
+      if (!json || !Array.isArray(json.stocks) || !json.stocks.length) {
+        lastErr = new Error('snapshot empty');
+        continue;
+      }
+      json._snapshotUrl = url;
+      return json;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('无可用快照');
+}
+
+function applyWatchlistSnapshot(json) {
+  const stocks = (json.stocks || []).map(function (s) {
+    return Object.assign({}, s, { pending: false, data_source: s.data_source || 'daily_snapshot' });
+  });
+  _lastWatchRows = stocks;
+  _lastWatchSkeleton = stocks.map(function (s) {
+    return { code: s.code, name: s.name, market: s.market };
+  });
+  _lastWatchSig = typeof _watchRowsSig === 'function' ? _watchRowsSig(stocks) : '';
+  _lastWatchUpdatedAt = json.as_of || '';
+  try { renderWatchlist(stocks); } catch (e) {}
+  try {
+    if (typeof buildWatchlistSummaryFromStocks === 'function' && typeof renderWatchlistSummary === 'function') {
+      renderWatchlistSummary(buildWatchlistSummaryFromStocks(stocks));
+    }
+  } catch (e2) {}
+  try {
+    setWatchUpdatedLabel({
+      computing: false,
+      updated_at: (json.as_of || '') + ' · 快照',
+    });
+  } catch (e3) {}
+  setSnapshotBanner(true, json.as_of || '');
+  return stocks;
+}
+
 async function loadWatchlist(forceRefresh = false) {
   if (typeof isDataGated === 'function' && isDataGated()) {
     try {
@@ -4328,6 +4409,7 @@ async function _loadWatchlistBody(forceRefresh) {
     let merged = mergeWatchRows(stocks, _lastWatchRows);
     renderWatchlistSummary(json.summary || {});
     renderWatchlist(merged);
+    try { setSnapshotBanner(false); } catch (eBan) {}
     _lastWatchRows = merged.slice();
     _lastWatchSkeleton = merged.map(s => ({ code: s.code, name: s.name, market: s.market }));
     _lastWatchSig = _watchRowsSig(merged);
@@ -4351,18 +4433,29 @@ async function _loadWatchlistBody(forceRefresh) {
       });
     } catch (e) {}
   } catch(e) {
-    // 失败时尽量保留旧表，只改文案
-    if (_toastRateLimit(e && (e.message || e))) {
-      setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt });
-    } else if (_lastWatchRows && _lastWatchRows.length) {
-      setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt });
-      const el = document.getElementById('watchlistUpdated');
-      if (el && _lastWatchUpdatedAt) {
-        el.textContent = `更新于 ${_lastWatchUpdatedAt} · 刷新失败`;
+    // 在线 API 失败：尝试静态日更快照（不依赖 Render 进程内缓存）
+    let usedSnap = false;
+    try {
+      const snap = await fetchWatchlistSnapshot();
+      applyWatchlistSnapshot(snap);
+      usedSnap = true;
+      try { showToast('已切换为收盘快照（服务暂不可用）', 'info'); } catch (e0) {}
+    } catch (eSnap) {
+      usedSnap = false;
+    }
+    if (!usedSnap) {
+      if (_toastRateLimit(e && (e.message || e))) {
+        setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt });
+      } else if (_lastWatchRows && _lastWatchRows.length) {
+        setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt });
+        const el = document.getElementById('watchlistUpdated');
+        if (el && _lastWatchUpdatedAt) {
+          el.textContent = `更新于 ${_lastWatchUpdatedAt} · 刷新失败`;
+        }
+        showToast('看板刷新失败，仍显示上次数据', 'info');
+      } else {
+        body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message || e}</td></tr>`;
       }
-      showToast('看板刷新失败，仍显示上次数据', 'info');
-    } else {
-      body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">加载失败: ${e.message || e}</td></tr>`;
     }
     _watchWasComputing = false;
   } finally {

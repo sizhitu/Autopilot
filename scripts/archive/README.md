@@ -41,3 +41,17 @@ ORDER BY date;
 - 日文件：每标的仅保留最近约 8 根 K 线（可调 `--days`）
 - 月并后：建议保留约 90 天 daily，更旧可删（workflow 可选）
 - 指标不落库，回测时用主仓同一套算法重算
+
+
+## 看板日更快照（降级）
+
+```bash
+PYTHONPATH=trading_tool python scripts/archive/build_watchlist_snapshot.py \
+  --out /tmp/watchlist_latest.json \
+  --symbols-file scripts/archive/symbols.default.txt \
+  --limit 20
+```
+
+GitHub Action：`.github/workflows/daily-snapshot.yml`  
+产出：`Autopilot-data/snapshots/watchlist_latest.json` 与 `frontend/snapshots/watchlist_latest.json`。  
+前端在 `/api/watchlist` 失败时自动回落该 JSON。
