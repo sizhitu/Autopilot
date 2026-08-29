@@ -1431,11 +1431,18 @@ let _wlLoadStartedAt = 0;
 let _wlLastProgressKey = '';
 let _wlStalledPolls = 0;
 const _WL_HARD_MS = 55000; // 整次加载墙钟上限，超时则快照/停转圈
+/** 快照降级模式：定期重探后端，恢复后自动切回实时 */
+let _snapshotMode = false;
+let _snapshotReprobeTimer = null;
+const _SNAPSHOT_REPROBE_MS = 120000; // 2 分钟重探一次
+const _BACKEND_OK_TTL_MS = 20000;     // 判活缓存 20s
+const _BACKEND_DOWN_TTL_MS = 60000;   // 判挂缓存 60s，避免长期误判为挂
 
 async function probeBackendAlive(force) {
   const now = Date.now();
-  if (!force && _backendAliveCache.ok !== null && (now - _backendAliveCache.ts) < 20000) {
-    return _backendAliveCache.ok;
+  if (!force && _backendAliveCache.ok !== null) {
+    const ttl = _backendAliveCache.ok ? _BACKEND_OK_TTL_MS : _BACKEND_DOWN_TTL_MS;
+    if ((now - _backendAliveCache.ts) < ttl) return _backendAliveCache.ok;
   }
   const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 5000) : null;
@@ -1458,6 +1465,61 @@ async function probeBackendAlive(force) {
 function markBackendDown() {
   _backendAliveCache = { ts: Date.now(), ok: false };
 }
+function markBackendUp() {
+  _backendAliveCache = { ts: Date.now(), ok: true };
+}
+function clearSnapshotReprobe() {
+  if (_snapshotReprobeTimer) {
+    try { clearTimeout(_snapshotReprobeTimer); } catch (e) {}
+    _snapshotReprobeTimer = null;
+  }
+}
+function scheduleSnapshotReprobe() {
+  clearSnapshotReprobe();
+  _snapshotReprobeTimer = setTimeout(async function () {
+    _snapshotReprobeTimer = null;
+    if (!_snapshotMode) return;
+    let ok = false;
+    try { ok = await probeBackendAlive(true); } catch (e) { ok = false; }
+    if (ok) {
+      markBackendUp();
+      _snapshotMode = false;
+      try { setSnapshotBanner(false); } catch (e0) {}
+      try { showToast('后端已恢复，正在同步实时数据…', 'ok'); } catch (e1) {}
+      try { loadWatchlist(true); } catch (e2) {}
+      return;
+    }
+    // 仍不可用：继续按同一频率重探
+    scheduleSnapshotReprobe();
+  }, _SNAPSHOT_REPROBE_MS);
+}
+function enterSnapshotMode(asOf) {
+  _snapshotMode = true;
+  try { setSnapshotBanner(true, asOf || ''); } catch (e) {}
+  scheduleSnapshotReprobe();
+}
+function leaveSnapshotMode() {
+  _snapshotMode = false;
+  clearSnapshotReprobe();
+  try { setSnapshotBanner(false); } catch (e) {}
+}
+
+// 切回前台时若在快照模式，立即重探一次（不狂打：距上次探测至少 30s）
+try {
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible' || !_snapshotMode) return;
+    const since = Date.now() - (_backendAliveCache.ts || 0);
+    if (since < 30000) return;
+    probeBackendAlive(true).then(function (ok) {
+      if (!ok) return;
+      markBackendUp();
+      _snapshotMode = false;
+      try { setSnapshotBanner(false); } catch (e0) {}
+      try { showToast('后端已恢复，正在同步实时数据…', 'ok'); } catch (e1) {}
+      try { loadWatchlist(true); } catch (e2) {}
+    }).catch(function () {});
+  });
+} catch (eVis) {}
 
 /** 带超时的 API，避免永久 pending 导致「首次加载中」卡死 */
 async function apiWithTimeout(path, opts, ms) {
@@ -4198,7 +4260,7 @@ function applyWatchlistSnapshot(json) {
       updated_at: (json.as_of || '') + ' · 快照',
     });
   } catch (e3) {}
-  setSnapshotBanner(true, json.as_of || '');
+  enterSnapshotMode(json.as_of || '');
   return stocks;
 }
 
@@ -4302,9 +4364,9 @@ async function _loadWatchlistBody(forceRefresh) {
               + '后端服务暂时不可用（可能超额或维护中）<br>'
               + '<span style="font-size:12px;">收盘快照尚未生成时无法展示列表。请稍后重试或待 GitHub Action 日更完成。</span></td></tr>';
             setWatchUpdatedLabel({ computing: false, updated_at: '' });
-            try { setSnapshotBanner(true, ''); } catch (eB) {}
+            try { enterSnapshotMode(''); } catch (eB) {}
           } else {
-            try { setSnapshotBanner(true, _lastWatchUpdatedAt || ''); } catch (eB2) {}
+            try { enterSnapshotMode(_lastWatchUpdatedAt || ''); } catch (eB2) {}
             showToast('后端不可用，仍显示本地已有数据', 'info');
           }
           return;
@@ -4540,7 +4602,7 @@ async function _loadWatchlistBody(forceRefresh) {
     let merged = mergeWatchRows(stocks, _lastWatchRows);
     renderWatchlistSummary(json.summary || {});
     renderWatchlist(merged);
-    try { setSnapshotBanner(false); } catch (eBan) {}
+    try { leaveSnapshotMode(); } catch (eBan) {}
     _lastWatchRows = merged.slice();
     _lastWatchSkeleton = merged.map(s => ({ code: s.code, name: s.name, market: s.market }));
     _lastWatchSig = _watchRowsSig(merged);
