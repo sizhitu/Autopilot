@@ -38,30 +38,34 @@ jobs:
       - name: Install deps
         run: |
           pip install -q -r app/trading_tool/requirements.txt
-          pip install -q pyarrow
+          pip install -q pyarrow supabase
 
-      - name: Symbols file
+      - name: Symbols file (默认 + 数据仓 + 全站自选并集)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          if [ -f data-repo/symbols.txt ]; then
-            cp data-repo/symbols.txt /tmp/symbols.txt
-          else
-            cp app/scripts/archive/symbols.default.txt /tmp/symbols.txt
-          fi
-          echo "--- symbols ---"
-          head -50 /tmp/symbols.txt
+          python app/scripts/archive/collect_symbols.py \
+            --default app/scripts/archive/symbols.default.txt \
+            --data-repo data-repo \
+            --out /tmp/symbols.txt \
+            --limit 500 \
+            --write-data-repo
+          echo "--- symbols (merged) ---"
+          wc -l /tmp/symbols.txt
+          head -80 /tmp/symbols.txt
 
       - name: Build watchlist_latest.json
         working-directory: app
         env:
-          # 批算不依赖 Supabase
           DATABASE_PATH: /tmp/autopilot_snap.db
         run: |
           PYTHONPATH=trading_tool python scripts/archive/build_watchlist_snapshot.py \
             --out /tmp/watchlist_latest.json \
             --symbols-file /tmp/symbols.txt \
             --parquet-root ../data-repo/data \
-            --limit 120 \
-            --sleep 0.25
+            --limit 200 \
+            --sleep 0.2
           wc -c /tmp/watchlist_latest.json
           python -c "import json;d=json.load(open('/tmp/watchlist_latest.json'));print('stocks',d.get('count'),'as_of',d.get('as_of'))"
 
@@ -71,9 +75,10 @@ jobs:
         run: |
           mkdir -p snapshots
           cp /tmp/watchlist_latest.json snapshots/watchlist_latest.json
+          if [ -f /tmp/symbols.txt ]; then cp /tmp/symbols.txt symbols.txt; fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add snapshots/watchlist_latest.json
+          git add snapshots/watchlist_latest.json symbols.txt
           if git diff --staged --quiet; then
             echo "No data-repo changes"
           else
