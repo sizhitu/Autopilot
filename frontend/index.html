@@ -1425,18 +1425,20 @@ function getBackend() {
 }
 const BACKEND = getBackend();
 
-/** 探测 Render 后端是否可用（短超时；结果短缓存） */
+/** 探测 Render 后端是否可用（短超时 + 分层缓存 + 降级退避） */
 let _backendAliveCache = { ts: 0, ok: null };
 let _wlLoadStartedAt = 0;
 let _wlLastProgressKey = '';
 let _wlStalledPolls = 0;
 const _WL_HARD_MS = 55000; // 整次加载墙钟上限，超时则快照/停转圈
-/** 快照降级模式：定期重探后端，恢复后自动切回实时 */
+/** 快照降级：仅此时周期性重探；页面隐藏暂停 */
 let _snapshotMode = false;
 let _snapshotReprobeTimer = null;
-const _SNAPSHOT_REPROBE_MS = 120000; // 2 分钟重探一次
-const _BACKEND_OK_TTL_MS = 20000;     // 判活缓存 20s
-const _BACKEND_DOWN_TTL_MS = 60000;   // 判挂缓存 60s，避免长期误判为挂
+let _snapshotFailStreak = 0; // 连续探活失败次数 → 指数退避
+const _BACKEND_OK_TTL_MS = 180000;   // 判活缓存 3 分钟（有业务成功会续期）
+const _BACKEND_DOWN_TTL_MS = 90000;  // 判挂缓存 90s，到期后允许再探
+const _VIS_REPROBE_MIN_MS = 120000; // 切回前台最少间隔 2 分钟
+const _REPROBE_BACKOFF_MS = [180000, 180000, 300000, 300000, 300000]; // 3m→3m→5m…
 
 async function probeBackendAlive(force) {
   const now = Date.now();
@@ -1455,10 +1457,13 @@ async function probeBackendAlive(force) {
     if (timer) clearTimeout(timer);
     const ok = !!(res && res.ok);
     _backendAliveCache = { ts: Date.now(), ok: ok };
+    if (ok) _snapshotFailStreak = 0;
+    else _snapshotFailStreak = Math.min(_snapshotFailStreak + 1, _REPROBE_BACKOFF_MS.length - 1);
     return ok;
   } catch (e) {
     if (timer) clearTimeout(timer);
     _backendAliveCache = { ts: Date.now(), ok: false };
+    _snapshotFailStreak = Math.min(_snapshotFailStreak + 1, _REPROBE_BACKOFF_MS.length - 1);
     return false;
   }
 }
@@ -1467,6 +1472,7 @@ function markBackendDown() {
 }
 function markBackendUp() {
   _backendAliveCache = { ts: Date.now(), ok: true };
+  _snapshotFailStreak = 0;
 }
 function clearSnapshotReprobe() {
   if (_snapshotReprobeTimer) {
@@ -1474,24 +1480,38 @@ function clearSnapshotReprobe() {
     _snapshotReprobeTimer = null;
   }
 }
+function _nextReprobeDelayMs() {
+  const i = Math.max(0, Math.min(_snapshotFailStreak, _REPROBE_BACKOFF_MS.length - 1));
+  return _REPROBE_BACKOFF_MS[i];
+}
 function scheduleSnapshotReprobe() {
   clearSnapshotReprobe();
+  if (!_snapshotMode) return;
+  // 页面在后台时不探，避免空耗 Render 时长
+  try {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  } catch (eH) {}
+  const delay = _nextReprobeDelayMs();
   _snapshotReprobeTimer = setTimeout(async function () {
     _snapshotReprobeTimer = null;
     if (!_snapshotMode) return;
+    try {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        // 仍隐藏：不探，等可见时 visibility 逻辑处理
+        return;
+      }
+    } catch (eH2) {}
     let ok = false;
     try { ok = await probeBackendAlive(true); } catch (e) { ok = false; }
     if (ok) {
       markBackendUp();
-      _snapshotMode = false;
-      try { setSnapshotBanner(false); } catch (e0) {}
+      leaveSnapshotMode();
       try { showToast('后端已恢复，正在同步实时数据…', 'ok'); } catch (e1) {}
       try { loadWatchlist(true); } catch (e2) {}
       return;
     }
-    // 仍不可用：继续按同一频率重探
     scheduleSnapshotReprobe();
-  }, _SNAPSHOT_REPROBE_MS);
+  }, delay);
 }
 function enterSnapshotMode(asOf) {
   _snapshotMode = true;
@@ -1500,24 +1520,34 @@ function enterSnapshotMode(asOf) {
 }
 function leaveSnapshotMode() {
   _snapshotMode = false;
+  _snapshotFailStreak = 0;
   clearSnapshotReprobe();
   try { setSnapshotBanner(false); } catch (e) {}
 }
 
-// 切回前台时若在快照模式，立即重探一次（不狂打：距上次探测至少 30s）
+// 前台可见：快照模式下按最小间隔重探；隐藏时暂停定时器
 try {
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState !== 'visible' || !_snapshotMode) return;
+    if (document.visibilityState === 'hidden') {
+      clearSnapshotReprobe();
+      return;
+    }
+    if (!_snapshotMode) return;
     const since = Date.now() - (_backendAliveCache.ts || 0);
-    if (since < 30000) return;
+    if (since < _VIS_REPROBE_MIN_MS) {
+      scheduleSnapshotReprobe();
+      return;
+    }
     probeBackendAlive(true).then(function (ok) {
-      if (!ok) return;
-      markBackendUp();
-      _snapshotMode = false;
-      try { setSnapshotBanner(false); } catch (e0) {}
-      try { showToast('后端已恢复，正在同步实时数据…', 'ok'); } catch (e1) {}
-      try { loadWatchlist(true); } catch (e2) {}
-    }).catch(function () {});
+      if (ok) {
+        markBackendUp();
+        leaveSnapshotMode();
+        try { showToast('后端已恢复，正在同步实时数据…', 'ok'); } catch (e1) {}
+        try { loadWatchlist(true); } catch (e2) {}
+      } else {
+        scheduleSnapshotReprobe();
+      }
+    }).catch(function () { scheduleSnapshotReprobe(); });
   });
 } catch (eVis) {}
 
@@ -1665,7 +1695,10 @@ async function api(path, opts = {}) {
   if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
   try {
     const res = await fetch(BACKEND + path, Object.assign({}, opts, { headers }));
-    if (res && (res.status >= 502 && res.status <= 504)) {
+    if (res && res.ok) {
+      // 业务请求成功视为探活，减少单独 /api/health
+      try { markBackendUp(); } catch (eOk) {}
+    } else if (res && (res.status >= 502 && res.status <= 504)) {
       try { markBackendDown(); } catch (e0) {}
     }
     return res;
