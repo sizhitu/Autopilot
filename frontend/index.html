@@ -4491,29 +4491,68 @@ function joinWatchlistWithSnapshot(items, metricSnap, meta) {
   };
 }
 
+function _snapCoverage(json) {
+  if (!json) return 0;
+  const by = json.by_code ? Object.keys(json.by_code).length : 0;
+  const st = Array.isArray(json.stocks) ? json.stocks.length : 0;
+  return Math.max(by, st);
+}
+
 async function loadPublicSnapshotJson() {
   let lastErr = null;
-  for (const url of WATCHLIST_SNAPSHOT_URLS) {
+  const found = [];
+  // 并行拉所有源，再选覆盖最多、as_of 最新的一份；避免同源旧 2 只文件挡住 GitHub 全量快照
+  await Promise.all(WATCHLIST_SNAPSHOT_URLS.map(async function (url) {
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) {
         lastErr = new Error('snapshot HTTP ' + res.status);
-        continue;
+        return;
       }
       const json = await res.json();
-      const hasBy = json && json.by_code && Object.keys(json.by_code).length;
-      const hasStocks = json && Array.isArray(json.stocks) && json.stocks.length;
-      if (!hasBy && !hasStocks) {
+      if (_snapCoverage(json) < 1) {
         lastErr = new Error('snapshot empty');
-        continue;
+        return;
       }
       json._snapshotUrl = url;
-      return json;
+      found.push(json);
     } catch (e) {
       lastErr = e;
     }
+  }));
+  if (!found.length) throw lastErr || new Error('无可用公共快照');
+  found.sort(function (a, b) {
+    const ca = _snapCoverage(a), cb = _snapCoverage(b);
+    if (cb !== ca) return cb - ca;
+    return String(b.as_of || '').localeCompare(String(a.as_of || ''));
+  });
+  // 把较小源的 by_code 补进最大源（缺码时用更早/其他源顺延补上）
+  const best = found[0];
+  best.by_code = best.by_code || {};
+  for (let i = 1; i < found.length; i++) {
+    const extra = found[i];
+    const extraBy = extra.by_code || {};
+    Object.keys(extraBy).forEach(function (k) {
+      if (!best.by_code[k] && extraBy[k]) best.by_code[k] = extraBy[k];
+    });
+    (extra.stocks || []).forEach(function (s) {
+      if (!s || !s.code) return;
+      const c = String(s.code);
+      if (!best.by_code[c]) best.by_code[c] = s;
+      if (!best.by_code[c.toUpperCase()]) best.by_code[c.toUpperCase()] = s;
+    });
   }
-  throw lastErr || new Error('无可用公共快照');
+  if ((!best.stocks || !best.stocks.length) && best.by_code) {
+    const seen = {};
+    best.stocks = [];
+    Object.keys(best.by_code).forEach(function (k) {
+      const row = best.by_code[k];
+      if (!row || !row.code || seen[row.code]) return;
+      seen[row.code] = true;
+      best.stocks.push(row);
+    });
+  }
+  return best;
 }
 
 async function fetchWatchlistSnapshot() {
