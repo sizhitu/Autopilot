@@ -3947,9 +3947,11 @@ function setWatchUpdatedLabel(json) {
     const d = pr.done, tot = pr.total;
     const prog = (d != null && tot) ? (` ${d}/${tot}`) : '';
     const eta = _formatEtaSeconds(_watchlistEtaSec(json));
-    el.textContent = t
-      ? (`更新于 ${t} · 刷新中${prog}… ${eta}`)
-      : (`首次加载中${prog}… ${eta}`);
+    const zeroStuck = (d === 0 || d === '0') && tot && Number(tot) > 0;
+    const msg = zeroStuck
+      ? (`更新于 ${t || ''} · 排队计算 0/${tot}（非探活，后台在拉行情）`.replace(/^更新于  · /, ''))
+      : (t ? (`更新于 ${t} · 刷新中${prog}… ${eta}`) : (`首次加载中${prog}… ${eta}`));
+    el.textContent = msg;
     try {
       const lo = document.querySelector('#watchlistLoading div:last-child');
       if (lo) lo.textContent = `加载中… ${eta}` + (prog ? `（${String(prog).trim()}）` : '');

@@ -1759,6 +1759,21 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
     elif hard:
         hard_purged = _hard_purge_stale_symbols(items)
 
+    # 卡死看门狗：refreshing 过久且进度仍为 0，释放状态允许重开后台
+    try:
+        if cache and cache.get('refreshing'):
+            age = now - float(cache.get('ts') or 0)
+            pdata = cache.get('data') if isinstance(cache.get('data'), dict) else {}
+            pr = (pdata.get('progress') or {}) if isinstance(pdata, dict) else {}
+            done_n = int(pr.get('done') or 0)
+            if age > 90 and done_n <= 0:
+                cache['refreshing'] = False
+                if isinstance(pdata, dict):
+                    pdata['computing'] = False
+                cache['ts'] = now - _WATCHLIST_SOFT_TTL - 1
+    except Exception:
+        pass
+
     # 软 TTL：完整可用数据 → 毫秒级返回；但必须与当前自选 codes 对齐
     # 若后台仍在 refreshing（例如刚点了二次强制刷新），禁止早退，否则前端停轮询、页面不重绘
     if (not force and cache and isinstance(cache.get('data'), dict)
@@ -1909,7 +1924,17 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                 'ts': time.time(), 'refreshing': True,
             }
             def _run_bg2():
-                if not _BG_SEM.acquire(blocking=False):
+                got = _BG_SEM.acquire(blocking=False)
+                if not got:
+                    # 不要把 refreshing 留死：拿不到锁则结束 computing，前端可再轮询触发
+                    try:
+                        ent = _CACHES.get(key)
+                        if ent:
+                            ent['refreshing'] = False
+                            if isinstance(ent.get('data'), dict):
+                                ent['data']['computing'] = False
+                    except Exception:
+                        pass
                     return
                 try:
                     _background_refresh(key, items, user_id, force)
