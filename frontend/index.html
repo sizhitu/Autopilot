@@ -217,7 +217,20 @@ body {
 .container { display:flex; gap:10px; padding:10px; min-height:calc(100vh - 48px); }
 .left { flex:3; min-width:0; }
 .right { flex:1; min-width:360px; max-width:440px; display:flex; flex-direction:column; gap:8px; }
-.card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px; }
+.card {
+  background: rgba(18, 22, 32, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--glass-shadow);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .card {
+    background: rgba(16, 22, 34, 0.58);
+    backdrop-filter: blur(18px) saturate(1.28);
+    -webkit-backdrop-filter: blur(18px) saturate(1.28);
+  }
+}
 
 /* 主导航 Tab：均分宽度、禁止换行，小屏缩短文案 */
 #mainTabBar {
@@ -225,7 +238,7 @@ body {
   width: 100%;
   gap: 0;
   border-bottom: 1px solid var(--border);
-  background: var(--card);
+  background: rgba(18, 22, 32, 0.82);
   position: sticky;
   /* 滚动后吸顶时仍避开灵动岛 */
   top: env(safe-area-inset-top, 0px);
@@ -515,10 +528,10 @@ body.help-open { overflow: hidden; touch-action: none; }
   position: sticky;
   left: 0;
   z-index: 8;
-  width: 76px;
-  min-width: 76px;
-  max-width: 88px;
-  background: #1a1d27 !important;
+  width: 50px;
+  min-width: 50px;
+  max-width: 58px;
+  background: rgba(18, 22, 32, 0.88) !important;
   background-clip: border-box;
   text-align: left !important;
   vertical-align: middle;
@@ -534,20 +547,20 @@ body.help-open { overflow: hidden; touch-action: none; }
   bottom: 0;
   left: -24px;
   width: 24px;
-  background: #1a1d27;
+  background: rgba(18, 22, 32, 0.88);
   pointer-events: none;
   z-index: -1;
 }
 #watchlistTable thead th:nth-child(1) {
   z-index: 10;
-  background: #1a1d27 !important;
+  background: rgba(18, 22, 32, 0.88) !important;
   white-space: nowrap;
 }
 #watchlistTable tbody tr:hover td:nth-child(1) {
-  background: #222632 !important;
+  background: rgba(34, 38, 50, 0.92) !important;
 }
 #watchlistTable tbody tr:hover td:nth-child(1)::before {
-  background: #222632;
+  background: rgba(34, 38, 50, 0.92);
 }
 #watchlistTable .wl-sym-wrap {
   display: flex;
@@ -589,9 +602,9 @@ body.help-open { overflow: hidden; touch-action: none; }
 @media (max-width: 640px) {
   #watchlistTable { min-width: 800px; }
   #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
-    width: 68px;
-    min-width: 68px;
-    max-width: 80px;
+    width: 46px;
+    min-width: 46px;
+    max-width: 54px;
     padding-left: 4px !important;
     padding-right: 4px !important;
   }
@@ -1096,7 +1109,7 @@ body.landing-locked #freeBanner { display: none !important; }
   <div class="card" id="watchlistScroll" style="overflow-x:auto;">
     <table id="watchlistTable">
       <colgroup>
-        <col style="width:76px">
+        <col style="width:50px">
         <col style="width:7%">
         <col style="width:7%">
         <col style="width:7%">
