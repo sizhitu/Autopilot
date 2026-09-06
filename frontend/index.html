@@ -628,7 +628,12 @@ body.help-open { overflow: hidden; touch-action: none; }
   background: rgba(255,255,255,.06);
   vertical-align: baseline;
 }
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 15%; }  /* 新高/估值 */
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 12%; max-width: 7.2em; }  /* 新高/估值 */
+#watchlistTable td:nth-child(8) { white-space: normal; line-height: 1.25; }
+.hl-val-cell { display:block; max-width:100%; }
+.hl-val-top, .hl-val-bot { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hl-val-bot { font-size:11px; margin-top:2px; }
+.hl-role-tag { font-size:9px; border:1px solid currentColor; border-radius:3px; padding:0 3px; }
 #watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 15%; text-align: center !important; }  /* 参考价/涨幅 */
 
 #watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:1px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
@@ -5238,9 +5243,12 @@ function renderWatchlist(stocks) {
     const _vColor = _vc[s.valuation] || 'var(--text-dim)';
     const _rc = {'压舱石':'#3498db','高赔率':'var(--orange)','周期弹性':'var(--purple)','卫星仓':'var(--gold)'};
     const _rColor = _rc[s.role] || 'var(--text-dim)';
-    const hlHtml = `${hlPart}<br><span style="color:${_vColor};font-weight:600;">${escapeHtml(s.valuation||'合理')}</span>` +
-      (s.valuation_detail ? ` <span style="color:var(--text-dim);font-size:10px;">${escapeHtml(s.valuation_detail)}</span>` : '') +
-      ` <span style="color:${_rColor};font-size:9px;border:1px solid currentColor;border-radius:3px;padding:0 3px;white-space:nowrap;">${escapeHtml(s.role||'')}</span>`;
+    const _vTip = [s.valuation, s.valuation_detail, s.role].filter(Boolean).join(' · ');
+    const hlHtml = `<div class="hl-val-cell" title="${escapeHtml(_vTip)}">` +
+      `<div class="hl-val-top">${hlPart}</div>` +
+      `<div class="hl-val-bot"><span style="color:${_vColor};font-weight:600;">${escapeHtml(s.valuation||'合理')}</span>` +
+      (s.role ? ` <span class="hl-role-tag" style="color:${_rColor};">${escapeHtml(s.role)}</span>` : '') +
+      `</div></div>`;
     let analystHtml = '<span style="color:var(--text-dim);">--</span>';
     if (s.analyst_target != null && s.analyst_target !== '' && !isNaN(Number(s.analyst_target))) {
       const up = s.analyst_upside_pct;
