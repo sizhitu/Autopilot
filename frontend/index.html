@@ -414,7 +414,35 @@ body.help-open { overflow: hidden; touch-action: none; }
   }
 }
 .help-backdrop.show { display:block; }
-.help-backdrop.show { display:block; }
+.help-q.open .help-pop { display: none !important; }
+.help-dock {
+  display: none;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10060;
+  padding: 14px 16px;
+  border-radius: 14px;
+  width: min(360px, calc(100vw - 28px));
+  max-height: min(72vh, 520px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.65;
+  text-align: left;
+  background: rgba(14, 18, 28, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+}
+.help-dock.show { display: block; }
+.help-dock .hp-sec { margin:0 0 10px; padding-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.08); }
+.help-dock .hp-sec:last-child { margin-bottom:0; padding-bottom:0; border-bottom:none; }
+.help-dock .hp-sec b, .help-dock b { color: var(--gold); font-weight: 600; }
+.help-dock .hp-sec p { margin:0; }
+.help-dock .hp-row { margin:6px 0; padding-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.06); }
 .help-pop b { color:var(--gold); font-weight:600; }
 .help-pop .hp-row { margin:6px 0; padding-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.06); }
 .help-pop .hp-row:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
@@ -924,6 +952,7 @@ body.landing-locked #freeBanner { display: none !important; }
 </div>
 
 <div id="helpBackdrop" class="help-backdrop" aria-hidden="true"></div>
+<div id="helpDock" class="help-dock" role="dialog" aria-modal="true" hidden></div>
 <div id="billingSuccessBanner" style="display:none;position:sticky;top:0;z-index:9000;background:linear-gradient(90deg,rgba(46,204,113,.18),rgba(241,196,15,.12));border-bottom:1px solid rgba(46,204,113,.35);padding:10px 14px;text-align:center;font-size:13px;color:var(--text);">
   <b style="color:var(--green);">支付成功</b>
   <span id="billingSuccessText">会员权益同步中…</span>
@@ -6505,6 +6534,12 @@ function closeAllHelp() {
   document.querySelectorAll('.help-q.open').forEach(function(el){ el.classList.remove('open'); });
   var bd = document.getElementById('helpBackdrop');
   if (bd) bd.classList.remove('show');
+  var dock = document.getElementById('helpDock');
+  if (dock) {
+    dock.classList.remove('show');
+    dock.innerHTML = '';
+    dock.hidden = true;
+  }
   document.body.classList.remove('help-open');
 }
 function toggleHelp(btn) {
@@ -6514,12 +6549,21 @@ function toggleHelp(btn) {
     btn.classList.add('open');
     var bd = document.getElementById('helpBackdrop');
     if (bd) bd.classList.add('show');
+    var src = btn.querySelector('.help-pop');
+    var dock = document.getElementById('helpDock');
+    if (src && dock) {
+      dock.innerHTML = src.innerHTML;
+      dock.classList.add('show');
+      dock.hidden = false;
+      dock.onclick = function(ev){ ev.stopPropagation(); };
+    }
     document.body.classList.add('help-open');
   }
 }
 document.addEventListener('click', function(e) {
   if (e.target.closest && e.target.closest('.help-q')) return;
   if (e.target.closest && e.target.closest('.help-pop')) return;
+  if (e.target.closest && e.target.closest('.help-dock')) return;
   closeAllHelp();
 });
 document.addEventListener('DOMContentLoaded', function() {
