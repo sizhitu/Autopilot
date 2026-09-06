@@ -515,17 +515,16 @@ body.help-open { overflow: hidden; touch-action: none; }
   position: sticky;
   left: 0;
   z-index: 8;
-  width: 80px;
-  min-width: 80px;
-  max-width: 92px;
+  width: 80px !important;
+  min-width: 80px !important;
+  max-width: 80px !important;
   background: #1a1d27 !important;
   background-clip: border-box;
   text-align: left !important;
   vertical-align: middle;
   white-space: normal;
-  /* 右侧阴影分隔；左侧用伪元素堵缝（不用 transform，避免 iOS sticky 失效） */
   box-shadow: 6px 0 10px -3px rgba(0,0,0,.6);
-  overflow: visible;
+  overflow: hidden;
 }
 #watchlistTable th:nth-child(1)::before,
 #watchlistTable td:nth-child(1)::before {
@@ -590,9 +589,9 @@ body.help-open { overflow: hidden; touch-action: none; }
 @media (max-width: 640px) {
   #watchlistTable { min-width: 800px; }
   #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
-    width: 76px;
-    min-width: 76px;
-    max-width: 88px;
+    width: 76px !important;
+    min-width: 76px !important;
+    max-width: 76px !important;
     padding-left: 4px !important;
     padding-right: 4px !important;
   }
