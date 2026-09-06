@@ -1269,7 +1269,7 @@ body.landing-locked #freeBanner { display: none !important; }
         <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?
           <span class="help-pop" onclick="event.stopPropagation()">
             <div class="hp-row"><b>三行怎么读</b><br>① 新高/新低：阶段位置，不当买卖点。<br>② 低估/合理/高估 + 定位（压舱石等）+ 风格（稳定/成长/周期/高波动）。<br>③ MA 偏离、升/降/平、Z、1Y，必要时 5Y。</div>
-            <div class="hp-row"><b>口径</b><br>斜率看 MA250 约 60 日前对比（&gt;+3% 升，&lt;−3% 降）。Z 用自身波动标准化。5Y 只给周期或与 1Y 差得开的标的。不再用 ±8% / ±35%。不是公允价。</div>
+            <div class="hp-row"><b>口径</b><br><b>斜率</b>：MA250 相对约 60 日前（&gt;+3% 升，&lt;−3% 降）。升表示年线抬高、下跌偏回撤；降表示年线走弱、低位偏趋势延续。Z 用自身波动标准化。5Y 只给周期或与 1Y 差得开的标的。</div>
           </span>
         </span>
       </div>
@@ -5143,7 +5143,7 @@ function renderWatchlistSummary(summary) {
 · <b>第一行</b> 新高/新低（近 5 日～一年或历史），只标位置，不当买卖点。<br>
 · <b>第二行</b> 低估/合理/高估 + 定位标签（压舱石/高赔率/周期弹性/卫星仓）+ 自动风格（稳定/成长/周期/高波动）。<br>
 · <b>第三行</b> <b>MA</b>现价相对 MA250 偏离；<b>升/降/平</b>为 MA250 相对约 60 日前斜率（&gt;+3% 升，&lt;−3% 降）；<b>Z</b>用自身波动标准化偏离；<b>1Y</b>近一年分位；<b>5Y</b>仅周期股或与 1Y 差得明显且历史够长时出现。<br>
-新高且斜率升不自动改「高估该卖」；新低且斜率降不自动改「低估该买」。不是 PE/DCF 公允价，也不再用固定 ±8% / ±35%。
+<b>斜率</b>用来判断中长期均线方向：升=年线仍在抬高，跌幅更可能是回撤；降=年线走弱，低位更可能是下跌中继。不是 PE/DCF 公允价。
 </p></div>
     <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股 — 分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF — 以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
     <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板。<br>
