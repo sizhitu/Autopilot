@@ -339,10 +339,10 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
     )
     # 新低 + 均线下降：下跌趋势，不标「低估可买」
     if p1 <= 0.12 and slope_tag == "下降":
-        return ("合理", "fair", detail + " ·新低不接飞刀")
+        return ("合理", "fair", detail)
     # 新高 + 均线上升：趋势未坏，不标「高估该卖」
     if p1 >= 0.92 and slope_tag == "上升":
-        return ("合理", "fair", detail + " ·新高不直接卖")
+        return ("合理", "fair", detail)
 
     # Z 为主，分位与斜率纠偏
     if z <= -2 and slope_tag != "下降" and p5 <= 0.40:
