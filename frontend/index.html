@@ -5252,7 +5252,7 @@ function renderWatchlist(stocks) {
     const chgText = chgVal == null ? '-' : ((chgVal >= 0 ? '+' : '') + chgVal + '%');
     // 结构化三列颜色
     const sigColors = {'red':'var(--red)','green':'var(--green)','blue':'var(--blue)','orange':'var(--orange)','gray':'var(--text-dim)'};
-    const timingText = s.timing || s.signal || '—';
+    const timingText = String(s.timing || s.signal || '—').replace('九转完成·', '九转·');
     const timingColor = sigColors[s.timing_color || s.signal_color] || 'var(--text-dim)';
     const trendText = s.trend_filter || s.trend || '—';
     const trendColor = sigColors[s.trend_filter_color] || 'var(--text-dim)';
