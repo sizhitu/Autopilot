@@ -886,7 +886,7 @@ body.landing-locked #freeBanner { display: none !important; }
     <div class="lg-values">
       <div class="lg-item">
         <div class="lg-ico">①</div>
-        <div><b>自选看板 · 一眼方向</b><p>九转时机、趋势过滤、操盘动作与估值分档，列表纵向速读。</p></div>
+        <div><b>自选看板 · 一眼方向</b><p>九转时机、趋势过滤、操盘动作，以及 MA250/斜率/Z/分位估值，列表纵向速读。</p></div>
       </div>
       <div class="lg-item">
         <div class="lg-ico">②</div>
@@ -1265,7 +1265,16 @@ body.landing-locked #freeBanner { display: none !important; }
 
     <!-- 新高 / 新低 / 估值 -->
     <div class="card" id="hlValCard" style="display:none;">
-      <div class="card-title">新高 / 新低 / 估值</div>
+      <div class="card-title">新高 / 新低 / 估值
+        <span class="help-q" onclick="event.stopPropagation();toggleHelp(this)" title="说明">?
+          <span class="help-pop" onclick="event.stopPropagation()">
+            <div class="hp-row"><b>新高/新低</b><br>阶段位置，不单独作为买卖依据。</div>
+            <div class="hp-row"><b>低估 / 合理 / 高估</b><br>由 MA250 偏离、60 日均线斜率、Z 分数、1 年分位综合；不再用固定 ±8% / ±35%。</div>
+            <div class="hp-row"><b>1Y / 5Y</b><br>1Y 近一年分位默认展示。5Y 五年分位只在周期股或与 1Y 明显不同、且 K 线够长时出现。</div>
+            <div class="hp-row"><b>注意</b><br>不是基本面公允价。仅供研究。</div>
+          </span>
+        </span>
+      </div>
       <div id="hlValBody"></div>
     </div>
 
@@ -5131,7 +5140,15 @@ function renderWatchlistSummary(summary) {
     <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）— 收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
     <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多·指标未齐 / 空·指标未齐」= 均线已偏多/偏空，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
     <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签。观望不标强度；其余动作后附 <b>·1～·5</b> 为该侧信号强度（5 最强）。买侧：关注买入 / 阶梯抄底关注；卖侧：关注卖出 / 阶梯止盈关注。同侧可比较强弱，跨侧勿直接比数字。冲突时降权观望。非买卖委托。</p></div>
-    <div class="hp-sec"><b>新高 / 估值</b><p>第一行是近期新高/新低位置，只描述阶段，不单独作为买卖依据。下面三档「低估 / 合理 / 高估」由 MA250 偏离、均线斜率（60日前对比）、Z 分数和 1 年价格分位综合得出，不是公司基本面公允价。<br>1Y 是近一年分位，几乎所有股票都看。5Y（五年分位）只在历史够长、且对周期股或与 1Y 差得明显时才显示——用来区分「一年看起来低、五年仍高」；窗口不足时不展示，避免和 1Y 重复。</p></div>
+    <div class="hp-sec"><b>新高 / 估值</b><p>
+<b>列上每一行</b><br>
+· 第一行：近 5 日～一年或历史新高/新低，只标位置，不单独当买卖点。<br>
+· 第二行：低估 / 合理 / 高估 + 仓位定位（压舱石等，手工标签）。<br>
+· 第三行：<b>MA</b>＝现价相对 MA250 的偏离；<b>升/降/平</b>＝MA250 相对约 60 个交易日前的斜率（&gt;+3% 升，&lt;−3% 降）；<b>Z</b>＝偏离用自身波动标准化（不同股票同一百分比含义不同）。<br>
+· 第四行：<b>1Y</b>＝近一年价格分位；<b>5Y</b>仅周期股或与 1Y 差得明显、且历史够长时才出现；后面是自动风格（稳定/成长/周期/高波动）。<br>
+<br>
+<b>怎么读</b>：新高 + 斜率升 → 不自动改成「高估该卖」。新低 + 斜率降 → 不自动改成「低估该买」。Z 偏低且斜率未降，才更接近高赔率回撤。这不是 PE/DCF 公允价，也已不再使用固定 ±8% / ±35% 那种粗阈值。
+</p></div>
     <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股 — 分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF — 以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
     <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板。<br>
 · <b>美股 / 美股 ETF</b> — Yahoo Finance、Nasdaq 官方历史接口、Stooq 等公开源，取最近可用交易日收盘价<br>
