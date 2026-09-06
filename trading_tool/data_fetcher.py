@@ -898,18 +898,25 @@ class DataFetcher:
         days = int(days or 300)
         key = (symbol, days)
         market = "cn" if self._is_cn_stock(symbol) and not self._is_us_index(symbol) else "us"
-        # 回测/均线至少需要足够根数；过短缓存（如15根）一律作废
-        min_ok = max(90, min(days, int(days * 0.6)))
+        # 老股至少约 180～300 根；15 根残片一律作废。
+        # 新上市：最后一根已是最新交易日则视为「上市至今全集」，允许 <90 根。
+        min_ok = max(180, min(days, int(days * 0.6))) if days >= 200 else max(90, min(days, int(days * 0.6)))
 
-        def _enough(frame) -> bool:
+        def _enough(frame, allow_ipo=False) -> bool:
             try:
-                return frame is not None and len(frame) >= min_ok
+                if frame is None or len(frame) < 10:
+                    return False
+                if len(frame) >= min_ok:
+                    return True
+                if allow_ipo and len(frame) >= 20 and not _bar_is_stale(_df_last_date(frame), market=market):
+                    return True
+                return False
             except Exception:
                 return False
 
         cached = _kline_cache_get(key)
         if cached is not None:
-            if _enough(cached) and not _bar_is_stale(_df_last_date(cached), market=market):
+            if _enough(cached, allow_ipo=True) and not _bar_is_stale(_df_last_date(cached), market=market):
                 return cached.copy()
             try:
                 invalidate_kline_cache(symbol)
@@ -922,19 +929,19 @@ class DataFetcher:
             df = self.fetch_cn_stock(symbol, days)
 
         # 过短结果：再试一次更大窗口（常见于源站截断/临时失败）
-        if not _enough(df):
+        if not _enough(df, allow_ipo=False):
             try:
                 if self._is_us_index(symbol) or not self._is_cn_stock(symbol):
                     df2 = self.fetch_us_stock(symbol, max(days, 400))
                 else:
                     df2 = self.fetch_cn_stock(symbol, max(days, 400))
-                if _enough(df2):
+                if _enough(df2, allow_ipo=True):
                     df = df2
             except Exception:
                 pass
 
         # 仅缓存足够长的序列，避免 15 根污染回测/分析
-        if _enough(df):
+        if _enough(df, allow_ipo=True):
             _kline_cache_set(key, df)
             if _bar_is_stale(_df_last_date(df), market=market):
                 try:

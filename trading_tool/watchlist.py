@@ -188,7 +188,8 @@ class StockStatus:
     market: str
     price: float = 0
     bar_date: str = ""  # 现价对应的K线交易日 YYYY-MM-DD
-    bar_stale: bool = False  # 明显落后于应有交易日
+    bar_stale: bool = False
+    bar_count: int = 0  # 明显落后于应有交易日
     change_1d: float = 0          # 当日涨跌幅%（最近一根K线相对前一根）
     change_5d: float = 0          # 近5日涨跌幅%
     signal: str = "观望"          # 兼容旧字段：操盘动作（汇总用）
@@ -514,9 +515,13 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
 
     try:
         df = fetcher.fetch(code, days)
-        if len(df) < 10:
-            status.error = f"数据不足({len(df)}根)"
+        if df is None or len(df) < 10:
+            status.error = f"数据不足({0 if df is None else len(df)}根)"
             return status
+        # 统一窗口：老股固定最近 300 根；新股/上市不足 300 则用上市至今全部
+        if len(df) > 300:
+            df = df.tail(300).reset_index(drop=True)
+        status.bar_count = int(len(df))
 
         # 用全精度收盘价计算涨跌幅，避免“先四舍五入价格再算”导致
         # 低价/微小波动股（如 8.626→8.63）涨跌幅符号翻转。
@@ -783,6 +788,7 @@ def _status_to_dict(st: StockStatus) -> dict:
         'price': st.price,
         'bar_date': getattr(st, 'bar_date', '') or '',
         'bar_stale': bool(getattr(st, 'bar_stale', False)),
+        'bar_count': int(getattr(st, 'bar_count', 0) or 0),
         'change_1d': st.change_1d,
         'change_5d': st.change_5d,
         'signal': st.signal,
@@ -1006,7 +1012,7 @@ def _row_is_date_fresh(row: dict, code: str = "") -> bool:
     return False
 
 
-def _status_dict_cached(code: str, name: str, days: int = 200, force_live: bool = False) -> dict:
+def _status_dict_cached(code: str, name: str, days: int = 300, force_live: bool = False) -> dict:
     k = str(code).strip().upper()
     hit = _STATUS_CACHE.get(k)
     now = time.time()
