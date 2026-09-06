@@ -290,16 +290,17 @@ def _ma250_context(df: pd.DataFrame) -> dict:
     closes = df['close'].astype(float)
     n = len(closes)
     close = float(closes.iloc[-1])
-    ma_win = min(250, n)
-    ma = float(closes.rolling(ma_win).mean().iloc[-1]) if ma_win >= 20 else float(closes.mean())
+    win = 250 if n >= 250 else max(20, n)
+    ma_s = closes.rolling(win, min_periods=min(60, win)).mean()
+    ma = float(ma_s.iloc[-1]) if pd.notna(ma_s.iloc[-1]) else float(closes.mean())
     slope = None
-    if n >= 80 and ma and ma > 0:
-        ma_series = closes.rolling(min(250, n)).mean()
-        ma_now = float(ma_series.iloc[-1])
-        ma_prev = float(ma_series.iloc[-61]) if n >= 61 else float(ma_series.iloc[0])
-        if ma_prev > 0:
-            slope = ma_now / ma_prev - 1.0
-    if slope is None:
+    valid = ma_s.dropna()
+    if len(valid) >= 61 and float(valid.iloc[-61]) > 0:
+        slope = float(valid.iloc[-1]) / float(valid.iloc[-61]) - 1.0
+    elif len(valid) >= 21 and float(valid.iloc[0]) > 0:
+        slope = float(valid.iloc[-1]) / float(valid.iloc[0]) - 1.0
+    if slope is None or (isinstance(slope, float) and (slope != slope)):
+        slope = 0.0
         slope_tag = "横盘"
     elif slope > 0.03:
         slope_tag = "上升"
@@ -307,12 +308,10 @@ def _ma250_context(df: pd.DataFrame) -> dict:
         slope_tag = "下降"
     else:
         slope_tag = "横盘"
-    # Z-score: (P-MA) / std(P-MA)
     z = 0.0
-    if ma_win >= 40 and ma > 0:
-        dev = closes.tail(ma_win) - closes.tail(ma_win).rolling(min(250, ma_win)).mean()
-        dev = dev.dropna()
-        sd = float(dev.std()) if len(dev) else 0.0
+    diff = (closes - ma_s).dropna()
+    if len(diff) >= 20 and ma > 0:
+        sd = float(diff.std())
         if sd > 1e-9:
             z = (close - ma) / sd
     pct_1y = _pct_rank(closes, 252, close)
