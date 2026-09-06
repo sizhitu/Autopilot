@@ -418,13 +418,13 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
             status.timing = "九转背离"
             status.timing_color = "gray"
         elif nt.get('is_complete') and nt.get('direction') == 'down':
-            status.timing = "下跌九转完成·买点"
+            status.timing = "下跌九转·买点"
             status.timing_color = "orange"
         elif nt.get('is_completing') and nt.get('direction') == 'down':
             status.timing = "下跌九转临近"
             status.timing_color = "orange"
         elif nt.get('is_complete') and nt.get('direction') == 'up':
-            status.timing = "上涨九转完成·卖点"
+            status.timing = "上涨九转·卖点"
             status.timing_color = "red"
         elif nt.get('is_completing') and nt.get('direction') == 'up':
             status.timing = "上涨九转临近"
@@ -659,13 +659,13 @@ def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
             status.timing = "九转背离"
             status.timing_color = "gray"
         elif nt.get('is_complete') and nt.get('direction') == 'down':
-            status.timing = "下跌九转完成·买点"
+            status.timing = "下跌九转·买点"
             status.timing_color = "orange"
         elif nt.get('is_completing') and nt.get('direction') == 'down':
             status.timing = "下跌九转临近"
             status.timing_color = "orange"
         elif nt.get('is_complete') and nt.get('direction') == 'up':
-            status.timing = "上涨九转完成·卖点"
+            status.timing = "上涨九转·卖点"
             status.timing_color = "red"
         elif nt.get('is_completing') and nt.get('direction') == 'up':
             status.timing = "上涨九转临近"
