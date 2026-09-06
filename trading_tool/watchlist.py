@@ -1829,8 +1829,8 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                         # 周五 vs 周一特殊：bar 为周五且今天周一/二可接受
                         all_fresh = False
                         break
-                # 仅「非用户手动 force」时才因全员日期新鲜而跳过；点刷新必须重算
-                if all_fresh and (out.get('stocks') or []) and not hard and not force:
+                # 行情日期已是最新交易日：登录/软刷新/普通刷新都跳过重拉（hard 才强拉）
+                if all_fresh and (out.get('stocks') or []) and not hard:
                     force_needed = False
                     out['computing'] = False
                     out['cache_hit'] = True

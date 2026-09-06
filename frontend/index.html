@@ -5343,7 +5343,7 @@ function _compositeStrength(level, boardStr, allPass, passCount, layerTotal, boa
   return Math.max(1, Math.min(5, Math.round(n)));
 }
 
-function synthesizeDecision(boardAction, analysisSignal, analysisAction, layers, boardStrength) {
+function synthesizeDecision(boardAction, analysisSignal, analysisAction, layers, boardStrength, nineTurn) {
   const ba = String(boardAction || '').trim() || '观望';
   const sig = String(analysisSignal || '').trim();
   let allPass = false;
@@ -5379,6 +5379,13 @@ function synthesizeDecision(boardAction, analysisSignal, analysisAction, layers,
     return pack('观望偏多：看板有买侧关注，三层尚未齐备，等待结构对齐', 'wait');
   }
   if (boardSell) {
+    // 上涨九转未完成（<8）且分析引擎买入/Fib止跌时，不把「减仓」当成主操作
+    const nt = arguments.length > 5 ? arguments[5] : null;
+    const upCnt = nt && (Number(nt.monthly_count || nt.count || 0));
+    const ntUpIncomplete = nt && (nt.direction === 'up' || /▲/.test(String(nt.text || nt.display || ''))) && (upCnt > 0 && upCnt < 8);
+    if (anaBuy && ntUpIncomplete) {
+      return pack('观望（结构偏多且有止跌确认，上涨九转未完成，先不动）', 'wait');
+    }
     if (anaBuy) return pack('以卖/减为先（看板卖侧与分析买向冲突，优先看板节奏）', 'sell');
     return pack('关注减仓/兑现（看板卖侧' + (allPass ? '；结构仍偏强宜分批' : '') + '）', 'sell');
   }
@@ -5403,7 +5410,7 @@ function updateResults(data, meta, nineTurn) {
   try {
     const boardMeta = _boardMetaForSymbol(typeof currentSymbol !== 'undefined' ? currentSymbol : '');
     const boardAct = boardMeta.action;
-    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers, boardMeta.strength);
+    const syn = synthesizeDecision(boardAct, data.signal, data.action, data.layers, boardMeta.strength, nineTurn);
     const mainMap = { buy: '可关注买入', sell: '关注减仓', wait: '观望' };
     let mainLabel = mainMap[syn.level] || '观望';
     if (syn.level === 'wait' && /偏多/.test(syn.text || '')) mainLabel = '观望';
