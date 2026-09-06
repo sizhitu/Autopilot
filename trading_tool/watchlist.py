@@ -258,54 +258,105 @@ def _detect_high_low(df: pd.DataFrame) -> tuple:
     return ("—", "none")
 
 
-def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
-    """
-    估值状态（按持仓定位差异化算法）。返回 (文本, 类型, 依据明细)。
+def _pct_rank(closes, window: int, close: float) -> float:
+    win = closes.tail(min(window, len(closes)))
+    if win is None or len(win) < 5:
+        return 0.5
+    return float((win.values <= close).sum()) / float(len(win))
 
-    - 压舱石  : 收盘价 vs MA250，偏离 ±8% 即判定（稳健股小幅错配即值得关注）
-    - 高赔率  : 收盘价 vs MA250，偏离 ±35% 才判定（成长股常大幅超涨，只标极端）
-    - 周期弹性: 收盘价 vs MA120，偏离 ±18% 判定（捕捉周期峰谷，用中期均线）
-    - 卫星仓  : 收盘价在近250日区间的分位数，≥80% 高估 / ≤20% 低估
-               （投机品均值回归意义弱，改用区间位置）
 
-    均线周期自适应：取 ≤目标周期且数据足够的最长标准周期；数据不足时退化为全部均值。
-    """
-    cfg = ROLE_VAL_CONFIG.get(role, ROLE_VAL_CONFIG[DEFAULT_ROLE])
-    closes = df['close']
-    n = len(df)
+def _auto_style(df: pd.DataFrame) -> str:
+    """用近250日波动与最大回撤自动分型：稳定/成长/周期/高波动。"""
+    closes = df['close'].astype(float)
+    n = len(closes)
+    if n < 30:
+        return "成长"
+    ret = closes.pct_change().dropna()
+    win = ret.tail(min(250, len(ret)))
+    vol = float(win.std()) if len(win) else 0.02
+    cwin = closes.tail(min(250, n))
+    peak = cwin.cummax()
+    dd = float(((cwin / peak) - 1.0).min()) if len(cwin) else 0.0
+    if vol >= 0.035 or dd <= -0.50:
+        return "高波动"
+    if vol <= 0.012 and dd >= -0.22:
+        return "稳定"
+    if dd <= -0.32 and vol >= 0.018:
+        return "周期"
+    return "成长"
+
+
+def _ma250_context(df: pd.DataFrame) -> dict:
+    closes = df['close'].astype(float)
+    n = len(closes)
     close = float(closes.iloc[-1])
+    ma_win = min(250, n)
+    ma = float(closes.rolling(ma_win).mean().iloc[-1]) if ma_win >= 20 else float(closes.mean())
+    slope = None
+    if n >= 80 and ma and ma > 0:
+        ma_series = closes.rolling(min(250, n)).mean()
+        ma_now = float(ma_series.iloc[-1])
+        ma_prev = float(ma_series.iloc[-61]) if n >= 61 else float(ma_series.iloc[0])
+        if ma_prev > 0:
+            slope = ma_now / ma_prev - 1.0
+    if slope is None:
+        slope_tag = "横盘"
+    elif slope > 0.03:
+        slope_tag = "上升"
+    elif slope < -0.03:
+        slope_tag = "下降"
+    else:
+        slope_tag = "横盘"
+    # Z-score: (P-MA) / std(P-MA)
+    z = 0.0
+    if ma_win >= 40 and ma > 0:
+        dev = closes.tail(ma_win) - closes.tail(ma_win).rolling(min(250, ma_win)).mean()
+        dev = dev.dropna()
+        sd = float(dev.std()) if len(dev) else 0.0
+        if sd > 1e-9:
+            z = (close - ma) / sd
+    pct_1y = _pct_rank(closes, 252, close)
+    pct_5y = _pct_rank(closes, 1250, close)
+    hi_52 = float(closes.tail(min(252, n)).max())
+    dd_52 = (close / hi_52 - 1.0) if hi_52 > 0 else 0.0
+    return {
+        "ma": ma, "slope": slope or 0.0, "slope_tag": slope_tag, "z": z,
+        "pct_1y": pct_1y, "pct_5y": pct_5y, "dd_52": dd_52, "close": close,
+        "style": _auto_style(df),
+    }
 
-    if cfg['method'] == 'pct':
-        win = closes.tail(min(cfg['window'], n))
-        rank = float((win.values <= close).sum()) / len(win) if len(win) else 0.5
-        if rank >= cfg['over']:
-            return ("高估", "over", f"分位{rank*100:.0f}%")
-        if rank <= cfg['under']:
-            return ("低估", "under", f"分位{rank*100:.0f}%")
-        return ("合理", "fair", f"分位{rank*100:.0f}%")
 
-    # method == 'ma'
-    target = cfg['ma']
-    ma = None
-    used = None
-    for p in (250, 200, 150, 120, 100, 50, 30, 20):
-        if p <= target and n >= p:
-            m = closes.rolling(p).mean().iloc[-1]
-            if not pd.isna(m) and float(m) > 0:
-                ma = float(m)
-                used = f"MA{p}"
-                break
-    if ma is None:
-        ma = float(closes.mean())
-        used = f"均值{n}"
-    if ma <= 0:
-        return ("合理", "fair", "")
-    dev = (close - ma) / ma
-    if dev >= cfg['over']:
-        return ("高估", "over", f"{used} {dev*100:+.0f}%")
-    if dev <= cfg['under']:
-        return ("低估", "under", f"{used} {dev*100:+.0f}%")
-    return ("合理", "fair", f"{used} {dev*100:+.0f}%")
+def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
+    """估值：MA250偏离 + 斜率 + 1Y/5Y分位 + Z-score。新高不直接判高估，新低不直接判低估。"""
+    ctx = _ma250_context(df)
+    style = ctx["style"]
+    z, slope_tag = ctx["z"], ctx["slope_tag"]
+    p1, p5 = ctx["pct_1y"], ctx["pct_5y"]
+    dev = (ctx["close"] - ctx["ma"]) / ctx["ma"] if ctx["ma"] else 0.0
+    detail = (
+        f"MA250{dev*100:+.0f}% 斜率{slope_tag} Z{z:+.1f} "
+        f"1Y分位{p1*100:.0f}% 5Y分位{p5*100:.0f}% {style}"
+    )
+    # 新低 + 均线下降：下跌趋势，不标「低估可买」
+    if p1 <= 0.12 and slope_tag == "下降":
+        return ("合理", "fair", detail + " ·新低不接飞刀")
+    # 新高 + 均线上升：趋势未坏，不标「高估该卖」
+    if p1 >= 0.92 and slope_tag == "上升":
+        return ("合理", "fair", detail + " ·新高不直接卖")
+
+    # Z 为主，分位与斜率纠偏
+    if z <= -2 and slope_tag != "下降" and p5 <= 0.40:
+        return ("低估", "under", detail)
+    if z <= -1 and slope_tag == "上升" and p1 <= 0.35:
+        return ("低估", "under", detail)
+    if z >= 2 and slope_tag != "上升" and p5 >= 0.70:
+        return ("高估", "over", detail)
+    if z >= 1.5 and slope_tag == "下降" and p1 >= 0.80:
+        return ("高估", "over", detail)
+    # 稳定型对偏离更敏感
+    if style == "稳定" and abs(dev) >= 0.15:
+        return (("高估", "over", detail) if dev > 0 else ("低估", "under", detail))
+    return ("合理", "fair", detail)
 
 
 
@@ -499,6 +550,23 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
         status.valuation = val_text
         status.valuation_type = val_type
         status.valuation_detail = val_detail
+        try:
+            if status.action_side == "sell" and hl_type == "high" and not bool(nt.get("is_complete")):
+                status.action = "观望"
+                status.action_color = "gray"
+                status.action_strength = 0
+                status.action_side = ""
+                status.action_reason = (status.action_reason or "") + "；新高不直接卖"
+            if status.action_side == "buy" and hl_type == "low" and not bool(nt.get("is_complete")):
+                # 均线仍下降时不接飞刀
+                if "下降" in (val_detail or "") or "新低不接飞刀" in (val_detail or ""):
+                    status.action = "观望"
+                    status.action_color = "gray"
+                    status.action_strength = 0
+                    status.action_side = ""
+                    status.action_reason = (status.action_reason or "") + "；新低不接飞刀"
+        except Exception:
+            pass
         # 冷备路径不拉分析师目标价
         status.analyst_target = None
         status.analyst_upside_pct = None
@@ -748,11 +816,26 @@ def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
         status.high_low = hl_text
         status.high_low_type = hl_type
 
-        # 估值状态（按持仓定位差异化算法：压舱石/高赔率/周期弹性/卫星仓）
         val_text, val_type, val_detail = _calc_valuation(df, status.role)
         status.valuation = val_text
         status.valuation_type = val_type
         status.valuation_detail = val_detail
+        try:
+            if status.action_side == "sell" and hl_type == "high" and not bool(nt.get("is_complete")):
+                status.action = "观望"
+                status.action_color = "gray"
+                status.action_strength = 0
+                status.action_side = ""
+                status.action_reason = (status.action_reason or "") + "；新高不直接卖"
+            if status.action_side == "buy" and hl_type == "low" and not bool(nt.get("is_complete")):
+                if "下降" in (val_detail or "") or "新低不接飞刀" in (val_detail or ""):
+                    status.action = "观望"
+                    status.action_color = "gray"
+                    status.action_strength = 0
+                    status.action_side = ""
+                    status.action_reason = (status.action_reason or "") + "；新低不接飞刀"
+        except Exception:
+            pass
 
         # 参考价（个股：去极值分析师均价；基金/ETF：NAV）+ 相对现价涨幅空间
         try:
