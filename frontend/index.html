@@ -515,16 +515,16 @@ body.help-open { overflow: hidden; touch-action: none; }
   position: sticky;
   left: 0;
   z-index: 8;
-  width: 72px !important;
-  min-width: 72px !important;
-  max-width: 72px !important;
+  width: 96px;
+  min-width: 96px;
+  max-width: 108px;
   background: #1a1d27 !important;
-  background-clip: padding-box;
+  background-clip: border-box;
   text-align: left !important;
   vertical-align: middle;
-  white-space: normal !important;
-  box-shadow: 4px 0 8px -4px rgba(0,0,0,.55);
-  overflow: hidden !important;
+  white-space: normal;
+  box-shadow: 6px 0 10px -3px rgba(0,0,0,.6);
+  overflow: visible;
 }
 #watchlistTable th:nth-child(1)::before,
 #watchlistTable td:nth-child(1)::before {
@@ -554,9 +554,6 @@ body.help-open { overflow: hidden; touch-action: none; }
   align-items: flex-start;
   gap: 2px;
   min-width: 0;
-  width: 100%;
-  max-width: 68px;
-  overflow: hidden;
 }
 #watchlistTable .wl-sym-stack {
   display: flex;
@@ -590,11 +587,11 @@ body.help-open { overflow: hidden; touch-action: none; }
   flex-shrink: 0; line-height: 1.2;
 }
 @media (max-width: 640px) {
-  #watchlistTable { min-width: 720px; }
+  #watchlistTable { min-width: 800px; }
   #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
-    width: 68px !important;
-    min-width: 68px !important;
-    max-width: 68px !important;
+    width: 88px;
+    min-width: 88px;
+    max-width: 100px;
     padding-left: 4px !important;
     padding-right: 4px !important;
   }
