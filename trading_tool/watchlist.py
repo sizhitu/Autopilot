@@ -622,7 +622,8 @@ def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
                         d2 = _df_last_date(df2)
                         d1 = _df_last_date(df)
                         if d2 and (d1 is None or d2 >= d1):
-                            df = df2
+                            df_val = df2.copy()
+                            df = df2.tail(300).reset_index(drop=True) if len(df2) > 300 else df2
                             last_close = float(df['close'].iloc[-1])
                             status.price = round(last_close, 2)
                             status.bar_date = d2.strftime('%Y-%m-%d') if d2 else status.bar_date
@@ -821,7 +822,7 @@ def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
         status.high_low = hl_text
         status.high_low_type = hl_type
 
-        val_text, val_type, val_detail = _calc_valuation(df, status.role)
+        val_text, val_type, val_detail = _calc_valuation(df_val, status.role)
         status.valuation = val_text
         status.valuation_type = val_type
         status.valuation_detail = val_detail
