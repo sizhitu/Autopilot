@@ -628,13 +628,13 @@ body.help-open { overflow: hidden; touch-action: none; }
   background: rgba(255,255,255,.06);
   vertical-align: baseline;
 }
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 16%; min-width: 5.6em; }  /* 新高/估值 */
-#watchlistTable td:nth-child(8) { white-space: normal; line-height: 1.2; vertical-align: top; }
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 20%; min-width: 7.2em; }  /* 新高/估值 */
+#watchlistTable td:nth-child(8) { white-space: normal; line-height: 1.15; vertical-align: middle; }
 .hl-val-cell { display:block; max-width:100%; }
 .hl-val-top, .hl-val-bot { display:block; }
 .hl-val-bot { font-size:11px; margin-top:1px; }
-.hl-val-meta { display:block; font-size:10px; color:var(--text-dim); font-weight:400; white-space:normal; word-break:break-all; }
-.hl-role-tag { font-size:9px; border:1px solid currentColor; border-radius:3px; padding:0 3px; }
+.hl-val-meta { display:block; font-size:10px; color:var(--text-dim); font-weight:400; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hl-role-tag { font-size:9px; border:1px solid currentColor; border-radius:3px; padding:0 3px; margin-right:2px; }
 #watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 15%; text-align: center !important; }  /* 参考价/涨幅 */
 
 #watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:1px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
@@ -5261,30 +5261,33 @@ function renderWatchlist(stocks) {
     const _vColor = _vc[s.valuation] || 'var(--text-dim)';
     const _rc = {'压舱石':'#3498db','高赔率':'var(--orange)','周期弹性':'var(--purple)','卫星仓':'var(--gold)'};
     const _rColor = _rc[s.role] || 'var(--text-dim)';
-    function _compactValDetail(raw) {
+    function _parseValDetail(raw) {
       raw = String(raw || '');
-      if (!raw) return '';
-      const bits = [];
       const ma = raw.match(/MA250([+-]?\d+%)/);
       const sl = raw.match(/斜率(上升|下降|横盘)/);
       const z = raw.match(/Z([+-]?\d+(?:\.\d+)?)/);
       const y1 = raw.match(/1Y分位(\d+)%/);
       const y5 = raw.match(/5Y分位(\d+)%/);
       const st = raw.match(/(稳定|成长|周期|高波动)/);
-      if (ma) bits.push('MA' + ma[1]);
-      if (sl) bits.push(sl[1] === '上升' ? '升' : (sl[1] === '下降' ? '降' : '平'));
-      if (z) bits.push('Z' + z[1]);
-      const line2 = bits.join(' ');
-      const line3 = [y1 ? ('1Y' + y1[1] + '%') : '', y5 ? ('5Y' + y5[1] + '%') : '', st ? st[1] : ''].filter(Boolean).join(' ');
-      return [line2, line3].filter(Boolean).map(function (t) {
-        return `<div class="hl-val-meta">${escapeHtml(t)}</div>`;
-      }).join('');
+      const nums = [];
+      if (ma) nums.push('MA' + ma[1]);
+      if (sl) nums.push(sl[1] === '上升' ? '升' : (sl[1] === '下降' ? '降' : '平'));
+      if (z) nums.push('Z' + z[1]);
+      if (y1) nums.push('1Y' + y1[1] + '%');
+      if (y5) nums.push('5Y' + y5[1] + '%');
+      return { style: st ? st[1] : '', nums: nums.join(' ') };
     }
+    const _vd = _parseValDetail(s.valuation_detail);
+    const _sc = {'稳定':'#3498db','成长':'var(--orange)','周期':'var(--purple)','高波动':'var(--gold)'};
+    const _sColor = _sc[_vd.style] || 'var(--text-dim)';
     const hlHtml = `<div class="hl-val-cell">` +
       `<div class="hl-val-top">${hlPart}</div>` +
       `<div class="hl-val-bot"><span style="color:${_vColor};font-weight:600;">${escapeHtml(s.valuation||'合理')}</span>` +
       (s.role ? ` <span class="hl-role-tag" style="color:${_rColor};">${escapeHtml(s.role)}</span>` : '') +
-      `</div>${_compactValDetail(s.valuation_detail)}</div>`;
+      (_vd.style ? ` <span class="hl-role-tag" style="color:${_sColor};">${escapeHtml(_vd.style)}</span>` : '') +
+      `</div>` +
+      (_vd.nums ? `<div class="hl-val-meta">${escapeHtml(_vd.nums)}</div>` : '') +
+      `</div>`;
     let analystHtml = '<span style="color:var(--text-dim);">--</span>';
     if (s.analyst_target != null && s.analyst_target !== '' && !isNaN(Number(s.analyst_target))) {
       const up = s.analyst_upside_pct;
