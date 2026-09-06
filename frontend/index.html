@@ -512,7 +512,7 @@ body.help-open { overflow: hidden; touch-action: none; }
   margin: 0;
   padding: 0;
 }
-#watchlistTable { table-layout: fixed; width: 100%; min-width: 780px; border-collapse: separate; border-spacing: 0; }
+#watchlistTable { table-layout: fixed; width: 714px; min-width: 714px; max-width: 714px; border-collapse: separate; border-spacing: 0; }
 #watchlistTable th, #watchlistTable td {
   white-space: nowrap; vertical-align: middle;
   padding: 6px 3px !important;
@@ -528,9 +528,9 @@ body.help-open { overflow: hidden; touch-action: none; }
   position: sticky;
   left: 0;
   z-index: 8;
-  width: 34px !important;
-  min-width: 34px !important;
-  max-width: 34px !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
   background: #151821 !important;
   background-clip: padding-box;
   text-align: left !important;
@@ -567,8 +567,8 @@ body.help-open { overflow: hidden; touch-action: none; }
   align-items: flex-start;
   gap: 1px;
   min-width: 0;
-  width: 32px;
-  max-width: 32px;
+  width: 38px;
+  max-width: 38px;
 }
 #watchlistTable .wl-sym-stack {
   display: flex;
@@ -604,9 +604,9 @@ body.help-open { overflow: hidden; touch-action: none; }
 @media (max-width: 640px) {
   #watchlistTable { min-width: 800px; }
   #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
-    width: 34px !important;
-    min-width: 34px !important;
-    max-width: 34px !important;
+    width: 40px !important;
+    min-width: 40px !important;
+    max-width: 40px !important;
     padding-left: 4px !important;
     padding-right: 4px !important;
   }
@@ -614,9 +614,9 @@ body.help-open { overflow: hidden; touch-action: none; }
   #watchlistTable .wl-name { font-size: 9px; }
 }
 /* 合并后列序：1代码名称 2现价 3日涨幅 4近5日 5九转 6趋势 7操盘 8新高 9参考价 */
-#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 7%; }   /* 现价 */
-#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 7%; }   /* 日涨幅 */
-#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 7%; }   /* 近5日 */
+#watchlistTable th:nth-child(2), #watchlistTable td:nth-child(2) { width: 64px; min-width: 64px; }   /* 现价 */
+#watchlistTable th:nth-child(3), #watchlistTable td:nth-child(3) { width: 58px; min-width: 58px; }   /* 日涨幅 */
+#watchlistTable th:nth-child(4), #watchlistTable td:nth-child(4) { width: 52px; min-width: 52px; }   /* 近5日 */
 #watchlistTable td:nth-child(1) { text-align: left; }
 #watchlistTable td:nth-child(2),
 #watchlistTable td:nth-child(3),
@@ -625,9 +625,9 @@ body.help-open { overflow: hidden; touch-action: none; }
 #watchlistTable td:nth-child(6),
 #watchlistTable td:nth-child(7) { text-align: center !important; }
 #watchlistTable td:nth-child(8) { text-align: left !important; }
-#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 12%; }  /* 九转时机 */
-#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 8%; }   /* 趋势过滤 */
-#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 10%; }  /* 操盘动作 */
+#watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 88px; min-width: 88px; }  /* 九转时机 */
+#watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 72px; min-width: 72px; }   /* 趋势过滤 */
+#watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 84px; min-width: 84px; }  /* 操盘动作 */
 #watchlistTable td:nth-child(7) { padding-left: 3px !important; padding-right: 3px !important; white-space: nowrap; }
 #watchlistTable td:nth-child(7) .wl-act-str {
   display: inline-block;
@@ -642,14 +642,14 @@ body.help-open { overflow: hidden; touch-action: none; }
   background: rgba(255,255,255,.06);
   vertical-align: baseline;
 }
-#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 18%; min-width: 0; }  /* 新高/估值 */
+#watchlistTable th:nth-child(8), #watchlistTable td:nth-child(8) { width: 120px; min-width: 120px; }  /* 新高/估值 */
 #watchlistTable td:nth-child(8) { white-space: nowrap; line-height: 1.15; vertical-align: middle; padding-right: 4px !important; }
 .hl-val-cell { display:block; max-width:100%; }
 .hl-val-top, .hl-val-bot { display:block; }
 .hl-val-bot { font-size:11px; margin-top:1px; }
 .hl-val-meta { display:block; font-size:10px; color:var(--text-dim); font-weight:400; white-space:nowrap; overflow:visible; }
 .hl-role-tag { font-size:9px; border:1px solid currentColor; border-radius:3px; padding:0 3px; margin-right:2px; }
-#watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 13%; text-align: center !important; padding-left: 4px !important; }  /* 参考价/涨幅 */
+#watchlistTable th:nth-child(9), #watchlistTable td:nth-child(9) { width: 96px; min-width: 96px; text-align: center !important; padding-left: 4px !important; }  /* 参考价/涨幅 */
 
 #watchlistTable .sub-nt { display:block; font-size:10px; color:var(--text-dim); font-weight:400; margin-top:1px; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
@@ -1111,15 +1111,15 @@ body.landing-locked #freeBanner { display: none !important; }
   <div class="card" id="watchlistScroll" style="overflow-x:auto;">
     <table id="watchlistTable">
       <colgroup>
-        <col style="width:34px">
-        <col style="width:7%">
-        <col style="width:7%">
-        <col style="width:7%">
-        <col style="width:12%">
-        <col style="width:8%">
-        <col style="width:10%">
-        <col style="width:18%">
-        <col style="width:13%">
+        <col style="width:40px">
+        <col style="width:64px">
+        <col style="width:58px">
+        <col style="width:52px">
+        <col style="width:88px">
+        <col style="width:72px">
+        <col style="width:84px">
+        <col style="width:120px">
+        <col style="width:96px">
       </colgroup>
       <thead>
         <tr style="color:var(--text-dim); border-bottom:1px solid var(--border);">
