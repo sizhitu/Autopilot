@@ -1,5 +1,5 @@
 /* Autopilot PWA Service Worker - minimal for installability + basic offline shell */
-const CACHE_NAME = 'autopilot-v1';
+const CACHE_NAME = 'autopilot-v2';
 const PRECACHE = [
   '/',
   '/index.html',
@@ -36,8 +36,23 @@ self.addEventListener('fetch', (event) => {
     return; // let browser handle normally
   }
 
-  // For same-origin static: try cache, fallback network
+  // HTML 网络优先，避免主屏 PWA 一直用旧 index 导致列宽改了看不见
   if (url.origin === self.location.origin) {
+    const isHTML = event.request.mode === 'navigate' ||
+      url.pathname === '/' || url.pathname.endsWith('.html') ||
+      (event.request.headers.get('accept') || '').includes('text/html');
+    if (isHTML) {
+      event.respondWith(
+        fetch(event.request).then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        }).catch(() => caches.match(event.request))
+      );
+      return;
+    }
     event.respondWith(
       caches.match(event.request).then((cached) => {
         const fetchPromise = fetch(event.request).then((networkResponse) => {
