@@ -963,6 +963,23 @@ def _expected_bar_date_str(code: str) -> str:
         return ""
 
 
+
+def _rows_all_session_fresh(stocks) -> bool:
+    """全部可用行的 bar_date 已是各市场最近交易日（周末/盘后锁定用）。"""
+    rows = [s for s in (stocks or []) if s]
+    if not rows:
+        return False
+    usable = 0
+    for s in rows:
+        if s.get('pending') or s.get('price') in (None, '', '-', '…'):
+            return False
+        code = str(s.get('code') or '')
+        if not _row_is_date_fresh(s, code):
+            return False
+        usable += 1
+    return usable > 0
+
+
 def _row_is_date_fresh(row: dict, code: str = "") -> bool:
     """相对该市场应有交易日是否够新。"""
     if not row or not isinstance(row, dict):
@@ -1808,38 +1825,23 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         prev_ts = out.get('updated_at') or out.get('prev_updated_at') or ''
         out['prev_updated_at'] = prev_ts
         out['updated_at'] = prev_ts  # 刷新完成前不改展示时间
-        # force 时若全部行 bar_date 已是目标交易日且非 stale，跳过重算（避免拉回 T-1）
+        # 交易日未变（含周末）：锁定已有九转/操盘，不因 45s TTL 或普通刷新重算
+        session_locked = False
+        try:
+            session_locked = (not hard) and _rows_all_session_fresh(out.get('stocks') or [])
+        except Exception:
+            session_locked = False
+        if session_locked:
+            force_needed = False
+            out['computing'] = False
+            out['cache_hit'] = True
+            out['stale'] = False
+            out['skipped_force'] = True
+            out['session_locked'] = True
+            return _annotate_and_maybe_refresh_dates(out, key, items)
         force_needed = bool(force)
-        if force_needed:
-            try:
-                from data_fetcher import _expected_session_date
-                all_fresh = True
-                for s in (out.get('stocks') or []):
-                    if not s or s.get('pending'):
-                        all_fresh = False
-                        break
-                    bd = str(s.get('bar_date') or '')[:10]
-                    if not bd or s.get('bar_stale'):
-                        all_fresh = False
-                        break
-                    mkt = 'cn' if str(s.get('code') or '').isdigit() else 'us'
-                    exp = _expected_session_date(mkt)
-                    exp_s = exp.strftime('%Y-%m-%d') if exp else ''
-                    if exp_s and bd < exp_s:
-                        # 周五 vs 周一特殊：bar 为周五且今天周一/二可接受
-                        all_fresh = False
-                        break
-                # 行情日期已是最新交易日：登录/软刷新/普通刷新都跳过重拉（hard 才强拉）
-                if all_fresh and (out.get('stocks') or []) and not hard:
-                    force_needed = False
-                    out['computing'] = False
-                    out['cache_hit'] = True
-                    out['skipped_force'] = True
-                    return _annotate_and_maybe_refresh_dates(out, key, items)
-                if hard and hard_purged:
-                    force_needed = True
-            except Exception:
-                pass
+        if hard and hard_purged:
+            force_needed = True
         need_refresh = force_needed or out['stale'] or (
             {str(s.get('code')).upper() for s in out['stocks'] if s and s.get('pending')}
         )
