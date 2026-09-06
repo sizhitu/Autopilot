@@ -316,13 +316,14 @@ def _ma250_context(df: pd.DataFrame) -> dict:
         if sd > 1e-9:
             z = (close - ma) / sd
     pct_1y = _pct_rank(closes, 252, close)
-    pct_5y = _pct_rank(closes, 1250, close)
+    # 5年分位需要足够长历史，否则与1年重复，无参考价值
+    pct_5y = _pct_rank(closes, 1250, close) if n >= 600 else None
     hi_52 = float(closes.tail(min(252, n)).max())
     dd_52 = (close / hi_52 - 1.0) if hi_52 > 0 else 0.0
     return {
         "ma": ma, "slope": slope or 0.0, "slope_tag": slope_tag, "z": z,
         "pct_1y": pct_1y, "pct_5y": pct_5y, "dd_52": dd_52, "close": close,
-        "style": _auto_style(df),
+        "style": _auto_style(df), "bars": n,
     }
 
 
@@ -333,10 +334,13 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
     z, slope_tag = ctx["z"], ctx["slope_tag"]
     p1, p5 = ctx["pct_1y"], ctx["pct_5y"]
     dev = (ctx["close"] - ctx["ma"]) / ctx["ma"] if ctx["ma"] else 0.0
-    detail = (
-        f"MA250{dev*100:+.0f}% 斜率{slope_tag} Z{z:+.1f} "
-        f"1Y分位{p1*100:.0f}% 5Y分位{p5*100:.0f}% {style}"
-    )
+    # 5年分位仅周期股且历史足够时展示（一年低、五年高才有赔率含义）
+    show_5y = (p5 is not None) and (style == "周期" or (p5 is not None and abs((p5 or 0) - p1) >= 0.08))
+    parts = [f"MA250{dev*100:+.0f}%", f"斜率{slope_tag}", f"Z{z:+.1f}", f"1Y分位{p1*100:.0f}%"]
+    if show_5y:
+        parts.append(f"5Y分位{p5*100:.0f}%")
+    parts.append(style)
+    detail = " ".join(parts)
     # 新低 + 均线下降：下跌趋势，不标「低估可买」
     if p1 <= 0.12 and slope_tag == "下降":
         return ("合理", "fair", detail)
@@ -345,11 +349,11 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
         return ("合理", "fair", detail)
 
     # Z 为主，分位与斜率纠偏
-    if z <= -2 and slope_tag != "下降" and p5 <= 0.40:
+    if z <= -2 and slope_tag != "下降" and (p5 is None or p5 <= 0.40):
         return ("低估", "under", detail)
     if z <= -1 and slope_tag == "上升" and p1 <= 0.35:
         return ("低估", "under", detail)
-    if z >= 2 and slope_tag != "上升" and p5 >= 0.70:
+    if z >= 2 and slope_tag != "上升" and (p5 is not None and p5 >= 0.70):
         return ("高估", "over", detail)
     if z >= 1.5 and slope_tag == "下降" and p1 >= 0.80:
         return ("高估", "over", detail)
@@ -575,18 +579,19 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
     return status
 
 
-def get_stock_status(code: str, name: str, days: int = 300) -> StockStatus:
+def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
     """获取单只股票完整状态"""
     market = '美股' if not code.isdigit() else 'A股'
     status = StockStatus(code=code, name=name, market=market)
     status.role = STOCK_ROLE.get(code, DEFAULT_ROLE)
 
     try:
-        df = fetcher.fetch(code, days)
+        df = fetcher.fetch(code, max(int(days or 1250), 1250))
         if df is None or len(df) < 10:
             status.error = f"数据不足({0 if df is None else len(df)}根)"
             return status
-        # 统一窗口：老股固定最近 300 根；新股/上市不足 300 则用上市至今全部
+        df_val = df.copy()
+        # 九转/趋势固定最近 300 根；估值用更长历史（最多约5年）
         if len(df) > 300:
             df = df.tail(300).reset_index(drop=True)
         status.bar_count = int(len(df))
@@ -1095,7 +1100,7 @@ def _row_is_date_fresh(row: dict, code: str = "") -> bool:
     return False
 
 
-def _status_dict_cached(code: str, name: str, days: int = 300, force_live: bool = False) -> dict:
+def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool = False) -> dict:
     k = str(code).strip().upper()
     hit = _STATUS_CACHE.get(k)
     now = time.time()
