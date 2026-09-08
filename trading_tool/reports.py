@@ -361,6 +361,12 @@ DISCLAIMER = (
     "在缺乏完整财报与一手调研时结论有限，请独立验证。市场有风险，决策需独立判断。"
 )
 
+LAYER_QUOTE = (
+    "对用户给出的股票/ETF清单，按护城河、现金流质量、需求确定性和周期属性分成五层，"
+    "只把生意能活过周期、长期需求清晰的标的标为「大回撤可加重」，"
+    "商品股与高叙事亏损股一律降为配置仓或投机仓，并明确这不是投资建议。"
+)
+
 
 def _structural_thesis(industry: str, biz: str, name: str) -> tuple:
     """
@@ -560,7 +566,15 @@ def _wrap_email(period_cn: str, email: str, classified: dict, deep_html: str) ->
     </div>
   </div>
 
-  <p style="color:{C_DIM};font-size:11px;margin:28px 0 0;line-height:1.65;border-top:1px solid {C_BORDER};padding-top:14px;">
+  <blockquote style="margin:28px 0 0;padding:16px 16px 16px 18px;background:#141924;border-left:4px solid {C_GOLD};border-radius:0 10px 10px 0;border-top:1px solid {C_BORDER};border-right:1px solid {C_BORDER};border-bottom:1px solid {C_BORDER};">
+    <p style="margin:0 0 8px;font-size:10px;letter-spacing:0.16em;color:{C_GOLD};font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
+      研究框架 · 五层仓位背景墙
+    </p>
+    <p style="margin:0;font-size:13px;line-height:1.8;color:{C_TEXT};font-style:italic;">
+      {LAYER_QUOTE}
+    </p>
+  </blockquote>
+  <p style="color:{C_DIM};font-size:11px;margin:16px 0 0;line-height:1.65;">
     {DISCLAIMER}
   </p>
   <p style="text-align:center;margin:18px 0 8px;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
