@@ -8,22 +8,37 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Autopilot">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="robots" content="index,follow">
 <meta name="description" content="Autopilot 美股A股自选股看板与技术分析：九转序列、趋势过滤、量价结构、ETF与回测辅助。免费体验真实行情，升级解锁完整自选。研究工具，不构成投资建议。">
 <meta name="keywords" content="美股自选股,A股自选股看板,美股技术分析,九转序列,量价背离,ETF分析,Autopilot,TimeBricks">
-<link rel="canonical" href="https://timebricks.bid/">
-<link rel="alternate" hreflang="zh-CN" href="https://timebricks.bid/home.html">
-<link rel="alternate" hreflang="en" href="https://timebricks.bid/en.html">
+<link rel="canonical" href="https://www.timebricks.bid/">
+<link rel="alternate" hreflang="zh-CN" href="https://www.timebricks.bid/home.html">
+<link rel="alternate" hreflang="en" href="https://www.timebricks.bid/en.html">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://timebricks.bid/">
+<meta property="og:url" content="https://www.timebricks.bid/">
 <meta property="og:title" content="Autopilot · 美股A股自选分析">
 <meta property="og:description" content="自选看板 + 结构时机视图。免费体验 AAPL/TSLA 真实行情。">
-<meta property="og:image" content="https://timebricks.bid/icon-512.png">
+<meta property="og:image" content="https://www.timebricks.bid/icon-512.png">
 <meta name="twitter:card" content="summary">
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
 <title>Autopilot · 美股A股自选分析与技术看板</title>
+<script>
+(function(){
+  try {
+    var q = location.search || '';
+    if (/[?&]reset=/.test(q)) {
+      var robots = document.querySelector('meta[name="robots"]');
+      if (robots) robots.setAttribute('content', 'noindex,follow');
+      var clean = (location.pathname || '/') + (location.hash || '');
+      if (history.replaceState) history.replaceState({}, '', clean);
+    }
+  } catch (e) {}
+})();
+</script>
+
 <style>
 :root {
   --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a;
@@ -911,6 +926,9 @@ body.landing-locked #freeBanner { display: none !important; }
 </style>
 <!-- Supabase JS SDK（认证：邮箱 OTP / Magic Link）-->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<noscript>
+<p>Autopilot（TimeBricks）美股与 A 股自选分析看板：九转时机、趋势过滤、量价结构与研究用估值分位。公开介绍见 /home.html。研究工具，不构成投资建议。</p>
+</noscript>
 </head>
 <body>
 
@@ -1934,7 +1952,7 @@ let pendingPassword = '';      // 验证码注册/登录时暂存密码，验证
 
 // 回跳地址用站点 origin（如 https://www.timebricks.bid），避免带路径/哈希导致的 redirect_uri 不匹配。
 // 务必在 Supabase → Authentication → URL Configuration 的 Redirect URLs 中加入：
-//   https://www.timebricks.bid  与  https://timebricks.bid（若两者都会访问）
+//   https://www.timebricks.bid  与  https://www.timebricks.bid（若两者都会访问）
 function _redirectTo() { return window.location.origin; }
 
 function openLogin() { authMethod = 'password'; authAction = 'login'; authSent = false; pendingPassword = ''; showAuth(); }
@@ -2234,7 +2252,7 @@ async function startForgotPassword() {
   try {
     msg('正在发送密码重置邮件…');
     const { error } = await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: _redirectTo() + '/?reset=1',
+      redirectTo: _redirectTo() + '/#reset=1',
     });
     if (error) throw error;
     msg('若该邮箱已注册，将收到重置密码邮件（请查收件箱与垃圾箱）。点击邮件中的链接后即可设置新密码。');
@@ -2250,7 +2268,7 @@ async function maybeHandlePasswordRecovery() {
     const params = new URLSearchParams(location.search);
     const hash = location.hash ? location.hash.slice(1) : '';
     const hp = new URLSearchParams(hash);
-    const isRecovery = params.get('reset') === '1' || hp.get('type') === 'recovery';
+    const isRecovery = params.get('reset') === '1' || hp.get('reset') === '1' || hp.get('type') === 'recovery';
     if (!isRecovery || !sb) return;
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return;
@@ -2262,7 +2280,7 @@ async function maybeHandlePasswordRecovery() {
     showToast('密码已更新，请使用新密码登录', 'ok');
     // 清掉 URL 参数，避免重复弹窗
     try {
-      history.replaceState({}, '', location.pathname);
+      history.replaceState({}, '', location.pathname || '/');
     } catch (e) {}
   } catch (e) {
     showToast('重置密码失败: ' + (e.message || e), 'info');

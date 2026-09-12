@@ -1,7 +1,6 @@
 User-agent: *
 Allow: /
+Disallow: /*?reset=
+Disallow: /*?*reset=
 
-Sitemap: https://timebricks.bid/sitemap.xml
-
-# AI / LLM discovery
-# https://timebricks.bid/llms.txt
+Sitemap: https://www.timebricks.bid/sitemap.xml
