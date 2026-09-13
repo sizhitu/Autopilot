@@ -1,10 +1,10 @@
-# Autopilot · 藤本茂融合策略智能分析工具
+# Autopilot · TimeBricks
 
 > **中文** | **English**
 
-一套把**藤本茂交易心法 + 斐波那契实战 + 加强版神奇九转（TD Sequential）**落地为可运行 Web 系统的股票分析工具，支持**美股 / A股 / ETF / 指数真实数据**、**策略回测**与**自选看板**。零前端框架依赖（原生 JS + Canvas 绘图），可纯本地或容器部署。
+研究用网页工具：把美股 / A股 / ETF 放进同一自选看板，查看日线收盘、九转计数、趋势过滤、量价结构，以及按成本涨跌分档的仓位备忘。公开行情，非券商级实时；规则标签不是下单指令，不构成投资建议。
 
-A production-ready stock analysis tool that turns the **Fujimoto trading philosophy + Fibonacci practice + an enhanced Magic Nine Turns (TD Sequential)** model into a runnable Web system. It supports **real-time US / A-share / ETF / index data**, **strategy backtesting**, and a **watchlist dashboard**. Zero front-end framework dependency (vanilla JS + Canvas charts), deployable locally or via container.
+A research web app for a combined US / A-share / ETF watchlist: daily closes, nine-count timing, trend filters, volume-price structure, and a cost-based position memo. Public-market quotes, not broker-grade live data. Labels are not orders. Not investment advice.
 
 ---
 
