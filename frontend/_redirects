@@ -1,3 +1,2 @@
-# 避免应用入口双 URL；参数重置页回到干净首页
-/index.html    /          301
-/?reset=1      /          301
+# 不要写 /index.html -> / ：Pages 用 index.html 作为 / ，再 301 会形成死循环。
+# ?reset=1 由页面脚本 replaceState + robots Disallow 处理，勿在此 301。
