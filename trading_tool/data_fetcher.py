@@ -470,9 +470,10 @@ class DataFetcher:
             best = _merge_ohlc_frames(cands)
             if best is None or len(best) == 0:
                 best = _pick_freshest(cands)
-            if best is not None and not _bar_is_stale(_df_last_date(best), market="us"):
+            # Nasdaq 常只有约 15 根：日期新也不能当分析页结果，继续走 Yahoo
+            if best is not None and len(best) >= 180 and not _bar_is_stale(_df_last_date(best), market="us"):
                 return best
-            # 偏旧则继续尝试 Yahoo；若 Yahoo 仍失败，后面会再与兜底合并
+            # 偏旧或过短则继续尝试 Yahoo
 
         # days 是交易日，转换为日历天（交易日约占日历天的 5/7）
         # 额外多取 40 天日历时间，确保足够
