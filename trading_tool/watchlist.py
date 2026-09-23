@@ -1105,15 +1105,17 @@ def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool
     hit = _STATUS_CACHE.get(k)
     now = time.time()
     cached_row = None
-    if (not force_live) and hit and (now - hit["ts"]) < _STATUS_TTL and isinstance(hit.get("data"), dict):
+    if hit and isinstance(hit.get("data"), dict):
         cached_row = dict(hit["data"])
         if name:
             cached_row["name"] = name
         cached_row["pending"] = False
-        cached_row["data_source"] = "status_cache"
-        # 缓存日期已是最新 → 直接返回；否则继续实拉
+        # 已是最新交易日：直接返回，不打行情（含 force）
         if _bar_date_str(cached_row) and _row_is_date_fresh(cached_row, k):
+            cached_row["data_source"] = "status_cache_fresh"
             return cached_row
+        if (not force_live) and (now - hit["ts"]) < _STATUS_TTL:
+            cached_row["data_source"] = "status_cache"
     # 实盘拉取
     if force_live:
         try:
@@ -1652,13 +1654,11 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
         def _one(code, name):
             cu = str(code).upper()
             prev = base.get(cu) if base else None
-            # 手动 force 刷新：一律实拉；软刷新才允许「已最新读缓存」
-            if bust_status_cache:
-                fl = True
+            # 日期已是应有交易日：不实拉（含手动刷新）。只补落后标的。
+            if prev and _row_is_date_fresh(prev, cu):
+                fl = False
             else:
                 fl = True
-                if prev and _row_is_date_fresh(prev, cu):
-                    fl = False
             return _status_dict_cached(code, name, 300, force_live=fl)
         futs = {ex.submit(_one, code, name): code for code, name in items}
         for fut in as_completed(futs):

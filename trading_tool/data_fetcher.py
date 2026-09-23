@@ -451,12 +451,6 @@ class DataFetcher:
                     cands.append(df)
             except Exception:
                 pass
-            try:
-                df = self._fetch_stooq(symbol, days)
-                if df is not None and len(df) > 0:
-                    cands.append(df)
-            except Exception:
-                pass
             best = _pick_freshest(cands)
             if best is not None and not _bar_is_stale(_df_last_date(best), market="us"):
                 return best
@@ -572,18 +566,11 @@ class DataFetcher:
                     candidates.append(df_n)
             except Exception as ne:
                 last_error = f"{last_error}；Nasdaq: {ne}"
-            try:
-                df_s = self._fetch_stooq(symbol, days)
-                if df_s is not None and len(df_s) > 0:
-                    candidates.append(df_s)
-            except Exception as se:
-                last_error = f"{last_error}；Stooq: {se}"
-
         best = _pick_freshest(candidates)
         if best is not None and len(best) > 0:
             return best
 
-        raise ValueError(f"Yahoo/Nasdaq/Stooq 均失败: {last_error}")
+        raise ValueError(f"Yahoo/Nasdaq 均失败: {last_error}")
 
     def _fetch_us_stock_nasdaq(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
