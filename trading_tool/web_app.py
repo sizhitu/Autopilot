@@ -1052,7 +1052,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             pass
 
     # 实时成功时，把每日 K 线写入缓存层（供回测 / 指标分析 / 容错）
-    if source == "live":
+    if source == "live" and df is not None and len(df) >= 180:
         try:
             daily_store.store_daily_bars(req.symbol, df, source=source)
         except Exception:

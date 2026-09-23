@@ -500,23 +500,8 @@ class DataFetcher:
         # 标准化代码：Yahoo 用横线不用点号
         symbol = symbol.strip().upper().replace('.', '-')
 
-        # 系统性限流防护：Yahoo 处于冷却期时，直接走 Nasdaq 兜底，
-        # 不做任何 Yahoo 请求，从根本上避免“逐只代码空等 429”。
-        if _yahoo_in_cooldown():
-            cands = []
-            try:
-                df = self._fetch_us_stock_nasdaq(symbol, days)
-                if df is not None and len(df) > 0:
-                    cands.append(df)
-            except Exception:
-                pass
-            best = _merge_ohlc_frames(cands)
-            if best is None or len(best) == 0:
-                best = _pick_freshest(cands)
-            # Nasdaq 常只有约 15 根：日期新也不能当分析页结果，继续走 Yahoo
-            if best is not None and len(best) >= 180 and not _bar_is_stale(_df_last_date(best), market="us"):
-                return best
-            # 偏旧或过短则继续尝试 Yahoo
+        # 分析/看板需要长 K 线。Nasdaq 历史经常只有约 15 根，冷却期也不再先打它。
+        # 冷却只缩短 Yahoo 超时，避免 2×10s 空等。
 
         # days 是交易日，转换为日历天（交易日约占日历天的 5/7）
         # 额外多取 40 天日历时间，确保足够
@@ -533,13 +518,14 @@ class DataFetcher:
 
         # 尝试多个域名；仅在两个域名都失败时触发全局冷却并降级，
         # 避免单域名“瞬时限流”即放弃（提升抗限流健壮性）。
-        domains = ['query2.finance.yahoo.com', 'query1.finance.yahoo.com']
+        domains = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']
         last_error = None
         parsed = None
+        ytimeout = 4 if _yahoo_in_cooldown() else 8
         for domain in domains:
             url = f"https://{domain}/v8/finance/chart/{symbol}"
             try:
-                r = self.session.get(url, params=params, timeout=10)
+                r = self.session.get(url, params=params, timeout=ytimeout)
                 if r.status_code == 429:
                     last_error = f"Yahoo({domain}) 429"
                     continue
@@ -617,19 +603,11 @@ class DataFetcher:
         last_d = _df_last_date(parsed) if parsed is not None else None
         exp_d = _expected_session_date("us")
         behind = bool(last_d and exp_d and last_d < exp_d)
-        yahoo_short = parsed is None or len(parsed) < 180
-        # Yahoo 已有长历史时不要再拉 Nasdaq（它常只有约 15 根，会污染结果）
-        need_more = (not candidates) or yahoo_short
+        if parsed is not None and len(parsed) >= 90:
+            _clear_yahoo_cooldown()
         if not candidates:
             _trigger_yahoo_cooldown()
-
-        if need_more or not candidates:
-            try:
-                df_n = self._fetch_us_stock_nasdaq(symbol, days)
-                if df_n is not None and len(df_n) > 0:
-                    candidates.append(df_n)
-            except Exception as ne:
-                last_error = f"{last_error}；Nasdaq: {ne}"
+        # 不再把 Nasdaq 全量历史拼进分析页（约 15 根且很慢）
         best = _merge_ohlc_frames(candidates)
         if best is None or len(best) == 0:
             best = _pick_freshest(candidates)
