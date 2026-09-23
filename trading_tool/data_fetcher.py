@@ -240,6 +240,20 @@ def invalidate_kline_cache(symbol=None) -> None:
 
 
 
+def _is_missing_num(x) -> bool:
+    if x is None:
+        return True
+    try:
+        if isinstance(x, (float, int, np.floating, np.integer)):
+            return bool(np.isnan(x))
+    except Exception:
+        pass
+    try:
+        return bool(pd.isna(x))
+    except Exception:
+        return False
+
+
 def _df_last_date(df):
     """返回 DataFrame 最后一根 K 的 date（datetime.date）或 None。"""
     try:
@@ -562,11 +576,11 @@ class DataFetcher:
                     if rmp is not None and len(df) > 0:
                         last_i = df.index[-1]
                         c0 = df.loc[last_i, 'close']
-                        if c0 is None or (isinstance(c0, float) and np.isnan(c0)) or c0 == 0:
+                        if _is_missing_num(c0) or c0 == 0:
                             df.loc[last_i, 'close'] = float(rmp)
                             for col in ('open', 'high', 'low'):
                                 v = df.loc[last_i, col]
-                                if v is None or (isinstance(v, float) and np.isnan(v)) or v == 0:
+                                if _is_missing_num(v) or v == 0:
                                     df.loc[last_i, col] = float(rmp)
                 except Exception:
                     pass
@@ -578,13 +592,13 @@ class DataFetcher:
                 df['volume'] = df['volume'].fillna(0).astype(float)
                 if ohlcv and len(adj_closes) == len(closes):
                     for i in range(len(df)):
-                        if not np.isnan(closes[i]) and closes[i] > 0:
+                        if (not _is_missing_num(closes[i])) and closes[i] > 0:
                             ratio = adj_closes[i] / closes[i]
-                            if not np.isnan(df.loc[i, 'open']):
+                            if not _is_missing_num(df.loc[i, 'open']):
                                 df.loc[i, 'open'] = df.loc[i, 'open'] * ratio
-                            if not np.isnan(df.loc[i, 'high']):
+                            if not _is_missing_num(df.loc[i, 'high']):
                                 df.loc[i, 'high'] = df.loc[i, 'high'] * ratio
-                            if not np.isnan(df.loc[i, 'low']):
+                            if not _is_missing_num(df.loc[i, 'low']):
                                 df.loc[i, 'low'] = df.loc[i, 'low'] * ratio
                 df['date'] = pd.to_datetime(df['date'])
                 if len(df) > days:
