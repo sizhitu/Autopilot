@@ -512,6 +512,22 @@ class DataFetcher:
                     'close': adj_closes,  # 使用前复权收盘价
                     'volume': volumes,
                 })
+                # Yahoo 常在收盘后数小时内把「当日 bar」的 close 留空，只写在 meta.regularMarketPrice。
+                # dropna 会丢掉这一天，看板就会停在前一交易日并标「延」。
+                try:
+                    meta = data.get('meta') or {}
+                    rmp = meta.get('regularMarketPrice')
+                    if rmp is not None and len(df) > 0:
+                        last_i = df.index[-1]
+                        c0 = df.loc[last_i, 'close']
+                        if c0 is None or (isinstance(c0, float) and np.isnan(c0)) or c0 == 0:
+                            df.loc[last_i, 'close'] = float(rmp)
+                            for col in ('open', 'high', 'low'):
+                                v = df.loc[last_i, col]
+                                if v is None or (isinstance(v, float) and np.isnan(v)) or v == 0:
+                                    df.loc[last_i, col] = float(rmp)
+                except Exception:
+                    pass
                 df = df.dropna(subset=['close'])
                 df = df[df['close'] > 0].reset_index(drop=True)
                 df['open'] = df['open'].fillna(df['close'])
@@ -542,7 +558,10 @@ class DataFetcher:
             candidates.append(parsed)
 
         # 无论 Yahoo 成败，若结果偏旧或为空，继续拉 Nasdaq / Stooq，取「交易日最新」的一份
-        need_more = (not candidates) or _bar_is_stale(_df_last_date(parsed), market="us")
+        last_d = _df_last_date(parsed) if parsed is not None else None
+        exp_d = _expected_session_date("us")
+        behind = bool(last_d and exp_d and last_d < exp_d)
+        need_more = (not candidates) or behind or _bar_is_stale(last_d, market="us", grace_days=0)
         if not candidates:
             _trigger_yahoo_cooldown()
 
