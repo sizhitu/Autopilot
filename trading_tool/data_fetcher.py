@@ -467,7 +467,9 @@ class DataFetcher:
                     cands.append(df)
             except Exception:
                 pass
-            best = _merge_ohlc_frames(cands) or _pick_freshest(cands)
+            best = _merge_ohlc_frames(cands)
+            if best is None or len(best) == 0:
+                best = _pick_freshest(cands)
             if best is not None and not _bar_is_stale(_df_last_date(best), market="us"):
                 return best
             # 偏旧则继续尝试 Yahoo；若 Yahoo 仍失败，后面会再与兜底合并
@@ -582,7 +584,9 @@ class DataFetcher:
                     candidates.append(df_n)
             except Exception as ne:
                 last_error = f"{last_error}；Nasdaq: {ne}"
-        best = _merge_ohlc_frames(candidates) or _pick_freshest(candidates)
+        best = _merge_ohlc_frames(candidates)
+        if best is None or len(best) == 0:
+            best = _pick_freshest(candidates)
         if best is not None and len(best) > 0:
             return best
 
