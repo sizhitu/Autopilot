@@ -308,6 +308,22 @@ def _pick_freshest(frames):
     return best
 
 
+def _merge_ohlc_frames(frames):
+    """多源按日期合并：保留更长历史，同一天用较新源覆盖。避免 Nasdaq 15 根盖掉 Yahoo 300 根。"""
+    import pandas as pd
+    parts = []
+    for df in frames:
+        if df is None or len(df) == 0 or "date" not in getattr(df, "columns", []):
+            continue
+        parts.append(df[["date", "open", "high", "low", "close", "volume"]].copy())
+    if not parts:
+        return None
+    out = pd.concat(parts, ignore_index=True)
+    out["date"] = pd.to_datetime(out["date"])
+    out = out.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+    return out
+
+
 class DataFetcher:
     """统一数据获取接口"""
 
@@ -451,7 +467,7 @@ class DataFetcher:
                     cands.append(df)
             except Exception:
                 pass
-            best = _pick_freshest(cands)
+            best = _merge_ohlc_frames(cands) or _pick_freshest(cands)
             if best is not None and not _bar_is_stale(_df_last_date(best), market="us"):
                 return best
             # 偏旧则继续尝试 Yahoo；若 Yahoo 仍失败，后面会再与兜底合并
@@ -566,7 +582,7 @@ class DataFetcher:
                     candidates.append(df_n)
             except Exception as ne:
                 last_error = f"{last_error}；Nasdaq: {ne}"
-        best = _pick_freshest(candidates)
+        best = _merge_ohlc_frames(candidates) or _pick_freshest(candidates)
         if best is not None and len(best) > 0:
             return best
 
