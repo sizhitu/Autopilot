@@ -295,6 +295,7 @@ def _bar_is_stale(last_date, market: str = "us", grace_days: int = 1) -> bool:
 
 
 def _pick_freshest(frames):
+    """日期优先，但禁止用 <90 根的新片段替换已有长序列。"""
     best = None
     best_d = None
     for df in frames:
@@ -303,7 +304,17 @@ def _pick_freshest(frames):
         d = _df_last_date(df)
         if d is None:
             continue
-        if best is None or d > best_d:
+        if best is None:
+            best, best_d = df, d
+            continue
+        long_best = len(best) >= 90
+        long_df = len(df) >= 90
+        if long_best and not long_df:
+            continue
+        if long_df and not long_best:
+            best, best_d = df, d
+            continue
+        if d > best_d or (d == best_d and len(df) > len(best)):
             best, best_d = df, d
     return best
 
@@ -323,6 +334,38 @@ def _merge_ohlc_frames(frames):
     out = out.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
     return out
 
+
+
+def _load_stored_daily_frame(symbol: str):
+    try:
+        import cache as _cache
+        rows = _cache.get_daily_cache(symbol)
+        if not rows:
+            rows = _cache.get_daily_cache(str(symbol).upper())
+        if not rows:
+            return None
+        import pandas as pd
+        recs = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            ds = r.get("date") or r.get("d")
+            cl = r.get("close") or r.get("c")
+            if ds is None or cl is None:
+                continue
+            recs.append({
+                "date": pd.to_datetime(ds),
+                "open": float(r.get("open") if r.get("open") is not None else cl),
+                "high": float(r.get("high") if r.get("high") is not None else cl),
+                "low": float(r.get("low") if r.get("low") is not None else cl),
+                "close": float(cl),
+                "volume": float(r.get("volume") or r.get("v") or 0),
+            })
+        if not recs:
+            return None
+        return pd.DataFrame(recs).sort_values("date").drop_duplicates("date").reset_index(drop=True)
+    except Exception:
+        return None
 
 class DataFetcher:
     """统一数据获取接口"""
@@ -574,7 +617,9 @@ class DataFetcher:
         last_d = _df_last_date(parsed) if parsed is not None else None
         exp_d = _expected_session_date("us")
         behind = bool(last_d and exp_d and last_d < exp_d)
-        need_more = (not candidates) or behind or _bar_is_stale(last_d, market="us", grace_days=0)
+        yahoo_short = parsed is None or len(parsed) < 180
+        # Yahoo 已有长历史时不要再拉 Nasdaq（它常只有约 15 根，会污染结果）
+        need_more = (not candidates) or yahoo_short
         if not candidates:
             _trigger_yahoo_cooldown()
 
@@ -954,6 +999,12 @@ class DataFetcher:
             df = self.fetch_us_stock(symbol, days)
         else:
             df = self.fetch_cn_stock(symbol, days)
+
+        # 实拉过短时，与已缓存的日 K 合并（Yahoo 冷却时 Nasdaq 只有约 15 根）
+        if df is None or len(df) < 180:
+            stored_df = _load_stored_daily_frame(symbol)
+            if stored_df is not None and len(stored_df) > 0:
+                df = _merge_ohlc_frames([stored_df, df] if df is not None else [stored_df])
 
         # 过短结果：再试一次更大窗口（常见于源站截断/临时失败）
         if not _enough(df, allow_ipo=False):
