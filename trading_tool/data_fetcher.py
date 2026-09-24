@@ -619,9 +619,19 @@ class DataFetcher:
         behind = bool(last_d and exp_d and last_d < exp_d)
         if parsed is not None and len(parsed) >= 90:
             _clear_yahoo_cooldown()
+        if parsed is not None and len(parsed) >= 90:
+            best = parsed
+            return best
         if not candidates:
             _trigger_yahoo_cooldown()
-        # 不再把 Nasdaq 全量历史拼进分析页（约 15 根且很慢）
+        # Yahoo 完全失败才用 Nasdaq：至少让看板有现价，避免长期「--」
+        if not candidates:
+            try:
+                df_n = self._fetch_us_stock_nasdaq(symbol, days)
+                if df_n is not None and len(df_n) > 0:
+                    candidates.append(df_n)
+            except Exception as ne:
+                last_error = f"{last_error}；Nasdaq: {ne}"
         best = _merge_ohlc_frames(candidates)
         if best is None or len(best) == 0:
             best = _pick_freshest(candidates)
