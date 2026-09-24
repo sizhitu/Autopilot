@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""独立模块：美股日线源质量探测（Yahoo / Nasdaq / Stooq）。
-产品需求：看板现价+日涨幅；分析页约 300 根 OHLCV；九转/均线要完整序列。
-不依赖项目内部 fetcher，避免污染测试。
+"""独立模块：美股日线源质量探测。
+
+免 Key：Yahoo / Nasdaq / Stooq
+有 Key 才打：Finnhub / Tiingo / EODHD / Twelve Data
+  FINNHUB_API_KEY  TIINGO_API_KEY  EODHD_API_KEY  TWELVE_DATA_API_KEY
+
+产品需求：看板现价+日涨幅；分析页约 300 根 OHLCV。不依赖线上 fetcher。
 """
 from __future__ import annotations
 
 import csv
 import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
@@ -240,20 +245,218 @@ def fetch_stooq(symbol: str, timeout: float = 8.0) -> dict[str, Any]:
         return {"source": "stooq", "symbol": symbol, "ok": False, "latency_s": time.time() - t0, "error": str(e)[:120]}
 
 
-FETCHERS = {"yahoo": fetch_yahoo, "nasdaq": fetch_nasdaq, "stooq": fetch_stooq}
+
+def _env(name: str) -> str:
+    return (os.environ.get(name) or "").strip()
+
+
+def fetch_finnhub(symbol: str, timeout: float = 8.0) -> dict[str, Any]:
+    token = _env("FINNHUB_API_KEY")
+    if not token:
+        return {"source": "finnhub", "symbol": symbol, "ok": False, "skipped": True, "error": "no FINNHUB_API_KEY"}
+    t0 = time.time()
+    ysym = symbol.replace(".", "-")
+    now = int(time.time())
+    try:
+        r = _sess().get(
+            "https://finnhub.io/api/v1/stock/candle",
+            params={"symbol": ysym, "resolution": "D", "from": now - 500 * 86400, "to": now, "token": token},
+            timeout=timeout,
+        )
+        ms = time.time() - t0
+        if r.status_code != 200:
+            return {"source": "finnhub", "symbol": symbol, "ok": False, "latency_s": ms, "error": f"HTTP {r.status_code} {r.text[:80]}"}
+        d = r.json()
+        if d.get("s") != "ok":
+            return {"source": "finnhub", "symbol": symbol, "ok": False, "latency_s": ms, "error": d.get("s") or "no data"}
+        ts, o, h, l, c, v = d.get("t") or [], d.get("o") or [], d.get("h") or [], d.get("l") or [], d.get("c") or [], d.get("v") or []
+        rows = []
+        for i, tsv in enumerate(ts):
+            if i >= len(c) or c[i] is None:
+                continue
+            rows.append({
+                "date": datetime.utcfromtimestamp(tsv).strftime("%Y-%m-%d"),
+                "open": o[i] if i < len(o) else c[i],
+                "high": h[i] if i < len(h) else c[i],
+                "low": l[i] if i < len(l) else c[i],
+                "close": float(c[i]),
+                "volume": v[i] if i < len(v) else 0,
+            })
+        out = _rows_from_ohlc(rows)
+        out.update({"source": "finnhub", "symbol": symbol, "latency_s": ms, "error": None})
+        return out
+    except Exception as e:
+        return {"source": "finnhub", "symbol": symbol, "ok": False, "latency_s": time.time() - t0, "error": str(e)[:120]}
+
+
+def fetch_tiingo(symbol: str, timeout: float = 8.0) -> dict[str, Any]:
+    token = _env("TIINGO_API_KEY")
+    if not token:
+        return {"source": "tiingo", "symbol": symbol, "ok": False, "skipped": True, "error": "no TIINGO_API_KEY"}
+    t0 = time.time()
+    ysym = symbol.replace(".", "-")
+    start = (datetime.utcnow().date() - timedelta(days=500)).isoformat()
+    try:
+        r = _sess().get(
+            f"https://api.tiingo.com/tiingo/daily/{ysym}/prices",
+            params={"startDate": start, "token": token},
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+        )
+        ms = time.time() - t0
+        if r.status_code != 200:
+            return {"source": "tiingo", "symbol": symbol, "ok": False, "latency_s": ms, "error": f"HTTP {r.status_code} {r.text[:80]}"}
+        arr = r.json()
+        if not isinstance(arr, list):
+            return {"source": "tiingo", "symbol": symbol, "ok": False, "latency_s": ms, "error": str(arr)[:80]}
+        rows = []
+        for it in arr:
+            ds = str(it.get("date") or "")[:10]
+            c = it.get("adjClose") if it.get("adjClose") is not None else it.get("close")
+            if not ds or c is None:
+                continue
+            rows.append({
+                "date": ds,
+                "open": it.get("adjOpen") if it.get("adjOpen") is not None else it.get("open") or c,
+                "high": it.get("adjHigh") if it.get("adjHigh") is not None else it.get("high") or c,
+                "low": it.get("adjLow") if it.get("adjLow") is not None else it.get("low") or c,
+                "close": float(c),
+                "volume": it.get("volume") or 0,
+            })
+        out = _rows_from_ohlc(rows)
+        out.update({"source": "tiingo", "symbol": symbol, "latency_s": ms, "error": None})
+        return out
+    except Exception as e:
+        return {"source": "tiingo", "symbol": symbol, "ok": False, "latency_s": time.time() - t0, "error": str(e)[:120]}
+
+
+def fetch_eodhd(symbol: str, timeout: float = 8.0) -> dict[str, Any]:
+    token = _env("EODHD_API_KEY")
+    if not token:
+        return {"source": "eodhd", "symbol": symbol, "ok": False, "skipped": True, "error": "no EODHD_API_KEY"}
+    t0 = time.time()
+    ysym = symbol.replace(".", "-") + ".US"
+    start = (datetime.utcnow().date() - timedelta(days=500)).isoformat()
+    try:
+        r = _sess().get(
+            f"https://eodhd.com/api/eod/{ysym}",
+            params={"api_token": token, "fmt": "json", "from": start, "period": "d"},
+            timeout=timeout,
+        )
+        ms = time.time() - t0
+        if r.status_code != 200:
+            return {"source": "eodhd", "symbol": symbol, "ok": False, "latency_s": ms, "error": f"HTTP {r.status_code} {r.text[:80]}"}
+        arr = r.json()
+        if not isinstance(arr, list):
+            return {"source": "eodhd", "symbol": symbol, "ok": False, "latency_s": ms, "error": str(arr)[:80]}
+        rows = []
+        for it in arr:
+            ds = str(it.get("date") or "")[:10]
+            c = it.get("adjusted_close") if it.get("adjusted_close") is not None else it.get("close")
+            if not ds or c is None:
+                continue
+            rows.append({
+                "date": ds,
+                "open": it.get("open") or c,
+                "high": it.get("high") or c,
+                "low": it.get("low") or c,
+                "close": float(c),
+                "volume": it.get("volume") or 0,
+            })
+        out = _rows_from_ohlc(rows)
+        out.update({"source": "eodhd", "symbol": symbol, "latency_s": ms, "error": None})
+        return out
+    except Exception as e:
+        return {"source": "eodhd", "symbol": symbol, "ok": False, "latency_s": time.time() - t0, "error": str(e)[:120]}
+
+
+def fetch_twelvedata(symbol: str, timeout: float = 8.0) -> dict[str, Any]:
+    token = _env("TWELVE_DATA_API_KEY")
+    if not token:
+        return {"source": "twelvedata", "symbol": symbol, "ok": False, "skipped": True, "error": "no TWELVE_DATA_API_KEY"}
+    t0 = time.time()
+    ysym = symbol.replace(".", "-")
+    try:
+        r = _sess().get(
+            "https://api.twelvedata.com/time_series",
+            params={"symbol": ysym, "interval": "1day", "outputsize": 300, "apikey": token},
+            timeout=timeout,
+        )
+        ms = time.time() - t0
+        if r.status_code != 200:
+            return {"source": "twelvedata", "symbol": symbol, "ok": False, "latency_s": ms, "error": f"HTTP {r.status_code} {r.text[:80]}"}
+        d = r.json()
+        if d.get("status") == "error":
+            return {"source": "twelvedata", "symbol": symbol, "ok": False, "latency_s": ms, "error": d.get("message") or "error"}
+        vals = d.get("values") or []
+        rows = []
+        for it in vals:
+            ds = str(it.get("datetime") or "")[:10]
+            try:
+                c = float(it.get("close"))
+            except Exception:
+                continue
+            rows.append({
+                "date": ds,
+                "open": float(it.get("open") or c),
+                "high": float(it.get("high") or c),
+                "low": float(it.get("low") or c),
+                "close": c,
+                "volume": float(it.get("volume") or 0),
+            })
+        out = _rows_from_ohlc(rows)
+        out.update({"source": "twelvedata", "symbol": symbol, "latency_s": ms, "error": None})
+        return out
+    except Exception as e:
+        return {"source": "twelvedata", "symbol": symbol, "ok": False, "latency_s": time.time() - t0, "error": str(e)[:120]}
+
+
+SOURCE_META = {
+    "yahoo": {"kind": "indirect", "key": None, "role": "长K（限流不稳定）", "rep": "用得最多，无SLA"},
+    "nasdaq": {"kind": "indirect", "key": None, "role": "现价兜底", "rep": "官方页，历史常仅约15根"},
+    "stooq": {"kind": "indirect", "key": None, "role": "冷备日线", "rep": "量化入门常用，复权口径偶发偏差"},
+    "finnhub": {"kind": "direct", "key": "FINNHUB_API_KEY", "role": "现价/报价", "rep": "免费档口碑最好，历史K线弱"},
+    "tiingo": {"kind": "direct", "key": "TIINGO_API_KEY", "role": "日线主库", "rep": "EOD干净，回测圈评价高"},
+    "eodhd": {"kind": "direct", "key": "EODHD_API_KEY", "role": "全球日线", "rep": "覆盖广、入门付费便宜"},
+    "twelvedata": {"kind": "direct", "key": "TWELVE_DATA_API_KEY", "role": "多资产时序", "rep": "接口整齐，免费超额可能返回旧数"},
+}
+
+FETCHERS = {
+    "yahoo": fetch_yahoo,
+    "nasdaq": fetch_nasdaq,
+    "stooq": fetch_stooq,
+    "finnhub": fetch_finnhub,
+    "tiingo": fetch_tiingo,
+    "eodhd": fetch_eodhd,
+    "twelvedata": fetch_twelvedata,
+}
+
+
+def active_fetchers() -> dict:
+    """无 Key 的直连源跳过，避免把 skipped 算进失败率。"""
+    out = {}
+    for name, fn in FETCHERS.items():
+        meta = SOURCE_META.get(name) or {}
+        key = meta.get("key")
+        if key and not _env(key):
+            continue
+        out[name] = fn
+    return out
+
 
 
 def run_probe(symbols=None) -> dict[str, Any]:
     symbols = symbols or SYMBOLS
     exp = expected_us_session_date()
     results = []
+    fetchers = active_fetchers()
 
     def one(src, sym):
-        return FETCHERS[src](sym)
+        return fetchers[src](sym)
 
     jobs = []
     with ThreadPoolExecutor(max_workers=6) as ex:
-        for src in FETCHERS:
+        for src in fetchers:
             for sym in symbols:
                 jobs.append(ex.submit(one, src, sym))
         for fut in as_completed(jobs):
@@ -264,14 +467,14 @@ def run_probe(symbols=None) -> dict[str, Any]:
         by.setdefault(row["symbol"], {})[row["source"]] = row
 
     summary_rows = []
-    src_stats = {s: {"ok": 0, "bars_ok": 0, "fresh": 0, "lat": []} for s in FETCHERS}
+    src_stats = {s: {"ok": 0, "bars_ok": 0, "fresh": 0, "lat": []} for s in fetchers}
     agree_n = agree_ok = 0
 
     for sym in symbols:
         pack = by.get(sym, {})
         closes = []
         rec = {"symbol": sym}
-        for src in FETCHERS:
+        for src in fetchers:
             r = pack.get(src) or {"ok": False, "error": "missing"}
             rec[f"{src}_ok"] = bool(r.get("ok"))
             rec[f"{src}_bars"] = r.get("bars")
@@ -303,6 +506,9 @@ def run_probe(symbols=None) -> dict[str, Any]:
         "expected_session": exp,
         "n_symbols": n,
         "spec": SPEC,
+        "active_sources": list(fetchers),
+        "skipped_sources": [k for k in FETCHERS if k not in fetchers],
+        "source_meta": SOURCE_META,
         "sources": {},
         "price_agree_among_ok": {"compared": agree_n, "within_1pct": agree_ok},
         "rows": summary_rows,
@@ -323,14 +529,14 @@ def run_probe(symbols=None) -> dict[str, Any]:
 
 
 def main():
-    print("probing", len(SYMBOLS), "symbols x", list(FETCHERS), flush=True)
+    print("probing", len(SYMBOLS), "symbols x", list(active_fetchers()), "skipped", [k for k in FETCHERS if k not in active_fetchers()], flush=True)
     report = run_probe()
     out_json = "/home/workdir/artifacts/us_source_probe.json"
     out_csv = "/home/workdir/artifacts/us_source_probe.csv"
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     keys = ["symbol", "agree"]
-    for src in FETCHERS:
+    for src in report.get("active_sources") or FETCHERS:
         keys += [f"{src}_ok", f"{src}_bars", f"{src}_last", f"{src}_close", f"{src}_lat", f"{src}_err"]
     with open(out_csv, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")

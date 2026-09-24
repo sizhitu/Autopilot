@@ -8,13 +8,23 @@ python3 trading_tool/probe_us_sources.py
 # 产出 artifacts 同结构的 JSON/CSV；仓库内样例见 docs/us_source_probe_smoke.json
 ```
 
-当前探测的三个免 Key 源（可落地、与现网一致）：
+免 Key 默认打：
 
 1. **Yahoo** `query1.finance.yahoo.com/v8/finance/chart`  
 2. **Nasdaq** `api.nasdaq.com/api/quote/{sym}/historical`  
 3. **Stooq** `stooq.com/q/d/l/?s={sym}.us&i=d`
 
-Finnhub / Tiingo / Twelve Data 需要申请 Key，下一轮把 Key 配进环境变量后再扩 `FETCHERS`。
+有环境变量才打（口碑较好的直接源）：
+
+```bash
+export FINNHUB_API_KEY=...      # 现价
+export TIINGO_API_KEY=...       # 日线主库
+export EODHD_API_KEY=...        # 全球日线
+export TWELVE_DATA_API_KEY=...  # 多资产时序
+python3 trading_tool/probe_us_sources.py
+```
+
+无 Key 的源会计入 `skipped_sources`，不进失败率。
 
 ---
 
@@ -66,10 +76,24 @@ Finnhub / Tiingo / Twelve Data 需要申请 Key，下一轮把 Key 配进环境�
 
 1. **日线与现价拆开**：分析页只接受 ≥250 根的 Yahoo（或以后的 Tiingo/EODHD）；看板现价可用 Nasdaq 15 根，禁止用这 15 根覆盖长 K。  
 2. **自己存日线**：收盘后写入 parquet / daily cache，用户刷新默认读本地。这是行业默认，不是换语言能替代的。  
-3. **下一轮 Top3 升级（要 Key）**  
-   - Finnhub 免费档补美股现价（额度够 20～40 只自选）  
-   - Tiingo EOD 做日线主备  
-   - Yahoo 仅在日线缺口时补长历史，429 必须冷却  
-4. 探测模块加源时只扩 `FETCHERS`，用同一套 `SPEC` 打 50 只再改线上分流。
+3. **口碑源已进探测模块**（有 Key 再跑 50 只对比）  
+   - Finnhub：现价  
+   - Tiingo：日线主库  
+   - EODHD：付费全球日线  
+   - Twelve Data：第三时序  
+4. 加源继续扩 `FETCHERS` + `SOURCE_META`，同一套 `SPEC`。
 
 样例里 `expected_session=2026-09-23`、Nasdaq 停在 `09-22`，说明「日期新鲜」也要按源各自的结算节奏看，不能只信一个日历日。
+
+
+## 口碑源对照（探测模块 SOURCE_META）
+
+| 源 | 类型 | 建议角色 | 口碑摘要 |
+|----|------|----------|----------|
+| Yahoo | 间接 | 长 K | 最快最全，429 无 SLA |
+| Nasdaq | 间接 | 现价 | 官方页，历史约 15 根 |
+| Stooq | 间接 | 冷备 | 老站正规，复权偶发偏差 |
+| Finnhub | 直接 | 现价 | 免费档开发者口碑最好 |
+| Tiingo | 直接 | 日线 | EOD 干净，回测圈常用 |
+| EODHD | 直接 | 日线 | 覆盖广，约 $20 EOD |
+| Twelve Data | 直接 | 时序备 | 接口整齐，免费超额需小心 |
