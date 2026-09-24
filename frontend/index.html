@@ -2172,6 +2172,7 @@ async function submitAuth() {
     }
     // ---------- 密码登录 ----------
     if (!pwd) { msg('请输入密码'); unlock(); return; }
+    try { await sb.auth.signOut({ scope: 'local' }); } catch (eSO) {}
     const { data, error } = await sb.auth.signInWithPassword({ email, password: pwd });
     if (error) {
       const em = error.message || '';
@@ -2309,6 +2310,7 @@ async function finishSession(session, opts = {}) {
   } catch (e) { console.warn('获取用户资料失败（保留 supabase 会话）', e); }
   currentUser = user;
   localStorage.setItem('autopilot_user', JSON.stringify(currentUser));
+  try { localStorage.removeItem('autopilot_logged_out'); } catch (eLO) {}
   // silent=页面恢复会话：只续期活跃时间；正式登录重置会话起点
   touchSessionActivity(!opts.silent);
   refreshAuthUI(); closeAuth();
@@ -2593,12 +2595,34 @@ async function startCheckout(plan) {
   } catch (e) {}
 })();
 
-function doLogout(opts) {
+function _clearLocalAuthStorage() {
+  try {
+    localStorage.removeItem('autopilot_token');
+    localStorage.removeItem('autopilot_user');
+    localStorage.setItem('autopilot_logged_out', '1');
+    const drop = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      if (k === 'autopilot_api' || k === 'autopilot_logged_out') continue;
+      if (k.indexOf('sb-') === 0 || k.indexOf('supabase') >= 0 || k.indexOf('autopilot_') === 0) drop.push(k);
+    }
+    drop.forEach(function (k) { localStorage.removeItem(k); });
+  } catch (e) {}
+  try {
+    sessionStorage.removeItem('autopilot_token');
+    sessionStorage.removeItem('autopilot_user');
+  } catch (e2) {}
+}
+
+async function doLogout(opts) {
   opts = opts || {};
-  if (sb) sb.auth.signOut().catch(() => {});
   teardownRealtime();
+  try {
+    if (sb) await sb.auth.signOut({ scope: 'local' });
+  } catch (e) {}
   authToken = ''; currentUser = null;
-  localStorage.removeItem('autopilot_token'); localStorage.removeItem('autopilot_user');
+  _clearLocalAuthStorage();
   clearSessionMeta();
   refreshAuthUI();
   try { if (typeof updateLandingGate === 'function') updateLandingGate(); } catch (eLG) {}
@@ -2927,6 +2951,11 @@ async function initAuth() {
   //    再 getSession() 取续期后的会话。这样后续 /api/auth/me、/api/watchlist 都不会因过期令牌 401 而误登出。
   if (!established && sb) {
     try {
+      if (localStorage.getItem('autopilot_logged_out') === '1') {
+        try { await sb.auth.signOut({ scope: 'local' }); } catch (eX) {}
+        _clearLocalAuthStorage();
+        throw new Error('skip-restore-after-logout');
+      }
       let session = null;
       try {
         const { data: ud, error: ue } = await sb.auth.getUser();
