@@ -65,7 +65,8 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 
 - **后端 · Backend**：Python 3.11 · FastAPI · uvicorn · pandas / numpy
 - **前端 · Frontend**：原生 HTML/CSS/JS · Canvas 绘图（无第三方框架）
-- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（兜底）
+- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（现价兜底）
+- **美股源探测**：`docs/us_market_data.md` · `python3 trading_tool/probe_us_sources.py`
 - **部署 · Deploy**：Docker · docker-compose · 预览看门狗（自愈重启）
 
 ---
@@ -97,6 +98,7 @@ docker compose up -d --build
 | `index.html` | Web 前端页面 *Front-end page* |
 | `strategy_engine.py` | 三层策略引擎核心 *Three-layer strategy core* |
 | `data_fetcher.py` | 真实数据源（美股/A股/指数）*Real data sources* |
+| `probe_us_sources.py` | 美股源质量探测（Yahoo/Nasdaq/Stooq）独立模块 |
 | `backtest.py` | 回测引擎 *Backtest engine* |
 | `watchlist.py` | 自选看板聚合 *Watchlist aggregator* |
 | `nine_turn.py` | 神奇九转计数 *Magic Nine Turns counter* |
