@@ -513,6 +513,8 @@ class DataFetcher:
         """
         # 标准化代码：Yahoo 用横线不用点号
         symbol = symbol.strip().upper().replace('.', '-')
+        if symbol == "WTI":
+            symbol = "CL=F"
 
         # 分析/看板需要长 K 线。Nasdaq 历史经常只有约 15 根，冷却期也不再先打它。
         # 冷却只缩短 Yahoo 超时，避免 2×10s 空等。

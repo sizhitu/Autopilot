@@ -1075,10 +1075,16 @@ def _rows_all_session_fresh(stocks) -> bool:
 
 
 def _row_is_date_fresh(row: dict, code: str = "") -> bool:
-    """相对该市场应有交易日是否够新。"""
+    """相对该市场应有交易日是否够新。指标仍是占位则必须重算。"""
     if not row or not isinstance(row, dict):
         return False
-    if row.get("bar_stale"):
+    if row.get("bar_stale") or row.get("pending") or row.get("error"):
+        return False
+    px = row.get("price")
+    if px in (None, "", "-", "…"):
+        return False
+    tm = str(row.get("timing") or "")
+    if tm in ("", "—", "-", "计算中"):
         return False
     bd = _bar_date_str(row)
     if not bd:
