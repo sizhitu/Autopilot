@@ -5472,21 +5472,25 @@ function rememberActionSnap(s) {
   if (!s || !s.code || !s.bar_date) return;
   const day = String(s.bar_date).slice(0, 10);
   if (day.length < 10) return;
+  const act = String(s.action || s.signal || '').trim();
+  const isWatch = !act || act === '观望' || act.indexOf('观望') === 0;
   const key = 'autopilot_actionlog';
   let all = {};
   try { all = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (e) { all = {}; }
   const code = String(s.code).toUpperCase();
-  const list = Array.isArray(all[code]) ? all[code] : [];
-  const row = {
-    date: day,
-    action: s.action || s.signal || '观望',
-    strength: Number(s.action_strength || 0),
-    price: s.price,
-    timing: s.timing || '',
-    trend: s.trend_filter || s.trend || '',
-    reason: s.action_reason || ''
-  };
-  all[code] = list.filter(r => String(r && r.date).slice(0,10) !== day).concat([row]).slice(-260);
+  const list = (Array.isArray(all[code]) ? all[code] : []).filter(r => String(r && r.date).slice(0,10) !== day);
+  if (!isWatch) {
+    list.push({
+      date: day,
+      action: act,
+      strength: Number(s.action_strength || 0),
+      price: s.price,
+      timing: s.timing || '',
+      trend: s.trend_filter || s.trend || '',
+      reason: s.action_reason || ''
+    });
+  }
+  all[code] = list.slice(-260);
   try { localStorage.setItem(key, JSON.stringify(all)); } catch (e2) {}
 }
 function localActionLog(code) {
@@ -5535,6 +5539,8 @@ function renderActionLogList(code, remote, keepRemote) {
   const by = {};
   (local || []).concat(_actionLogRows || []).forEach(r => {
     if (!r || !r.date) return;
+    const act = String(r.action || '');
+    if (!act || act === '观望' || act.indexOf('观望') === 0) return;
     by[String(r.date).slice(0,10)] = r;
   });
   const all = Object.keys(by).sort().map(k => by[k]);

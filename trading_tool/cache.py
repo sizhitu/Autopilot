@@ -301,24 +301,30 @@ def get_action_log(symbol: str):
     return []
 
 
+def _is_watch_action(action) -> bool:
+    a = str(action or "").strip()
+    return (not a) or a == "观望" or a.startswith("观望")
+
+
 def append_action_log(symbol: str, row: dict) -> None:
-    """按交易日去重保留最近 ACTION_LOG_MAX 条操盘建议快照。"""
+    """只持久化非观望动作；按交易日去重，最多 ACTION_LOG_MAX 条。"""
     if not symbol or not isinstance(row, dict):
         return
     day = str(row.get("date") or "")[:10]
     if not day:
         return
     rows = [r for r in (get_action_log(symbol) or []) if isinstance(r, dict) and str(r.get("date") or "")[:10] != day]
-    rows.append({
-        "date": day,
-        "action": row.get("action") or "观望",
-        "strength": int(row.get("strength") or 0),
-        "side": row.get("side") or "",
-        "timing": row.get("timing") or "",
-        "trend": row.get("trend") or "",
-        "price": row.get("price"),
-        "reason": (row.get("reason") or "")[:120],
-    })
+    if not _is_watch_action(row.get("action")):
+        rows.append({
+            "date": day,
+            "action": row.get("action") or "",
+            "strength": int(row.get("strength") or 0),
+            "side": row.get("side") or "",
+            "timing": row.get("timing") or "",
+            "trend": row.get("trend") or "",
+            "price": row.get("price"),
+            "reason": (row.get("reason") or "")[:120],
+        })
     rows.sort(key=lambda r: str(r.get("date") or ""))
     rows = rows[-ACTION_LOG_MAX:]
     set_json(f"actionlog:{str(symbol).upper()}", {"rows": rows}, ACTION_LOG_TTL)
