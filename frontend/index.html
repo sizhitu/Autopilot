@@ -680,9 +680,33 @@ body.help-open { overflow: hidden; touch-action: none; }
 .action-log-strip { display:flex; gap:1px; height:14px; margin:0 0 8px; width:100%; }
 .action-log-strip i { flex:1; min-width:1px; border-radius:1px; opacity:.9; }
 .action-log-list { max-height:168px; overflow-y:auto; }
-.act-log-row { display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.act-log-headrow, .act-log-row {
+  display:grid;
+  grid-template-columns: 64px minmax(0,1fr) 56px;
+  gap:8px;
+  align-items:center;
+  padding:5px 0;
+  font-size:12px;
+}
+.act-log-headrow { color:var(--text-dim); font-size:11px; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:2px; }
+.act-log-row { border-bottom:1px solid var(--border); cursor:pointer; }
 .act-log-row:last-child { border-bottom:none; }
+.act-log-row span { min-width:0; overflow-wrap:anywhere; }
 .act-log-empty { color:var(--text-dim); font-size:12px; line-height:1.6; }
+.act-log-detail {
+  display:grid;
+  grid-template-columns: 40px minmax(0,1fr);
+  gap:4px 10px;
+  align-items:start;
+  padding:8px 10px;
+  margin:0 0 8px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  font-size:12px;
+  line-height:1.45;
+}
+.act-log-detail i { color:var(--text-dim); font-style:normal; font-size:11px; }
+.act-log-detail b { font-weight:700; min-width:0; overflow-wrap:anywhere; }
 .act-log-row { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .act-log-row:last-child { border-bottom:none; }
 
@@ -5519,15 +5543,23 @@ function setActionLogRange(n) {
 function _paintActionDetail(r) {
   const el = document.getElementById('actionLogDetail');
   if (!el) return;
-  if (!r) { el.textContent = '点色块或下方列表查看当天快照'; return; }
+  if (!r) {
+    el.className = 'act-log-empty';
+    el.textContent = '点色块或下方列表查看当天快照';
+    return;
+  }
   const act = r.action || '观望';
   const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
   const tone = _actTone(act);
-  el.innerHTML = '<span style="color:var(--text-dim);">' + escapeHtml(String(r.date || '')) + '</span> · '
-    + '<span style="color:' + tone.col + ';font-weight:700;">' + escapeHtml(act) + str + '</span>'
-    + (r.price != null ? ' · 现价 ' + escapeHtml(String(r.price)) : '')
-    + (r.timing ? ' · ' + escapeHtml(r.timing) : '')
-    + (r.trend ? ' · ' + escapeHtml(r.trend) : '');
+  const timing = String(r.timing || '').replace(/^九转/, '');
+  const trend = String(r.trend || '');
+  el.className = 'act-log-detail';
+  el.innerHTML =
+    '<i>日期</i><b>' + escapeHtml(String(r.date || '')) + '</b>' +
+    '<i>动作</i><b style="color:' + tone.col + ';">' + escapeHtml(act) + str + '</b>' +
+    '<i>现价</i><b>' + (r.price != null ? escapeHtml(String(r.price)) : '—') + '</b>' +
+    '<i>九转</i><b>' + (timing ? escapeHtml(timing) : '—') + '</b>' +
+    '<i>趋势</i><b>' + (trend ? escapeHtml(trend) : '—') + '</b>';
 }
 function renderActionLogList(code, remote, keepRemote) {
   const box = document.getElementById('actionLogList');
@@ -5559,13 +5591,13 @@ function renderActionLogList(code, remote, keepRemote) {
     }).join('');
     window._actionLogView = chrono;
   }
-  box.innerHTML = rows.map(r => {
+  box.innerHTML = '<div class="act-log-headrow"><span>日期</span><span>动作</span><span>现价</span></div>' + rows.map(r => {
     const act = r.action || '观望';
     const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
     const tone = _actTone(act);
-    return '<div class="act-log-row" onclick="_paintActionDetail({date:\'' + escapeAttr(r.date) + '\',action:\'' + escapeAttr(act) + '\',strength:' + Number(r.strength||0) + ',price:' + JSON.stringify(r.price ?? null) + ',timing:\'' + escapeAttr(r.timing||'') + '\',trend:\'' + escapeAttr(r.trend||'') + '\'})"><span style="color:var(--text-dim);min-width:72px;">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
-      + '<span style="color:' + tone.col + ';font-weight:700;flex:1;">' + escapeHtml(act) + str + '</span>'
-      + '<span style="color:var(--text-dim);">' + (r.price!=null?escapeHtml(String(r.price)):'') + '</span></div>';
+    return '<div class="act-log-row" onclick="_paintActionDetail({date:\'' + escapeAttr(r.date) + '\',action:\'' + escapeAttr(act) + '\',strength:' + Number(r.strength||0) + ',price:' + JSON.stringify(r.price ?? null) + ',timing:\'' + escapeAttr(r.timing||'') + '\',trend:\'' + escapeAttr(r.trend||'') + '\'})"><span style="color:var(--text-dim);">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
+      + '<span style="color:' + tone.col + ';font-weight:700;">' + escapeHtml(act) + str + '</span>'
+      + '<span style="color:var(--text-dim);text-align:right;">' + (r.price!=null?escapeHtml(String(r.price)):'') + '</span></div>';
   }).join('');
   _paintActionDetail(rows[0]);
 }
