@@ -671,6 +671,11 @@ body.help-open { overflow: hidden; touch-action: none; }
 #watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 88px; min-width: 88px; }  /* 九转时机 */
 #watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 72px; min-width: 72px; }   /* 趋势过滤 */
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 84px; min-width: 84px; }  /* 操盘动作 */
+.wl-act-cell { cursor: pointer; }
+.wl-act-cell:hover span { text-decoration: underline; text-underline-offset: 2px; }
+.act-log-row { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.act-log-row:last-child { border-bottom:none; }
+
 #watchlistTable td:nth-child(7) { padding-left: 3px !important; padding-right: 3px !important; white-space: nowrap; }
 #watchlistTable td:nth-child(7) .wl-act-str {
   display: inline-block;
@@ -971,6 +976,7 @@ body.landing-locked #freeBanner { display: none !important; }
 
 <div id="helpBackdrop" class="help-backdrop" aria-hidden="true"></div>
 <div id="helpDock" class="help-dock" role="dialog" aria-modal="true" hidden></div>
+<div id="actionLogPop" class="help-pop" hidden style="display:none;position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:10060;width:min(360px,calc(100vw - 28px));max-height:min(64vh,420px);"></div>
 <div id="billingSuccessBanner" style="display:none;position:sticky;top:0;z-index:9000;background:linear-gradient(90deg,rgba(46,204,113,.18),rgba(241,196,15,.12));border-bottom:1px solid rgba(46,204,113,.35);padding:10px 14px;text-align:center;font-size:13px;color:var(--text);">
   <b style="color:var(--green);">支付成功</b>
   <span id="billingSuccessText">会员权益同步中…</span>
@@ -5238,7 +5244,7 @@ function renderWatchlistSummary(summary) {
   html += `<span class="help-q help-q-board" style="margin-left:6px;" onclick="event.stopPropagation();toggleHelp(this)" title="查看看板列说明" role="button" aria-label="看板列说明"><span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
     <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）— 收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
     <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多·指标未齐 / 空·指标未齐」= 均线已偏多/偏空，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
-    <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签。观望不标强度；其余动作后附 <b>·1～·5</b> 为该侧信号强度（5 最强）。买侧：关注买入 / 阶梯抄底关注；卖侧：关注卖出 / 阶梯止盈关注。同侧可比较强弱，跨侧勿直接比数字。冲突时降权观望。非买卖委托。</p></div>
+    <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签。观望不标强度；其余动作后附 <b>·1～·5</b> 为该侧信号强度（5 最强）。买侧：关注买入 / 阶梯抄底关注；卖侧：关注卖出 / 阶梯止盈关注。同侧可比较强弱，跨侧勿直接比数字。冲突时降权观望。非买卖委托。点该列可查看近日快照（按交易日覆盖保存，便于对照错过的信号）。</p></div>
     <div class="hp-sec"><b>新高 / 估值</b><p>
 列固定三行：<br>
 · <b>第一行</b> 新高/新低（近 5 日～一年或历史），只标位置，不当买卖点。<br>
@@ -5429,7 +5435,7 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 6px;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:5px 6px;white-space:normal;line-height:1.25;"><span style="color:${timingColor};font-weight:600;">${escapeHtml(timingText)}</span>${ntSub}</td>
       <td style="padding:5px 6px;"><span style="color:${trendColor};font-weight:600;">${escapeHtml(trendText)}</span></td>
-      <td title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;font-size:11px;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
+      <td class="wl-act-cell" title="${escapeAttr(actionTip || '点击查看近日操盘建议')}" onclick="event.stopPropagation();showActionLog('${escapeAttr(_cd)}')"><span style="color:${actionColor};font-weight:700;font-size:11px;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
       <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
     </tr>`;
@@ -5437,6 +5443,39 @@ function renderWatchlist(stocks) {
   body.innerHTML = html;
 }
 
+
+async function showActionLog(code) {
+  const pop = document.getElementById('actionLogPop');
+  if (!pop || !code) return;
+  pop.hidden = false;
+  pop.style.display = 'block';
+  pop.innerHTML = '<div style="color:var(--gold);font-weight:700;margin-bottom:8px;">' + escapeHtml(code) + ' · 近日操盘建议</div><div style="color:var(--text-dim);">读取中…</div>';
+  const close = () => { pop.style.display = 'none'; pop.hidden = true; document.removeEventListener('click', onDoc); };
+  const onDoc = (ev) => { if (!pop.contains(ev.target)) close(); };
+  setTimeout(() => document.addEventListener('click', onDoc), 0);
+  try {
+    const j = await apiJSON('/api/watchlist/action-log?symbol=' + encodeURIComponent(code));
+    const rows = (j && j.rows) || [];
+    let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+      + '<div style="color:var(--gold);font-weight:700;">' + escapeHtml(code) + ' · 近日操盘建议</div>'
+      + '<button type="button" style="background:none;border:0;color:var(--text-dim);cursor:pointer;font-size:16px;" onclick="document.getElementById(\'actionLogPop\').style.display=\'none\'">×</button></div>';
+    if (!rows.length) {
+      html += '<div style="color:var(--text-dim);line-height:1.6;">暂无历史快照。刷新看板算出当天建议后会按交易日留下一笔，之后可在此回溯。</div>';
+    } else {
+      rows.slice().reverse().forEach(r => {
+        const act = r.action || '观望';
+        const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
+        const col = act.indexOf('买') >= 0 || act.indexOf('抄底') >= 0 ? 'var(--orange)' : (act.indexOf('卖') >= 0 || act.indexOf('止盈') >= 0 ? 'var(--red)' : 'var(--text-dim)');
+        html += '<div class="act-log-row"><span style="color:var(--text-dim);min-width:72px;">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
+          + '<span style="color:' + col + ';font-weight:700;flex:1;">' + escapeHtml(act) + str + '</span>'
+          + '<span style="color:var(--text-dim);">' + (r.price != null ? escapeHtml(String(r.price)) : '') + '</span></div>';
+      });
+    }
+    pop.innerHTML = html;
+  } catch (e) {
+    pop.innerHTML = '<div style="color:var(--red);">读取失败</div>';
+  }
+}
 
 // === 方案D：看板操盘动作 + 分析页信号 → 一条综合建议 ===
 function _boardMetaForSymbol(sym) {

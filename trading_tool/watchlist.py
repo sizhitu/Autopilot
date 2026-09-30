@@ -1143,6 +1143,21 @@ def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool
     d["data_source"] = "live_fetch"
     if name:
         d["name"] = name
+    try:
+        import cache as _cache
+        if d.get("bar_date") and not d.get("error"):
+            _cache.append_action_log(code, {
+                "date": d.get("bar_date"),
+                "action": d.get("action") or d.get("signal") or "观望",
+                "strength": d.get("action_strength") or 0,
+                "side": d.get("action_side") or "",
+                "timing": d.get("timing") or "",
+                "trend": d.get("trend_filter") or d.get("trend") or "",
+                "price": d.get("price"),
+                "reason": d.get("action_reason") or "",
+            })
+    except Exception:
+        pass
     # 与缓存比：取更新的，但标注最终来源
     if cached_row:
         picked = _row_fresher(d, cached_row)

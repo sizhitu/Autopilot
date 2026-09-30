@@ -286,3 +286,39 @@ def get_daily_cache(symbol: str) -> Optional[list]:
 
 def set_daily_cache(symbol: str, bars: list, ttl: int = REPORT_TTL) -> None:
     set_json(f"daily:{symbol.upper()}", bars, ttl)
+
+
+ACTION_LOG_TTL = int(os.getenv("CACHE_ACTION_LOG_TTL", str(90 * 86400)))
+ACTION_LOG_MAX = 30
+
+
+def get_action_log(symbol: str):
+    raw = get_json(f"actionlog:{str(symbol or '').upper()}")
+    if isinstance(raw, dict) and isinstance(raw.get("rows"), list):
+        return raw["rows"]
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
+def append_action_log(symbol: str, row: dict) -> None:
+    """按交易日去重保留最近 ACTION_LOG_MAX 条操盘建议快照。"""
+    if not symbol or not isinstance(row, dict):
+        return
+    day = str(row.get("date") or "")[:10]
+    if not day:
+        return
+    rows = [r for r in (get_action_log(symbol) or []) if isinstance(r, dict) and str(r.get("date") or "")[:10] != day]
+    rows.append({
+        "date": day,
+        "action": row.get("action") or "观望",
+        "strength": int(row.get("strength") or 0),
+        "side": row.get("side") or "",
+        "timing": row.get("timing") or "",
+        "trend": row.get("trend") or "",
+        "price": row.get("price"),
+        "reason": (row.get("reason") or "")[:120],
+    })
+    rows.sort(key=lambda r: str(r.get("date") or ""))
+    rows = rows[-ACTION_LOG_MAX:]
+    set_json(f"actionlog:{str(symbol).upper()}", {"rows": rows}, ACTION_LOG_TTL)

@@ -1506,6 +1506,22 @@ class WatchStatusOneRequest(BaseModel):
     name: str = ""
 
 
+@app.get("/api/watchlist/action-log")
+async def get_watchlist_action_log(symbol: str = "", authorization: Optional[str] = Header(None),
+                                   request: Request = None):
+    """按代码返回最近若干个交易日的操盘建议快照（全站同一套规则，非账户私有）。"""
+    _rate_check(authorization, request, "action_log", 30, 60)
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(400, "缺少 symbol")
+    try:
+        import cache as _cache
+        rows = _cache.get_action_log(sym) or []
+    except Exception:
+        rows = []
+    return {"success": True, "symbol": sym, "rows": rows}
+
+
 @app.post("/api/watchlist/status-one")
 async def watchlist_status_one(req: WatchStatusOneRequest, request: Request,
                                user: dict = Depends(auth.get_current_user),
