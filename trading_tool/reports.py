@@ -295,17 +295,17 @@ def _color_for_trend(a: dict) -> str:
 
 
 def _build_board_table(analyses: List[dict]) -> str:
-    """仅即将上涨/下跌：竖向卡片，无横向滚动。"""
+    """自选全覆盖：上涨/下跌卡片 + 其余观望精简列表。"""
     if not analyses:
         return (
             f"<p style='color:{C_DIM};font-size:13px;line-height:1.6;'>"
-            f"本期自选中<strong>没有</strong>系统标为「即将上涨 / 即将下跌」的标的，"
-            f"观望类已省略，以减少干扰。完整列表请到 "
-            f"<a href='{SITE_URL}' style='color:{C_BLUE};text-decoration:underline;'>网页看板</a> 查看。</p>"
+            f"本期未能读到该账号自选。请到 "
+            f"<a href='{SITE_URL}' style='color:{C_BLUE};text-decoration:underline;'>网页看板</a> 确认列表。</p>"
         )
 
     ups = [a for a in analyses if a.get("bucket") == "up"]
     downs = [a for a in analyses if a.get("bucket") == "down"]
+    watches = [a for a in analyses if a.get("bucket") not in ("up", "down")]
     parts = []
 
     def _card(a: dict, side_label: str, side_color: str) -> str:
@@ -352,6 +352,24 @@ def _build_board_table(analyses: List[dict]) -> str:
         parts.append(f"<p style='color:{C_RED};font-weight:700;font-size:13px;margin:12px 0 6px;'>▼ 即将下跌关注（{len(downs)}）</p>")
         for a in downs:
             parts.append(_card(a, "下跌侧", C_RED))
+    if watches:
+        parts.append(
+            f"<p style='color:{C_DIM};font-weight:700;font-size:13px;margin:12px 0 6px;'>"
+            f"● 其余自选（{len(watches)}）观望或数据暂缺</p>"
+        )
+        for a in watches:
+            code = a.get("code") or a.get("symbol") or ""
+            name = a.get("name") or ""
+            if not name or str(name).strip().upper() == str(code).strip().upper():
+                name = _resolve_display_name(str(code), str(name or ""))
+            act = a.get("action") or "观望"
+            parts.append(
+                f"<div style='font-size:12px;line-height:1.6;color:{C_TEXT};padding:4px 0;"
+                f"border-bottom:1px solid {C_BORDER};'>"
+                f"<span style='color:{C_GOLD};font-weight:700;'>{code}</span> "
+                f"<span style='color:{C_DIM};'>{name}</span>"
+                f" · {act}</div>"
+            )
     return "".join(parts)
 
 
