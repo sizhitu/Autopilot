@@ -1320,9 +1320,9 @@ body.landing-locked #freeBanner { display: none !important; }
               <button type="button" id="actRange1y" onclick="setActionLogRange(250)">一年</button>
             </div>
           </div>
-          <div id="actionLogStrip" class="action-log-strip" title="买侧橙 / 卖侧红 / 观望灰"></div>
-          <div id="actionLogDetail" class="act-log-empty">点色块或下方列表查看当天快照</div>
-          <div id="actionLogList" class="action-log-list"><span class="act-log-empty">打开标的并刷新看板后，按交易日留下快照（默认半年，可展开一年）。</span></div>
+          <div id="actionLogHint" class="act-log-empty" style="margin:0 0 6px;">买卖侧按日累积，半年/一年只筛选已存记录，不会回补历史。</div>
+          <div id="actionLogStrip" class="action-log-strip" title="买侧橙 / 卖侧红"></div>
+          <div id="actionLogList" class="action-log-list"><span class="act-log-empty">在看板刷新该代码后才会留下当天买卖建议。</span></div>
         </div>
       </div>
 
@@ -5540,27 +5540,7 @@ function setActionLogRange(n) {
   if (b) b.classList.toggle('on', _actionLogRange === 250);
   renderActionLogList(_actionLogCode, _actionLogRows, true);
 }
-function _paintActionDetail(r) {
-  const el = document.getElementById('actionLogDetail');
-  if (!el) return;
-  if (!r) {
-    el.className = 'act-log-empty';
-    el.textContent = '点色块或下方列表查看当天快照';
-    return;
-  }
-  const act = r.action || '观望';
-  const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
-  const tone = _actTone(act);
-  const timing = String(r.timing || '').replace(/^九转/, '');
-  const trend = String(r.trend || '');
-  el.className = 'act-log-detail';
-  el.innerHTML =
-    '<i>日期</i><b>' + escapeHtml(String(r.date || '')) + '</b>' +
-    '<i>动作</i><b style="color:' + tone.col + ';">' + escapeHtml(act) + str + '</b>' +
-    '<i>现价</i><b>' + (r.price != null ? escapeHtml(String(r.price)) : '—') + '</b>' +
-    '<i>九转</i><b>' + (timing ? escapeHtml(timing) : '—') + '</b>' +
-    '<i>趋势</i><b>' + (trend ? escapeHtml(trend) : '—') + '</b>';
-}
+function _paintActionDetail(r) { /* 详情块已去掉 */ }
 function renderActionLogList(code, remote, keepRemote) {
   const box = document.getElementById('actionLogList');
   const strip = document.getElementById('actionLogStrip');
@@ -5577,17 +5557,22 @@ function renderActionLogList(code, remote, keepRemote) {
   });
   const all = Object.keys(by).sort().map(k => by[k]);
   const rows = all.slice(-_actionLogRange).reverse();
+  const hint = document.getElementById('actionLogHint');
+  if (hint) {
+    hint.textContent = all.length
+      ? ('已存 ' + all.length + ' 个交易日买卖记录 · 半年/一年只筛选已存数据，不会回补更早日期')
+      : '买卖侧按日累积，半年/一年只筛选已存记录，不会回补历史。';
+  }
   if (!rows.length) {
     box.innerHTML = '<span class="act-log-empty">暂无快照。在看板刷新该代码后，会按交易日留下一笔；轴上最多保留约一年。</span>';
     if (strip) strip.innerHTML = '';
-    _paintActionDetail(null);
     return;
   }
   if (strip) {
     const chrono = rows.slice().reverse();
     strip.innerHTML = chrono.map((r, i) => {
       const tone = _actTone(r.action);
-      return '<i title="' + escapeAttr(String(r.date||'') + ' ' + (r.action||'')) + '" style="background:' + tone.bg + ';" onclick="event.stopPropagation();_paintActionDetail(_actionLogView[' + i + '])"></i>';
+      return '<i title="' + escapeAttr(String(r.date||'') + ' ' + (r.action||'')) + '" style="background:' + tone.bg + ';"></i>';
     }).join('');
     window._actionLogView = chrono;
   }
@@ -5595,11 +5580,10 @@ function renderActionLogList(code, remote, keepRemote) {
     const act = r.action || '观望';
     const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
     const tone = _actTone(act);
-    return '<div class="act-log-row" onclick="_paintActionDetail({date:\'' + escapeAttr(r.date) + '\',action:\'' + escapeAttr(act) + '\',strength:' + Number(r.strength||0) + ',price:' + JSON.stringify(r.price ?? null) + ',timing:\'' + escapeAttr(r.timing||'') + '\',trend:\'' + escapeAttr(r.trend||'') + '\'})"><span style="color:var(--text-dim);">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
+    return '<div class="act-log-row"><span style="color:var(--text-dim);">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
       + '<span style="color:' + tone.col + ';font-weight:700;">' + escapeHtml(act) + str + '</span>'
       + '<span style="color:var(--text-dim);text-align:right;">' + (r.price!=null?escapeHtml(String(r.price)):'') + '</span></div>';
   }).join('');
-  _paintActionDetail(rows[0]);
 }
 
 // === 方案D：看板操盘动作 + 分析页信号 → 一条综合建议 ===

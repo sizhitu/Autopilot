@@ -1,5 +1,5 @@
 /* Autopilot PWA Service Worker - minimal for installability + basic offline shell */
-const CACHE_NAME = 'autopilot-v16';
+const CACHE_NAME = 'autopilot-v17';
 const PRECACHE = [
   '/',
   '/index.html',
