@@ -58,26 +58,52 @@ def _report_period_label(period: str = "weekly") -> Tuple[str, str]:
 
 
 
+def _norm_symbol_rows(items) -> list:
+    """兼容 get_all 的 dict 与 get_items 的 (symbol, name) 元组。"""
+    out = []
+    seen = set()
+    for i in items or []:
+        if isinstance(i, (list, tuple)):
+            sym = str(i[0] if i else "").strip()
+            nm = str(i[1] if len(i) > 1 else "").strip()
+        elif isinstance(i, dict):
+            sym = str(i.get("symbol") or i.get("code") or "").strip()
+            nm = str(i.get("name") or "").strip()
+        else:
+            continue
+        if not sym:
+            continue
+        key = sym.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((sym, nm))
+        if len(out) >= MAX_SYMBOLS:
+            break
+    return out
+
+
 def get_target_symbols(uid: str) -> list:
-    """返回 [(symbol, name), ...]，保留自选里已存名称。"""
+    """只取该账号自选。读不到时不要用管理员默认清单顶替。"""
     items = []
     if uid:
         try:
-            items = watchlist_store.get_all(uid)
-        except Exception:
+            items = watchlist_store.get_items(uid)
+        except Exception as e:
+            logger.warning("读取自选 get_items 失败 uid=%s: %s", uid, e)
             items = []
-    out = []
-    if items:
-        for i in items[:MAX_SYMBOLS]:
-            sym = (i.get("symbol") or i.get("code") or "").strip()
-            if not sym:
-                continue
-            nm = (i.get("name") or "").strip()
-            out.append((sym, nm))
+        if not items:
+            try:
+                items = watchlist_store.get_all(uid)
+            except Exception as e:
+                logger.warning("读取自选 get_all 失败 uid=%s: %s", uid, e)
+                items = []
+    out = _norm_symbol_rows(items)
+    if out:
+        logger.info("周报自选 uid=%s count=%s", uid, len(out))
         return out
-    for sym, nm in list(watchlist.WATCHLIST.items())[:MAX_SYMBOLS]:
-        out.append((sym, nm or ""))
-    return out
+    logger.warning("周报自选为空 uid=%s，不回退默认看板，避免每周固定伊利/黄金ETF", uid)
+    return []
 
 
 def _bucket(st: dict) -> str:
@@ -182,8 +208,8 @@ def classify_analyses(analyses: List[dict]) -> Dict[str, Any]:
     ups.sort(key=_priority, reverse=True)
     downs.sort(key=_priority, reverse=True)
 
-    # 看板区：仅上涨侧 + 下跌侧（按优先级）
-    board = ups + downs
+    # 看板区：先方向明确的，再带上观望，覆盖用户全部已算出的自选
+    board = ups + downs + watches
 
     focus: List[dict] = []
     take_up = min(2, len(ups))
@@ -609,8 +635,13 @@ def build_report_html(uid: str, email: str, period: str = "weekly") -> "str | No
         else:
             s, nm = item, ""
         a = analyze_symbol(str(s), str(nm or ""))
-        if not a.get("error"):
-            analyses.append(a)
+        if a.get("error"):
+            a["bucket"] = "watch"
+            a["action"] = a.get("action") or "数据暂缺"
+            a["timing"] = a.get("timing") or "—"
+            a["trend_filter"] = a.get("trend_filter") or "—"
+            a["_failed"] = True
+        analyses.append(a)
     if not analyses:
         return None
     classified = classify_analyses(analyses)
