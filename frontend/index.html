@@ -679,17 +679,23 @@ body.help-open { overflow: hidden; touch-action: none; }
 .action-log-range button.on { color:var(--gold); border-color:var(--gold); }
 .action-log-strip { display:flex; gap:1px; height:14px; margin:0 0 8px; width:100%; }
 .action-log-strip i { flex:1; min-width:1px; border-radius:1px; opacity:.9; }
-.action-log-list { max-height:168px; overflow-y:auto; }
+.action-log-list { max-height:176px; overflow-y:auto; -webkit-overflow-scrolling:touch; }
 .act-log-headrow, .act-log-row {
   display:grid;
   grid-template-columns: 64px minmax(0,1fr) 56px;
   gap:8px;
   align-items:center;
-  padding:5px 0;
+  padding:6px 0;
   font-size:12px;
+  line-height:18px;
+  min-height:30px;
+  box-sizing:border-box;
 }
-.act-log-headrow { color:var(--text-dim); font-size:11px; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:2px; }
-.act-log-row { border-bottom:1px solid var(--border); cursor:pointer; }
+.act-log-headrow {
+  color:var(--text-dim); font-size:11px; border-bottom:1px solid var(--border);
+  position:sticky; top:0; background:var(--card, #1a1f2b); z-index:1; margin:0;
+}
+.act-log-row { border-bottom:1px solid var(--border); cursor:default; }
 .act-log-row:last-child { border-bottom:none; }
 .act-log-row span { min-width:0; overflow-wrap:anywhere; }
 .act-log-empty { color:var(--text-dim); font-size:12px; line-height:1.6; }
