@@ -475,6 +475,14 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _action_log_payload(symbol: str) -> list:
+    try:
+        import cache as _cache
+        return _cache.get_action_log(symbol) or []
+    except Exception:
+        return []
+
+
 def _rate_check(authorization: Optional[str], request: Request, name: str,
                 max_req: int, window: int) -> None:
     """对指定接口做固定窗口限流；超限时抛 429 友好提示。"""
@@ -986,6 +994,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             if _nc3 >= 250:
                 cached_hit["stale"] = False
                 cached_hit["cache_hit"] = True
+                cached_hit["action_log"] = _action_log_payload(req.symbol)
                 return JSONResponse(content=_to_jsonable(cached_hit),
                                     headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
         # 短 K 线缓存作废（含历史 15/80 根污染）
@@ -1020,6 +1029,7 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             if _nc2 >= 250:
                 cached = _clamp_quote_chart(dict(cached))
                 cached["stale"] = True
+                cached["action_log"] = _action_log_payload(req.symbol)
                 return JSONResponse(content=_to_jsonable(cached),
                                     headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
             try:
@@ -1101,7 +1111,8 @@ async def get_quote(req: QuoteRequest, request: Request = None,
             "last_close": round(float(df['close'].iloc[-1]), 2),
             "start_date": df['date'].iloc[0].strftime('%Y-%m-%d') if 'date' in df.columns else "",
             "end_date": df['date'].iloc[-1].strftime('%Y-%m-%d') if 'date' in df.columns else "",
-        }
+        },
+        "action_log": _action_log_payload(req.symbol),
     })
 
     payload = _clamp_quote_chart(payload)

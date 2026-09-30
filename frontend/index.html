@@ -671,7 +671,12 @@ body.help-open { overflow: hidden; touch-action: none; }
 #watchlistTable th:nth-child(5), #watchlistTable td:nth-child(5) { width: 88px; min-width: 88px; }  /* 九转时机 */
 #watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 72px; min-width: 72px; }   /* 趋势过滤 */
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 84px; min-width: 84px; }  /* 操盘动作 */
-.wl-act-cell { cursor: pointer; }
+.action-log-box { padding: 8px 10px 12px; border-top: 1px solid var(--border); }
+.action-log-title { color: var(--gold); font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.action-log-list { max-height: 168px; overflow-y: auto; }
+.act-log-row { display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.act-log-row:last-child { border-bottom:none; }
+.wl-act-cell { cursor: default; }
 .wl-act-cell:hover span { text-decoration: underline; text-underline-offset: 2px; }
 .act-log-row { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .act-log-row:last-child { border-bottom:none; }
@@ -976,7 +981,6 @@ body.landing-locked #freeBanner { display: none !important; }
 
 <div id="helpBackdrop" class="help-backdrop" aria-hidden="true"></div>
 <div id="helpDock" class="help-dock" role="dialog" aria-modal="true" hidden></div>
-<div id="actionLogPop" class="help-pop" hidden style="display:none;position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:10060;width:min(360px,calc(100vw - 28px));max-height:min(64vh,420px);"></div>
 <div id="billingSuccessBanner" style="display:none;position:sticky;top:0;z-index:9000;background:linear-gradient(90deg,rgba(46,204,113,.18),rgba(241,196,15,.12));border-bottom:1px solid rgba(46,204,113,.35);padding:10px 14px;text-align:center;font-size:13px;color:var(--text);">
   <b style="color:var(--green);">支付成功</b>
   <span id="billingSuccessText">会员权益同步中…</span>
@@ -1279,6 +1283,10 @@ body.landing-locked #freeBanner { display: none !important; }
         <canvas id="chartCanvas" height="280"></canvas>
         <canvas id="volCanvas" height="70"></canvas>
         <canvas id="rsiCanvas" height="85"></canvas>
+        <div id="actionLogBox" class="action-log-box">
+          <div class="action-log-title">近日操盘建议</div>
+          <div id="actionLogList" class="action-log-list"><span style="color:var(--text-dim);">打开标的后显示近日快照</span></div>
+        </div>
       </div>
 
       <!-- 回测视图 -->
@@ -3652,6 +3660,8 @@ async function fetchQuote(symbol, name, market) {
         return;
       }
       lastChartData = json.chart;
+      try { renderActionLogList(json.symbol || currentSymbol, json.action_log || []); } catch (eAL) {}
+      try { renderActionLogList(json.symbol || currentSymbol, json.action_log || []); } catch (eAL) {}
       lastChartSymbol = symbol;
       setChartStale(false);
       drawChart(json.chart);
@@ -5339,6 +5349,7 @@ function renderWatchlist(stocks) {
     const trendText = s.trend_filter || s.trend || '—';
     const trendColor = sigColors[s.trend_filter_color] || 'var(--text-dim)';
     const actionText = s.action || s.signal || '观望';
+    try { rememberActionSnap(s); } catch (eSnap) {}
     const actionColor = sigColors[s.action_color || s.signal_color] || 'var(--text-dim)';
     const actionTip = s.action_reason || '';
     const actStr = Number(s.action_strength || 0);
@@ -5435,7 +5446,7 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 6px;color:${chgColor};font-weight:600;">${chgText}</td>
       <td style="padding:5px 6px;white-space:normal;line-height:1.25;"><span style="color:${timingColor};font-weight:600;">${escapeHtml(timingText)}</span>${ntSub}</td>
       <td style="padding:5px 6px;"><span style="color:${trendColor};font-weight:600;">${escapeHtml(trendText)}</span></td>
-      <td class="wl-act-cell" title="${escapeAttr(actionTip || '点击查看近日操盘建议')}" onclick="event.stopPropagation();showActionLog('${escapeAttr(_cd)}')"><span style="color:${actionColor};font-weight:700;font-size:11px;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
+      <td title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;font-size:11px;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
       <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
     </tr>`;
@@ -5444,37 +5455,55 @@ function renderWatchlist(stocks) {
 }
 
 
-async function showActionLog(code) {
-  const pop = document.getElementById('actionLogPop');
-  if (!pop || !code) return;
-  pop.hidden = false;
-  pop.style.display = 'block';
-  pop.innerHTML = '<div style="color:var(--gold);font-weight:700;margin-bottom:8px;">' + escapeHtml(code) + ' · 近日操盘建议</div><div style="color:var(--text-dim);">读取中…</div>';
-  const close = () => { pop.style.display = 'none'; pop.hidden = true; document.removeEventListener('click', onDoc); };
-  const onDoc = (ev) => { if (!pop.contains(ev.target)) close(); };
-  setTimeout(() => document.addEventListener('click', onDoc), 0);
+function rememberActionSnap(s) {
+  if (!s || !s.code || !s.bar_date) return;
+  const day = String(s.bar_date).slice(0, 10);
+  if (day.length < 10) return;
+  const key = 'autopilot_actionlog';
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (e) { all = {}; }
+  const code = String(s.code).toUpperCase();
+  const list = Array.isArray(all[code]) ? all[code] : [];
+  const row = {
+    date: day,
+    action: s.action || s.signal || '观望',
+    strength: Number(s.action_strength || 0),
+    price: s.price,
+    timing: s.timing || '',
+    trend: s.trend_filter || s.trend || '',
+    reason: s.action_reason || ''
+  };
+  all[code] = list.filter(r => String(r && r.date).slice(0,10) !== day).concat([row]).slice(-30);
+  try { localStorage.setItem(key, JSON.stringify(all)); } catch (e2) {}
+}
+function localActionLog(code) {
   try {
-    const j = await apiJSON('/api/watchlist/action-log?symbol=' + encodeURIComponent(code));
-    const rows = (j && j.rows) || [];
-    let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
-      + '<div style="color:var(--gold);font-weight:700;">' + escapeHtml(code) + ' · 近日操盘建议</div>'
-      + '<button type="button" style="background:none;border:0;color:var(--text-dim);cursor:pointer;font-size:16px;" onclick="document.getElementById(\'actionLogPop\').style.display=\'none\'">×</button></div>';
-    if (!rows.length) {
-      html += '<div style="color:var(--text-dim);line-height:1.6;">暂无历史快照。刷新看板算出当天建议后会按交易日留下一笔，之后可在此回溯。</div>';
-    } else {
-      rows.slice().reverse().forEach(r => {
-        const act = r.action || '观望';
-        const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
-        const col = act.indexOf('买') >= 0 || act.indexOf('抄底') >= 0 ? 'var(--orange)' : (act.indexOf('卖') >= 0 || act.indexOf('止盈') >= 0 ? 'var(--red)' : 'var(--text-dim)');
-        html += '<div class="act-log-row"><span style="color:var(--text-dim);min-width:72px;">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
-          + '<span style="color:' + col + ';font-weight:700;flex:1;">' + escapeHtml(act) + str + '</span>'
-          + '<span style="color:var(--text-dim);">' + (r.price != null ? escapeHtml(String(r.price)) : '') + '</span></div>';
-      });
-    }
-    pop.innerHTML = html;
-  } catch (e) {
-    pop.innerHTML = '<div style="color:var(--red);">读取失败</div>';
+    const all = JSON.parse(localStorage.getItem('autopilot_actionlog') || '{}') || {};
+    return all[String(code||'').toUpperCase()] || [];
+  } catch (e) { return []; }
+}
+function renderActionLogList(code, remote) {
+  const box = document.getElementById('actionLogList');
+  if (!box) return;
+  const local = localActionLog(code);
+  const by = {};
+  (local || []).concat(remote || []).forEach(r => {
+    if (!r || !r.date) return;
+    by[String(r.date).slice(0,10)] = r;
+  });
+  const rows = Object.keys(by).sort().reverse().map(k => by[k]);
+  if (!rows.length) {
+    box.innerHTML = '<span style="color:var(--text-dim);">暂无快照。在看板刷新该代码后，会按交易日留下一笔。</span>';
+    return;
   }
+  box.innerHTML = rows.map(r => {
+    const act = r.action || '观望';
+    const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
+    const col = (String(act).indexOf('买')>=0 || String(act).indexOf('抄底')>=0) ? 'var(--orange)' : ((String(act).indexOf('卖')>=0 || String(act).indexOf('止盈')>=0) ? 'var(--red)' : 'var(--text-dim)');
+    return '<div class="act-log-row"><span style="color:var(--text-dim);min-width:72px;">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
+      + '<span style="color:' + col + ';font-weight:700;flex:1;">' + escapeHtml(act) + str + '</span>'
+      + '<span style="color:var(--text-dim);">' + (r.price!=null?escapeHtml(String(r.price)):'') + '</span></div>';
+  }).join('');
 }
 
 // === 方案D：看板操盘动作 + 分析页信号 → 一条综合建议 ===
