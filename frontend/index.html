@@ -672,12 +672,17 @@ body.help-open { overflow: hidden; touch-action: none; }
 #watchlistTable th:nth-child(6), #watchlistTable td:nth-child(6) { width: 72px; min-width: 72px; }   /* 趋势过滤 */
 #watchlistTable th:nth-child(7), #watchlistTable td:nth-child(7) { width: 84px; min-width: 84px; }  /* 操盘动作 */
 .action-log-box { padding: 8px 10px 12px; border-top: 1px solid var(--border); }
-.action-log-title { color: var(--gold); font-size: 12px; font-weight: 700; margin-bottom: 6px; }
-.action-log-list { max-height: 168px; overflow-y: auto; }
+.action-log-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.action-log-title { color: var(--gold); font-size: 12px; font-weight: 700; }
+.action-log-range { display:flex; gap:4px; }
+.action-log-range button { font-size:11px; padding:2px 8px; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--text-dim); cursor:pointer; }
+.action-log-range button.on { color:var(--gold); border-color:var(--gold); }
+.action-log-strip { display:flex; gap:1px; height:14px; margin:0 0 8px; width:100%; }
+.action-log-strip i { flex:1; min-width:1px; border-radius:1px; opacity:.9; }
+.action-log-list { max-height:168px; overflow-y:auto; }
 .act-log-row { display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .act-log-row:last-child { border-bottom:none; }
-.wl-act-cell { cursor: default; }
-.wl-act-cell:hover span { text-decoration: underline; text-underline-offset: 2px; }
+.act-log-empty { color:var(--text-dim); font-size:12px; line-height:1.6; }
 .act-log-row { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .act-log-row:last-child { border-bottom:none; }
 
@@ -1284,8 +1289,16 @@ body.landing-locked #freeBanner { display: none !important; }
         <canvas id="volCanvas" height="70"></canvas>
         <canvas id="rsiCanvas" height="85"></canvas>
         <div id="actionLogBox" class="action-log-box">
-          <div class="action-log-title">近日操盘建议</div>
-          <div id="actionLogList" class="action-log-list"><span style="color:var(--text-dim);">打开标的后显示近日快照</span></div>
+          <div class="action-log-head">
+            <div class="action-log-title">操盘建议时间轴</div>
+            <div class="action-log-range">
+              <button type="button" id="actRange6m" class="on" onclick="setActionLogRange(125)">半年</button>
+              <button type="button" id="actRange1y" onclick="setActionLogRange(250)">一年</button>
+            </div>
+          </div>
+          <div id="actionLogStrip" class="action-log-strip" title="买侧橙 / 卖侧红 / 观望灰"></div>
+          <div id="actionLogDetail" class="act-log-empty">点色块或下方列表查看当天快照</div>
+          <div id="actionLogList" class="action-log-list"><span class="act-log-empty">打开标的并刷新看板后，按交易日留下快照（默认半年，可展开一年）。</span></div>
         </div>
       </div>
 
@@ -5254,7 +5267,7 @@ function renderWatchlistSummary(summary) {
   html += `<span class="help-q help-q-board" style="margin-left:6px;" onclick="event.stopPropagation();toggleHelp(this)" title="查看看板列说明" role="button" aria-label="看板列说明"><span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
     <div class="hp-sec"><b>九转时机</b><p>神奇九转（TD 思路）— 收盘相对前第 4 根 K 连续计数，日/月可并列。<br>· 下跌九转 → 买侧观察<br>· 上涨九转 → 卖侧观察<br>更适震荡与弱趋势；强单边里单独九转易失效。<b>不是下单指令。</b></p></div>
     <div class="hp-sec"><b>趋势过滤</b><p>均线方向环境（多头 / 空头 / 震荡）。<br>「多·指标未齐 / 空·指标未齐」= 均线已偏多/偏空，但系统层指标未齐（可与详情红叉对照），<b>不等于</b>整单策略已通过。</p></div>
-    <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签。观望不标强度；其余动作后附 <b>·1～·5</b> 为该侧信号强度（5 最强）。买侧：关注买入 / 阶梯抄底关注；卖侧：关注卖出 / 阶梯止盈关注。同侧可比较强弱，跨侧勿直接比数字。冲突时降权观望。非买卖委托。点该列可查看近日快照（按交易日覆盖保存，便于对照错过的信号）。</p></div>
+    <div class="hp-sec"><b>操盘动作</b><p>时机 × 趋势综合后的研究向标签。观望不标强度；其余动作后附 <b>·1～·5</b> 为该侧信号强度（5 最强）。买侧：关注买入 / 阶梯抄底关注；卖侧：关注卖出 / 阶梯止盈关注。同侧可比较强弱，跨侧勿直接比数字。冲突时降权观望。非买卖委托。分析页 K 线下有快照时间轴：默认半年，可展开一年；按交易日覆盖保存。</p></div>
     <div class="hp-sec"><b>新高 / 估值</b><p>
 列固定三行：<br>
 · <b>第一行</b> 新高/新低（近 5 日～一年或历史），只标位置，不当买卖点。<br>
@@ -5473,7 +5486,7 @@ function rememberActionSnap(s) {
     trend: s.trend_filter || s.trend || '',
     reason: s.action_reason || ''
   };
-  all[code] = list.filter(r => String(r && r.date).slice(0,10) !== day).concat([row]).slice(-30);
+  all[code] = list.filter(r => String(r && r.date).slice(0,10) !== day).concat([row]).slice(-260);
   try { localStorage.setItem(key, JSON.stringify(all)); } catch (e2) {}
 }
 function localActionLog(code) {
@@ -5482,28 +5495,73 @@ function localActionLog(code) {
     return all[String(code||'').toUpperCase()] || [];
   } catch (e) { return []; }
 }
-function renderActionLogList(code, remote) {
+let _actionLogRange = 125;
+let _actionLogRows = [];
+let _actionLogCode = '';
+function _actTone(act) {
+  const s = String(act || '');
+  if (s.indexOf('买') >= 0 || s.indexOf('抄底') >= 0) return { col: 'var(--orange)', bg: 'rgba(230,126,34,.85)' };
+  if (s.indexOf('卖') >= 0 || s.indexOf('止盈') >= 0) return { col: 'var(--red)', bg: 'rgba(231,76,60,.85)' };
+  return { col: 'var(--text-dim)', bg: 'rgba(139,149,168,.45)' };
+}
+function setActionLogRange(n) {
+  _actionLogRange = n >= 200 ? 250 : 125;
+  const a = document.getElementById('actRange6m');
+  const b = document.getElementById('actRange1y');
+  if (a) a.classList.toggle('on', _actionLogRange === 125);
+  if (b) b.classList.toggle('on', _actionLogRange === 250);
+  renderActionLogList(_actionLogCode, _actionLogRows, true);
+}
+function _paintActionDetail(r) {
+  const el = document.getElementById('actionLogDetail');
+  if (!el) return;
+  if (!r) { el.textContent = '点色块或下方列表查看当天快照'; return; }
+  const act = r.action || '观望';
+  const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
+  const tone = _actTone(act);
+  el.innerHTML = '<span style="color:var(--text-dim);">' + escapeHtml(String(r.date || '')) + '</span> · '
+    + '<span style="color:' + tone.col + ';font-weight:700;">' + escapeHtml(act) + str + '</span>'
+    + (r.price != null ? ' · 现价 ' + escapeHtml(String(r.price)) : '')
+    + (r.timing ? ' · ' + escapeHtml(r.timing) : '')
+    + (r.trend ? ' · ' + escapeHtml(r.trend) : '');
+}
+function renderActionLogList(code, remote, keepRemote) {
   const box = document.getElementById('actionLogList');
+  const strip = document.getElementById('actionLogStrip');
   if (!box) return;
-  const local = localActionLog(code);
+  if (!keepRemote) _actionLogRows = remote || [];
+  _actionLogCode = code || _actionLogCode;
+  const local = localActionLog(_actionLogCode);
   const by = {};
-  (local || []).concat(remote || []).forEach(r => {
+  (local || []).concat(_actionLogRows || []).forEach(r => {
     if (!r || !r.date) return;
     by[String(r.date).slice(0,10)] = r;
   });
-  const rows = Object.keys(by).sort().reverse().map(k => by[k]);
+  const all = Object.keys(by).sort().map(k => by[k]);
+  const rows = all.slice(-_actionLogRange).reverse();
   if (!rows.length) {
-    box.innerHTML = '<span style="color:var(--text-dim);">暂无快照。在看板刷新该代码后，会按交易日留下一笔。</span>';
+    box.innerHTML = '<span class="act-log-empty">暂无快照。在看板刷新该代码后，会按交易日留下一笔；轴上最多保留约一年。</span>';
+    if (strip) strip.innerHTML = '';
+    _paintActionDetail(null);
     return;
+  }
+  if (strip) {
+    const chrono = rows.slice().reverse();
+    strip.innerHTML = chrono.map((r, i) => {
+      const tone = _actTone(r.action);
+      return '<i title="' + escapeAttr(String(r.date||'') + ' ' + (r.action||'')) + '" style="background:' + tone.bg + ';" onclick="event.stopPropagation();_paintActionDetail(_actionLogView[' + i + '])"></i>';
+    }).join('');
+    window._actionLogView = chrono;
   }
   box.innerHTML = rows.map(r => {
     const act = r.action || '观望';
     const str = (act !== '观望' && Number(r.strength) >= 1) ? (' ·' + r.strength) : '';
-    const col = (String(act).indexOf('买')>=0 || String(act).indexOf('抄底')>=0) ? 'var(--orange)' : ((String(act).indexOf('卖')>=0 || String(act).indexOf('止盈')>=0) ? 'var(--red)' : 'var(--text-dim)');
-    return '<div class="act-log-row"><span style="color:var(--text-dim);min-width:72px;">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
-      + '<span style="color:' + col + ';font-weight:700;flex:1;">' + escapeHtml(act) + str + '</span>'
+    const tone = _actTone(act);
+    return '<div class="act-log-row" onclick="_paintActionDetail({date:\'' + escapeAttr(r.date) + '\',action:\'' + escapeAttr(act) + '\',strength:' + Number(r.strength||0) + ',price:' + JSON.stringify(r.price ?? null) + ',timing:\'' + escapeAttr(r.timing||'') + '\',trend:\'' + escapeAttr(r.trend||'') + '\'})"><span style="color:var(--text-dim);min-width:72px;">' + escapeHtml(String(r.date||'').slice(5)) + '</span>'
+      + '<span style="color:' + tone.col + ';font-weight:700;flex:1;">' + escapeHtml(act) + str + '</span>'
       + '<span style="color:var(--text-dim);">' + (r.price!=null?escapeHtml(String(r.price)):'') + '</span></div>';
   }).join('');
+  _paintActionDetail(rows[0]);
 }
 
 // === 方案D：看板操盘动作 + 分析页信号 → 一条综合建议 ===

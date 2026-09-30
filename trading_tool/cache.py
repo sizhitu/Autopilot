@@ -288,8 +288,8 @@ def set_daily_cache(symbol: str, bars: list, ttl: int = REPORT_TTL) -> None:
     set_json(f"daily:{symbol.upper()}", bars, ttl)
 
 
-ACTION_LOG_TTL = int(os.getenv("CACHE_ACTION_LOG_TTL", str(90 * 86400)))
-ACTION_LOG_MAX = 30
+ACTION_LOG_TTL = int(os.getenv("CACHE_ACTION_LOG_TTL", str(400 * 86400)))
+ACTION_LOG_MAX = 260
 
 
 def get_action_log(symbol: str):
