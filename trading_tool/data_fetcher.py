@@ -266,8 +266,35 @@ def _df_last_date(df):
         return None
 
 
+# 休市日（仅非周末）。A股含国庆等长假；美股含主要休市。
+# 2026 国庆：10-01 起休市，最近收盘为 09-30。
+_CN_HOLIDAYS = {
+    "2026-01-01", "2026-01-02",
+    "2026-02-15", "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-23",
+    "2026-04-04", "2026-04-05", "2026-04-06",
+    "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05",
+    "2026-06-19", "2026-06-20", "2026-06-21",
+    "2026-09-25", "2026-09-26", "2026-09-27",
+    "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07",
+}
+_US_HOLIDAYS = {
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+    "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+}
+
+
+def _is_market_closed(d, market: str = "us") -> bool:
+    if d is None:
+        return True
+    if d.weekday() >= 5:
+        return True
+    key = d.strftime("%Y-%m-%d")
+    hol = _CN_HOLIDAYS if market == "cn" else _US_HOLIDAYS
+    return key in hol
+
+
 def _expected_session_date(market: str = "us"):
-    """粗估最近应有交易日（跳过周末；不含完整节假日表）。"""
+    """最近应有收盘日：跳过周末和该市场假期。盘中未收盘则用上一交易日。"""
     from datetime import datetime, timedelta, timezone, date
     try:
         if market == "cn":
@@ -280,7 +307,9 @@ def _expected_session_date(market: str = "us"):
             d = now.date()
             if now.hour < 16:
                 d = d - timedelta(days=1)
-        while d.weekday() >= 5:
+        for _ in range(14):
+            if not _is_market_closed(d, market):
+                return d
             d = d - timedelta(days=1)
         return d
     except Exception:
@@ -291,18 +320,14 @@ def _expected_session_date(market: str = "us"):
 
 
 def _bar_is_stale(last_date, market: str = "us", grace_days: int = 1) -> bool:
-    """最后一根 K 是否明显落后。"""
+    """最后一根 K 是否落后于该市场最近收盘日。假期（如 A 股国庆）不算延后。"""
     if last_date is None:
         return True
     try:
-        from datetime import timedelta
         exp = _expected_session_date(market)
+        if last_date >= exp:
+            return False
         delta = (exp - last_date).days
-        if delta <= 0:
-            return False
-        # 周五收盘 → 周一/周二仍用周五，不标陈旧
-        if last_date.weekday() == 4 and exp.weekday() <= 1 and delta <= 3:
-            return False
         return delta > grace_days
     except Exception:
         return False
