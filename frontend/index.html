@@ -5106,9 +5106,7 @@ async function _loadWatchlistBody(forceRefresh) {
       const progDone = (pr.done != null && pr.total) ? (pr.done >= pr.total) : false;
       const stillComputing = !!json.computing && !progDone;
       // 必须等 computing=false 或 progress 全部完成，不能只因「可用数≈5」就停
-      const allReady = (!json.computing && progDone) ||
-        (!json.computing && total > 0 && usable.length >= total) ||
-        (progDone && usable.length >= total);
+      const allReady = total > 0 && usable.length >= total && !stocks.some(s => s && (s.pending || s.price === '-' || s.price == null || s.signal === '计算中'));
       if (stillComputing || (!allReady && json.computing)) {
         const pk = String(pr.done || 0) + '/' + String(pr.total || 0) + ':' + String(usable.length);
         if (pk === _wlLastProgressKey) _wlStalledPolls += 1;

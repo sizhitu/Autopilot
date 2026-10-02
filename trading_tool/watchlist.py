@@ -1058,14 +1058,28 @@ def _expected_bar_date_str(code: str) -> str:
 
 
 
+def _row_incomplete(s: dict) -> bool:
+    if not s:
+        return True
+    if s.get('pending') or s.get('error'):
+        return True
+    px = s.get('price')
+    if px in (None, '', '-', '…', '...'):
+        return True
+    sig = str(s.get('signal') or '')
+    if sig in ('', '计算中'):
+        return True
+    return False
+
+
 def _rows_all_session_fresh(stocks) -> bool:
-    """全部可用行的 bar_date 已是各市场最近交易日（周末/盘后锁定用）。"""
+    """全部行都有现价，且日期已是各市场最近收盘，才允许跳过重拉。"""
     rows = [s for s in (stocks or []) if s]
     if not rows:
         return False
     usable = 0
     for s in rows:
-        if s.get('pending') or s.get('price') in (None, '', '-', '…'):
+        if _row_incomplete(s):
             return False
         code = str(s.get('code') or '')
         if not _row_price_date_fresh(s, code):
@@ -1682,7 +1696,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
             cu = str(code).upper()
             prev = base.get(cu) if base else None
             # A股/美股同一规则：现价已是该市场最近收盘日则不打行情。只拉落后的。
-            if prev and _row_price_date_fresh(prev, cu):
+            if prev and (not _row_incomplete(prev)) and _row_price_date_fresh(prev, cu):
                 fl = False
             else:
                 fl = True
@@ -1923,7 +1937,8 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         # 自选有增删时不能当纯命中，需后台补齐新代码
         cached_codes = {str(s.get('code')).upper() for s in (out.get('stocks') or []) if s}
         want_codes = {str(c).upper() for c, _ in items}
-        if cached_codes == want_codes:
+        incomplete = [s for s in aligned if _row_incomplete(s)]
+        if cached_codes == want_codes and not incomplete:
             out['stocks'] = aligned
             out['count'] = len(aligned)
             out['total'] = len(items)
@@ -1963,8 +1978,8 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         force_needed = bool(force)
         if hard and hard_purged:
             force_needed = True
-        need_refresh = force_needed or out['stale'] or (
-            {str(s.get('code')).upper() for s in out['stocks'] if s and s.get('pending')}
+        need_refresh = force_needed or out['stale'] or any(
+            _row_incomplete(s) for s in (out.get('stocks') or [])
         )
         if need_refresh:
             with _refresh_lock:
