@@ -490,7 +490,7 @@ body.help-open { overflow: hidden; touch-action: none; }
 /* 搜索 */
 .search-box { display:flex; gap:4px; align-items:center; }
 .search-box input { flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 10px; border-radius:4px; font-size:13px; }
-.search-results { position:absolute; background:var(--card); border:1px solid var(--border); border-radius:4px; max-height:200px; overflow-y:auto; z-index:100; width:280px; display:none; }
+.search-results { position:absolute; background:var(--card); border:1px solid var(--border); border-radius:4px; max-height:240px; overflow-y:auto; z-index:80; width:min(280px, 78vw); display:none; box-shadow:0 10px 28px rgba(0,0,0,.45); }
 .search-result-item { padding:6px 10px; cursor:pointer; font-size:12px; border-bottom:1px solid var(--border); }
 .search-result-item:hover { background:var(--bg); }
 .search-result-item .code { font-weight:600; color:var(--gold); }
@@ -570,7 +570,7 @@ body.help-open { overflow: hidden; touch-action: none; }
 #watchlistTable th:nth-child(1), #watchlistTable td:nth-child(1) {
   position: sticky;
   left: 0;
-  z-index: 8;
+  z-index: 2;
   width: 90px !important;
   min-width: 90px !important;
   max-width: 90px !important;
@@ -1215,7 +1215,7 @@ body.landing-locked #freeBanner { display: none !important; }
             <option value="biweekly">每两周</option>
           </select>
         </span>
-        <span id="addWatchRow" style="display:none; gap:4px; align-items:center; position:relative;">
+        <span id="addWatchRow" style="display:none; gap:4px; align-items:center; position:relative; z-index:40;">
           <input id="watchInput" type="text" placeholder="加代码/名称 如 NVDA/伊利股份" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:170px;">
           <div class="search-results" id="watchSuggest" style="top:100%; left:0; width:230px; display:none;"></div>
           <button class="btn btn-green btn-sm" onclick="addWatch()">+ 添加</button>
