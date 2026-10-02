@@ -640,32 +640,37 @@ body.help-open { overflow: hidden; touch-action: none; }
   line-height: 1.25;
 }
 #watchlistTable .wl-del {
-  background: rgba(231,76,60,.12);
-  border: 1px solid rgba(231,76,60,.45);
-  color: var(--red);
+  position: relative;
+  background: none;
+  border: none;
+  color: var(--text-dim);
   cursor: pointer;
-  font-size: 16px;
-  font-weight: 700;
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
+  font-size: 13px;
+  font-weight: 500;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
   padding: 0;
-  margin: 2px 4px 0 0;
-  border-radius: 8px;
+  margin: 3px 6px 0 0;
+  border-radius: 0;
   flex-shrink: 0;
-  line-height: 26px;
+  line-height: 16px;
   text-align: center;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
-@media (max-width: 900px) {
-  #watchlistTable .wl-del {
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
-    font-size: 18px;
-    line-height: 34px;
-  }
+#watchlistTable .wl-del::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+}
+#watchlistTable .wl-del:hover,
+#watchlistTable .wl-del:active {
+  color: var(--red);
 }
 @media (max-width: 640px) {
   #watchlistTable { min-width: 800px; }
