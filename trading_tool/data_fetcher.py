@@ -1301,29 +1301,46 @@ class DataFetcher:
             us_name = self.lookup_us_name(normalized) or '自定义美股'
             results.insert(0, {'code': normalized, 'name': us_name, 'market': '美股'})
 
-        # 排序：精确代码 > 名称含关键词 > 其它
+        # 最左前缀优先。不把「没对上关键词」的 A 股整段顶到前面。
+        def _digits(code):
+            c = str(code or '').upper()
+            if c[:2] in ('SH', 'SZ', 'BJ') and c[2:].isdigit():
+                return c[2:]
+            return c
+
+        def _hit(r):
+            c = str(r.get('code') or '').upper()
+            n = str(r.get('name') or '')
+            nu = n.upper()
+            d = _digits(c)
+            if keyword.isdigit():
+                return d.startswith(keyword) or c.startswith(keyword)
+            if has_cjk:
+                return n.startswith(name_kw) or name_kw in n
+            return c.startswith(keyword) or c.startswith(normalized) or nu.startswith(keyword) or keyword in nu
+
+        results = [r for r in results if _hit(r)]
+
         def _rank(r):
             c = str(r.get('code') or '').upper()
             n = str(r.get('name') or '')
-            m = str(r.get('market') or '')
-            if c == keyword or c == normalized:
+            nu = n.upper()
+            d = _digits(c)
+            if c == keyword or c == normalized or d == keyword:
                 return (0, 0, c)
-            if has_cjk and m == 'A股' and c.isdigit() and len(c) == 6 and name_kw in n:
-                return (0, 1, c)
-            if has_cjk and m == 'A股' and c.isdigit() and len(c) == 6:
-                return (1, 0, c)
+            if keyword.isdigit() and d.startswith(keyword):
+                return (1, len(d), c)
+            if has_cjk and n.startswith(name_kw):
+                return (1, len(n), c)
+            if (not has_cjk) and (c.startswith(keyword) or c.startswith(normalized)):
+                return (1, len(c), c)
+            if (not has_cjk) and nu.startswith(keyword):
+                return (2, len(n), c)
             if name_kw and name_kw in n:
-                return (2, 0, c)
-            if keyword and keyword in c:
-                return (3, 0, c)
+                return (3, n.find(name_kw), c)
             return (4, 0, c)
         results.sort(key=_rank)
-        if has_cjk:
-            cn_first = [r for r in results if r.get('market') == 'A股'
-                        and str(r.get('code', '')).isdigit() and len(str(r.get('code'))) == 6]
-            if cn_first:
-                results = cn_first + [r for r in results if r not in cn_first]
-        return results[:20]
+        return results[:12]
 
     # ================================================================
     #  公司名称反查（搜索兜底：避免展示"自定义股票"）
