@@ -1050,7 +1050,7 @@ def _caches_put(key, entry: dict) -> None:
 def _expected_bar_date_str(code: str) -> str:
     try:
         from data_fetcher import _expected_session_date
-        mkt = "cn" if str(code).isdigit() or str(code).upper()[:2] in ("SH", "SZ", "BJ") else "us"
+        mkt = _market_of_code(code)
         exp = _expected_session_date(mkt)
         return exp.strftime("%Y-%m-%d") if exp else ""
     except Exception:
@@ -1068,23 +1068,25 @@ def _rows_all_session_fresh(stocks) -> bool:
         if s.get('pending') or s.get('price') in (None, '', '-', '…'):
             return False
         code = str(s.get('code') or '')
-        if not _row_is_date_fresh(s, code):
+        if not _row_price_date_fresh(s, code):
             return False
         usable += 1
     return usable > 0
 
 
-def _row_is_date_fresh(row: dict, code: str = "") -> bool:
-    """相对该市场应有交易日是否够新。指标仍是占位则必须重算。"""
+def _market_of_code(code: str) -> str:
+    s = str(code or "").strip().upper()
+    if s.isdigit() or s[:2] in ("SH", "SZ", "BJ"):
+        return "cn"
+    return "us"
+
+
+def _row_price_date_fresh(row: dict, code: str = "") -> bool:
+    """现价日期是否已是该市场最近收盘（含周末/假期）。A股、美股同一套。"""
     if not row or not isinstance(row, dict):
-        return False
-    if row.get("pending") or row.get("error"):
         return False
     px = row.get("price")
     if px in (None, "", "-", "…"):
-        return False
-    tm = str(row.get("timing") or "")
-    if tm in ("", "—", "-", "计算中"):
         return False
     bd = _bar_date_str(row)
     if not bd:
@@ -1092,18 +1094,21 @@ def _row_is_date_fresh(row: dict, code: str = "") -> bool:
     exp = _expected_bar_date_str(code or row.get("code") or "")
     if not exp:
         return True
-    if bd >= exp:
-        return True
-    # 周五收盘后周末/周一仍可能只到周五
-    try:
-        from datetime import datetime as _dt
-        d = _dt.strptime(bd[:10], "%Y-%m-%d").date()
-        e = _dt.strptime(exp[:10], "%Y-%m-%d").date()
-        if d.weekday() == 4 and e.weekday() <= 1 and (e - d).days <= 3:
-            return True
-    except Exception:
-        pass
-    return False
+    return bd[:10] >= exp[:10]
+
+
+def _row_is_date_fresh(row: dict, code: str = "") -> bool:
+    """行情日已最新，且指标不是占位。用于决定要不要重算指标，不单独决定拉行情。"""
+    if not row or not isinstance(row, dict):
+        return False
+    if row.get("pending") or row.get("error"):
+        return False
+    if not _row_price_date_fresh(row, code):
+        return False
+    tm = str(row.get("timing") or "")
+    if tm in ("", "—", "-", "计算中"):
+        return False
+    return True
 
 
 def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool = False) -> dict:
@@ -1299,9 +1304,10 @@ def _tag_stocks_date_freshness(stocks: list) -> tuple:
         if not code:
             out.append(row)
             continue
-        fresh = _row_is_date_fresh(row, code)
+        fresh = _row_price_date_fresh(row, code)
         row["date_fresh"] = bool(fresh)
         row["expected_bar_date"] = _expected_bar_date_str(code)
+        row["bar_stale"] = not fresh
         if not fresh:
             row["bar_stale"] = True
             stale.append((code, row.get("name") or code))
@@ -1675,8 +1681,8 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
         def _one(code, name):
             cu = str(code).upper()
             prev = base.get(cu) if base else None
-            # 日期已是应有交易日：不实拉（含手动刷新）。只补落后标的。
-            if prev and _row_is_date_fresh(prev, cu):
+            # A股/美股同一规则：现价已是该市场最近收盘日则不打行情。只拉落后的。
+            if prev and _row_price_date_fresh(prev, cu):
                 fl = False
             else:
                 fl = True
