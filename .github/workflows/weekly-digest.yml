@@ -34,9 +34,26 @@ jobs:
           FORCE_Q="false"
           if [ "${FORCE}" = "true" ]; then FORCE_Q="true"; fi
           URL="${BASE}/api/cron/reports?period=weekly&force=${FORCE_Q}"
+          echo "=== Wake ${BASE}/api/health ==="
+          ready=0
+          for w in 1 2 3 4 5 6; do
+            hc=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 45 "${BASE}/api/health" || true)
+            echo "health attempt $w → HTTP $hc"
+            if [ "$hc" = "200" ]; then
+              sleep 3
+              hc2=$(curl -sS -o /tmp/health2.json -w "%{http_code}" --max-time 30 "${BASE}/api/health" || true)
+              echo "health confirm → HTTP $hc2"
+              if [ "$hc2" = "200" ]; then ready=1; break; fi
+            fi
+            sleep 20
+          done
+          if [ "$ready" != "1" ]; then
+            echo "Backend not healthy, skip digest trigger"
+            exit 1
+          fi
           echo "Calling ${URL}"
           ok=0
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6; do
             code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
               -X POST \
               -H "X-Cron-Secret: ${CRON_SECRET}" \
