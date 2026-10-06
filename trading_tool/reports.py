@@ -211,17 +211,7 @@ def classify_analyses(analyses: List[dict]) -> Dict[str, Any]:
     # 看板区：先方向明确的，再带上观望，覆盖用户全部已算出的自选
     board = ups + downs + watches
 
-    focus: List[dict] = []
-    take_up = min(2, len(ups))
-    take_down = min(2, len(downs))
-    focus.extend(ups[:take_up])
-    focus.extend(downs[:take_down])
-    rest_pool = ups[take_up:] + downs[take_down:]
-    rest_pool.sort(key=_priority, reverse=True)
-    for a in rest_pool:
-        if len(focus) >= MAX_FOCUS:
-            break
-        focus.append(a)
+    focus = (ups + downs)[:max(MAX_FOCUS, 12)]
     # 不把观望凑进深写
 
     return {
@@ -640,6 +630,43 @@ def _fallback_html(period: str, email: str, classified: dict) -> str:
     return _wrap_email(period_cn, email, classified, deep)
 
 
+def _strong_side(action: str, strength) -> str:
+    """买/卖且强度>=4 才进周报。返回 buy/sell/空。"""
+    try:
+        st = int(strength or 0)
+    except Exception:
+        st = 0
+    if st < 4:
+        return ""
+    act = str(action or "")
+    if "买" in act or "抄底" in act:
+        return "buy"
+    if "卖" in act or "止盈" in act or "减仓" in act:
+        return "sell"
+    return ""
+
+
+def _week_hits(symbol: str) -> list:
+    """近 7 个自然日该代码的强度>=4 买卖快照。"""
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=7)).isoformat()
+    hits = []
+    try:
+        import cache
+        for r in cache.get_action_log(symbol) or []:
+            if not isinstance(r, dict):
+                continue
+            day = str(r.get("date") or "")[:10]
+            if not day or day < cutoff:
+                continue
+            side = _strong_side(r.get("action"), r.get("strength"))
+            if side:
+                hits.append(r)
+    except Exception:
+        return []
+    return hits
+
+
 def build_report_html(uid: str, email: str, period: str = "weekly") -> "str | None":
     symbols = get_target_symbols(uid)
     if not symbols:
@@ -659,8 +686,18 @@ def build_report_html(uid: str, email: str, period: str = "weekly") -> "str | No
             a["timing"] = a.get("timing") or "—"
             a["trend_filter"] = a.get("trend_filter") or "—"
             a["_failed"] = True
+        side = _strong_side(a.get("action"), a.get("action_strength"))
+        hits = _week_hits(str(s))
+        if not side and not hits:
+            continue
+        if hits:
+            last = hits[-1]
+            a["week_hit"] = f"{last.get('date')} {last.get('action')} ·{last.get('strength')}"
+        elif side:
+            a["week_hit"] = f"当前 {a.get('action')} ·{a.get('action_strength')}"
         analyses.append(a)
     if not analyses:
+        logger.info("周报无强度>=4 精选 uid=%s email=%s", uid, email)
         return None
     classified = classify_analyses(analyses)
     period_cn = "周报" if period == "weekly" else "月报"
