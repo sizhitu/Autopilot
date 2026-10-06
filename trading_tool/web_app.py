@@ -1456,6 +1456,19 @@ async def get_watchlist(refresh: bool = False, hard: bool = False,
         if hard:
             _rate_check(authorization, request, "watchlist_hard", 3, 60)
     user_id = user["id"] if user else None
+    # 带了登录头但用户还没解析出来：不要回未登录样例清单，避免打开页面先闪 7 只样例
+    if user_id is None and authorization:
+        return {
+            "success": True,
+            "computing": False,
+            "stocks": [],
+            "count": 0,
+            "total": 0,
+            "summary": {},
+            "user_scoped": False,
+            "auth_pending": True,
+            "empty": True,
+        }
     try:
         is_admin = bool(user and (user.get("is_admin") or False))
         # 若 profile 里才有 is_admin，尽量补一次

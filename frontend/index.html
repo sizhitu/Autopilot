@@ -3689,6 +3689,11 @@ async function fetchQuote(symbol, name, market) {
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
+    if (json.auth_pending && (authToken || currentUser)) {
+      _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 600);
+      loading.classList.add('hidden');
+      return;
+    }
     // 已切换到其他代码：丢弃本响应，避免串图/串面板
     if (reqId !== _quoteReqSeq || String(currentSymbol || '').toUpperCase() !== symbol) {
       return;
