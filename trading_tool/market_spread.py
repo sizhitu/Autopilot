@@ -60,7 +60,7 @@ def _spx_pe():
     import re
     raw = _get("https://www.multpl.com/s-p-500-pe-ratio/table/by-month", timeout=20, referer="https://www.multpl.com/")
     html = raw.decode("utf-8", "ignore")
-    rows = re.findall(r"<td>([A-Za-z]+\s+\d{1,2},\s+\d{4})</td>\s*<td>(?:\s*<abbr[^>]*>.*?</abbr>)?\s*([0-9]+\.[0-9]+)", html)
+    rows = re.findall(r"<td>([A-Za-z]+\s+\d{1,2},\s+\d{4})</td>\s*<td>[\s\S]*?([0-9]+\.[0-9]+)\s*</td>", html)
     out = []
     for ds, val in rows:
         try:
