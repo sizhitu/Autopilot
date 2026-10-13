@@ -5330,7 +5330,11 @@ async function loadMarketSpread() {
     const usLine = us.ok
       ? `美股 标普500 利差 <b>${us.spread}%</b>（盈利收益率 ${us.earnings_yield}% − 国债 ${us.bond_yield}%）· ${usBand.position || '—'} · 中枢 ${usBand.mean ?? '—'}%`
       : (us.bond_yield ? `美股 十年国债 ${us.bond_yield}% · 利差暂无` : '美股利差暂无');
-    el.innerHTML = `<div>${cnLine}</div><div style="color:var(--text-dim);margin-top:2px;">${usLine}</div><div style="color:var(--text-dim);font-size:10px;margin-top:2px;">只管总仓位，不替代个股操盘。利差高少割，利差低少追。</div>`;
+    const smh = j.smh || {};
+    const smhLine = smh.ok
+      ? `半导体 SMH 利差 <b>${smh.spread}%</b>（盈利收益率 ${smh.earnings_yield}% − 国债 ${smh.bond_yield}%）· 无两年半中枢，只看当前相对债券贵不贵`
+      : '半导体利差暂无';
+    el.innerHTML = `<div>${cnLine}</div><div style="margin-top:2px;">${usLine}</div><div style="color:var(--text-dim);margin-top:2px;">${smhLine}</div><div style="color:var(--text-dim);font-size:10px;margin-top:2px;">只管总仓位，不替代个股操盘。半导体是周期行业，利差不能和标普直接比。</div>`;
     el.style.display = 'block';
   } catch (e) {
     el.style.display = 'none';

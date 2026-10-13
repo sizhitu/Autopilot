@@ -542,14 +542,14 @@ except Exception:
 async def market_spread():
     """看板顶部市场条。缓存 6 小时，失败不影响自选。"""
     import cache
-    hit = cache.get_json("market_spread_v2")
+    hit = cache.get_json("market_spread_v3")
     if isinstance(hit, dict) and hit.get("success"):
         hit["cached"] = True
         return hit
     from market_spread import build_market_spread
     data = await asyncio.to_thread(build_market_spread)
     try:
-        cache.set_json("market_spread_v2", data, 6 * 3600)
+        cache.set_json("market_spread_v3", data, 6 * 3600)
     except Exception:
         pass
     return data

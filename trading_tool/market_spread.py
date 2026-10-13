@@ -72,6 +72,17 @@ def _spx_pe():
     return out
 
 
+def _smh_pe():
+    """Yahoo 报价页里的 SMH trailingPE。只有当前值，没有免费长历史。"""
+    import re
+    raw = _get("https://finance.yahoo.com/quote/SMH/", timeout=20, referer="https://finance.yahoo.com/")
+    html = raw.decode("utf-8", "ignore")
+    m = re.search(r'trailingPE\\*":\{\\*"raw\\*":([0-9.]+)', html)
+    if not m:
+        return None
+    return float(m.group(1))
+
+
 def _us10y():
     url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?range=5y&interval=1mo"
     raw = _get(url)
@@ -198,10 +209,31 @@ def build_market_spread():
     except Exception as e:
         logger.warning("美股利差失败: %s", e)
         us["error"] = str(e)[:80]
+    smh = {"ok": False, "name": "SMH半导体"}
+    try:
+        pe = _smh_pe()
+        yld = _us10y()
+        if pe and pe > 0 and yld:
+            bond = float(yld[-1]["yield"])
+            ey = 100.0 / pe
+            smh = {
+                "ok": True,
+                "name": "SMH半导体",
+                "date": yld[-1]["date"],
+                "pe": round(pe, 2),
+                "earnings_yield": round(ey, 2),
+                "bond_yield": round(bond, 2),
+                "spread": round(ey - bond, 2),
+                "note": "盈利收益率=1/SMH滚动市盈率，减去美国十年国债。行业周期强，不能和标普中枢直接比",
+            }
+    except Exception as e:
+        logger.warning("SMH利差失败: %s", e)
+        smh["error"] = str(e)[:80]
     return {
         "success": True,
         "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "cn": cn,
         "us": us,
+        "smh": smh,
         "disclaimer": "只管总仓位，不替代个股操盘动作。不是投资建议。",
     }
