@@ -55,6 +55,23 @@ def _cn10y():
     return out
 
 
+def _spx_pe():
+    """Multpl 标普滚动市盈率月表。免费、公开、有历史。"""
+    import re
+    raw = _get("https://www.multpl.com/s-p-500-pe-ratio/table/by-month", timeout=20, referer="https://www.multpl.com/")
+    html = raw.decode("utf-8", "ignore")
+    rows = re.findall(r"<td>([A-Za-z]+\s+\d{1,2},\s+\d{4})</td>\s*<td>(?:\s*<abbr[^>]*>.*?</abbr>)?\s*([0-9]+\.[0-9]+)", html)
+    out = []
+    for ds, val in rows:
+        try:
+            day = datetime.strptime(ds, "%b %d, %Y").strftime("%Y-%m-%d")
+            out.append({"date": day, "pe": float(val)})
+        except Exception:
+            continue
+    out.sort(key=lambda x: x["date"])
+    return out
+
+
 def _us10y():
     url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?range=5y&interval=1mo"
     raw = _get(url)
@@ -162,18 +179,24 @@ def build_market_spread():
         logger.warning("A股利差失败: %s", e)
         cn["error"] = str(e)[:80]
     try:
+        pe = _spx_pe()
         yld = _us10y()
-        if yld:
-            last_y = yld[-1]
+        series = _join(pe, yld)
+        if series:
+            last = series[-1]
             us = {
-                "ok": False,
+                "ok": True,
                 "name": "标普500",
-                "date": last_y["date"],
-                "bond_yield": round(last_y["yield"], 2),
-                "note": "美国十年国债已取到。标普盈利收益率需稳定免费源，暂不估算",
+                "date": last["date"],
+                "pe": last["pe"],
+                "earnings_yield": last["earnings_yield"],
+                "bond_yield": last["bond_yield"],
+                "spread": last["spread"],
+                "band": _band(series),
+                "note": "盈利收益率=1/标普滚动市盈率（Multpl），减去美国十年国债",
             }
     except Exception as e:
-        logger.warning("美债失败: %s", e)
+        logger.warning("美股利差失败: %s", e)
         us["error"] = str(e)[:80]
     return {
         "success": True,
