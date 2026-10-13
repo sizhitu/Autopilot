@@ -1224,6 +1224,7 @@ body.landing-locked #freeBanner { display: none !important; }
       </div>
     </div>
     <div id="watchlistSummary" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px;"></div>
+    <div id="marketSpreadBar" style="display:none;margin-top:8px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.03);font-size:12px;line-height:1.45;"></div>
     <div style="margin-top:4px; font-size:11px; color:var(--text-dim);">
       <span id="watchLoginHint" style="color:var(--blue);cursor:pointer;" onclick="openLogin()">登录后可自定义自选</span>
     </div>
@@ -4854,6 +4855,7 @@ function applyWatchlistSnapshot(json) {
 }
 
 async function loadWatchlist(forceRefresh = false) {
+  try { loadMarketSpread(); } catch (eMs) {}
   if (typeof isDataGated === 'function' && isDataGated()) {
     try {
       _lastWatchRows = [];
@@ -5312,6 +5314,28 @@ function buildWatchlistSummaryFromStocks(stocks) {
   });
   return summary;
 }
+async function loadMarketSpread() {
+  const el = document.getElementById('marketSpreadBar');
+  if (!el) return;
+  try {
+    const res = await api('/api/market-spread');
+    const j = await res.json();
+    const cn = j.cn || {};
+    const us = j.us || {};
+    const band = cn.band || {};
+    const cnLine = cn.ok
+      ? `A股 沪深300 利差 <b>${cn.spread}%</b>（盈利收益率 ${cn.earnings_yield}% − 国债 ${cn.bond_yield}%）· ${band.position || '—'} · 中枢 ${band.mean ?? '—'}%`
+      : 'A股利差暂无';
+    const usLine = us.bond_yield
+      ? `美股 标普对十年国债 ${us.bond_yield}% · 盈利收益率暂缺，利差未算`
+      : '美股利差暂无';
+    el.innerHTML = `<div>${cnLine}</div><div style="color:var(--text-dim);margin-top:2px;">${usLine}</div><div style="color:var(--text-dim);font-size:10px;margin-top:2px;">只管总仓位，不替代个股操盘。利差高少割，利差低少追。</div>`;
+    el.style.display = 'block';
+  } catch (e) {
+    el.style.display = 'none';
+  }
+}
+
 function renderWatchlistSummary(summary) {
   const el = document.getElementById('watchlistSummary');
   if (!el) return;

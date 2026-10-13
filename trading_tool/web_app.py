@@ -538,6 +538,23 @@ except Exception:
     pass
 
 
+@app.get("/api/market-spread")
+async def market_spread():
+    """看板顶部市场条。缓存 6 小时，失败不影响自选。"""
+    import cache
+    hit = cache.get_json("market_spread_v1")
+    if isinstance(hit, dict) and hit.get("success"):
+        hit["cached"] = True
+        return hit
+    from market_spread import build_market_spread
+    data = await asyncio.to_thread(build_market_spread)
+    try:
+        cache.set_json("market_spread_v1", data, 6 * 3600)
+    except Exception:
+        pass
+    return data
+
+
 @app.get("/api/config")
 async def public_config():
     """公开配置：前端用其初始化 supabase-js（anon key / url 均为公开安全值）。"""
