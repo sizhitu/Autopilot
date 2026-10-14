@@ -997,6 +997,30 @@ def _row_fresher(a: dict, b: dict) -> dict:
     return a if a else b
 
 
+_STATUS_PERSIST_TTL = 36 * 3600  # 跨 Render 休眠，仍能按交易日复用
+
+
+def _status_persist_key(k: str) -> str:
+    return f"wlstat:{str(k or '').strip().upper()}"
+
+
+def _load_persisted_status(k: str):
+    """进程重启后从 Supabase/Redis 读回完整看板行。只接受可用且带行情日的。"""
+    try:
+        import cache as _cache
+        row = _cache.get_json(_status_persist_key(k))
+    except Exception:
+        return None
+    if not isinstance(row, dict):
+        return None
+    if _row_incomplete(row) or not _bar_date_str(row):
+        return None
+    row = dict(row)
+    row["pending"] = False
+    row["data_source"] = "persisted_status"
+    return row
+
+
 def _status_cache_put(k: str, data: dict) -> None:
     now = time.time()
     # 禁止用更旧 bar_date / 半残指标行覆盖状态缓存
@@ -1027,6 +1051,15 @@ def _status_cache_put(k: str, data: dict) -> None:
         ordered = sorted(_STATUS_CACHE.items(), key=lambda x: x[1].get("ts", 0))
         for ck, _ in ordered[: len(_STATUS_CACHE) - _STATUS_CACHE_MAX]:
             _STATUS_CACHE.pop(ck, None)
+    # 只持久化完整行，避免半残缓存覆盖用户看到的数据
+    try:
+        if isinstance(data, dict) and not _row_incomplete(data) and _bar_date_str(data):
+            import cache as _cache
+            slim = dict(data)
+            slim.pop("pending", None)
+            _cache.set_json(_status_persist_key(k), slim, _STATUS_PERSIST_TTL)
+    except Exception:
+        pass
 
 
 def _caches_put(key, entry: dict) -> None:
@@ -1128,6 +1161,11 @@ def _row_is_date_fresh(row: dict, code: str = "") -> bool:
 def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool = False) -> dict:
     k = str(code).strip().upper()
     hit = _STATUS_CACHE.get(k)
+    if not (hit and isinstance(hit.get("data"), dict)):
+        persisted = _load_persisted_status(k)
+        if persisted:
+            hit = {"ts": time.time(), "data": persisted}
+            _STATUS_CACHE[k] = hit
     now = time.time()
     cached_row = None
     if hit and isinstance(hit.get("data"), dict):
@@ -1695,6 +1733,10 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
         def _one(code, name):
             cu = str(code).upper()
             prev = base.get(cu) if base else None
+            if not prev or _row_incomplete(prev):
+                persisted = _load_persisted_status(cu)
+                if persisted:
+                    prev = persisted
             # A股/美股同一规则：现价已是该市场最近收盘日则不打行情。只拉落后的。
             if prev and (not _row_incomplete(prev)) and _row_price_date_fresh(prev, cu):
                 fl = False
@@ -2039,10 +2081,18 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                 prev = list(cache['data'].get('stocks') or [])
             code_set = set(item_codes)
             seeded = [s for s in prev if s.get('code') in code_set]
-            have = {s.get('code') for s in seeded}
+            have = {str(s.get('code') or '').upper() for s in seeded}
             for c in item_codes:
-                if c not in have:
-                    seeded.append({
+                cu = str(c).upper()
+                if cu in have:
+                    continue
+                persisted = _load_persisted_status(cu)
+                if persisted and not _row_incomplete(persisted):
+                    persisted["name"] = item_name.get(c) or persisted.get("name") or c
+                    seeded.append(persisted)
+                    have.add(cu)
+                    continue
+                seeded.append({
                         'code': c, 'name': item_name.get(c) or c,
                         'market': '美股' if not str(c).isdigit() else 'A股',
                         'price': '-', 'change_1d': None, 'change_5d': None,
@@ -2053,15 +2103,21 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                         'nine_turn': '—', 'high_low': '—',
                         'pending': True, 'error': None,
                     })
+            all_fresh = bool(seeded) and all(
+                (not _row_incomplete(s)) and _row_price_date_fresh(s, s.get("code") or "")
+                for s in seeded
+            )
             _CACHES[key] = {
-                'data': {'success': True, 'computing': True,
+                'data': {'success': True, 'computing': not all_fresh,
                          'updated_at': prev_ts, 'prev_updated_at': prev_ts,
                          'count': len(seeded), 'total': len(items),
                          'summary': {}, 'stocks': seeded,
                          'symbols': [{'code': c, 'name': n} for c, n in items]},
-                'ts': time.time(), 'refreshing': True,
+                'ts': time.time(), 'refreshing': not all_fresh,
             }
             def _run_bg2():
+                if all_fresh:
+                    return
                 got = _BG_SEM.acquire(blocking=False)
                 if not got:
                     # 不要把 refreshing 留死：拿不到锁则结束 computing，前端可再轮询触发
