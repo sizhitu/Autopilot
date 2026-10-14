@@ -538,20 +538,39 @@ except Exception:
     pass
 
 
+_MARKET_SPREAD_KEY = "market_spread_v4"
+_MARKET_SPREAD_TTL = 24 * 3600
+_MARKET_SPREAD_MEM = {"ts": 0, "data": None}
+
+
 @app.get("/api/market-spread")
 async def market_spread():
-    """看板顶部市场条。缓存 6 小时，失败不影响自选。"""
+    """看板顶部市场条。写入 Supabase 缓存，24 小时内不再打外部行情源。"""
     import cache
-    hit = cache.get_json("market_spread_v3")
+    import time as _time
+    now = _time.time()
+    mem = _MARKET_SPREAD_MEM.get("data")
+    if isinstance(mem, dict) and mem.get("success") and now - float(_MARKET_SPREAD_MEM.get("ts") or 0) < 3600:
+        mem = dict(mem)
+        mem["cached"] = True
+        mem["cache_layer"] = "memory"
+        return mem
+    hit = cache.get_json(_MARKET_SPREAD_KEY)
     if isinstance(hit, dict) and hit.get("success"):
         hit["cached"] = True
+        hit["cache_layer"] = "supabase"
+        _MARKET_SPREAD_MEM["ts"] = now
+        _MARKET_SPREAD_MEM["data"] = hit
         return hit
     from market_spread import build_market_spread
     data = await asyncio.to_thread(build_market_spread)
     try:
-        cache.set_json("market_spread_v3", data, 6 * 3600)
+        cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)
+        data["stored"] = True
     except Exception:
         pass
+    _MARKET_SPREAD_MEM["ts"] = now
+    _MARKET_SPREAD_MEM["data"] = data
     return data
 
 

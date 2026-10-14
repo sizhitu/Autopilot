@@ -5314,30 +5314,48 @@ function buildWatchlistSummaryFromStocks(stocks) {
   });
   return summary;
 }
+function paintMarketSpread(j) {
+  const el = document.getElementById('marketSpreadBar');
+  if (!el || !j) return;
+  const cn = j.cn || {};
+  const us = j.us || {};
+  const band = cn.band || {};
+  const cnLine = cn.ok
+    ? `A股 沪深300 利差 <b>${cn.spread}%</b>（盈利收益率 ${cn.earnings_yield}% − 国债 ${cn.bond_yield}%）· ${band.position || '—'} · 中枢 ${band.mean ?? '—'}%`
+    : 'A股利差暂无';
+  const usBand = us.band || {};
+  const usLine = us.ok
+    ? `美股 标普500 利差 <b>${us.spread}%</b>（盈利收益率 ${us.earnings_yield}% − 国债 ${us.bond_yield}%）· ${usBand.position || '—'} · 中枢 ${usBand.mean ?? '—'}%`
+    : (us.bond_yield ? `美股 十年国债 ${us.bond_yield}% · 利差暂无` : '美股利差暂无');
+  const smh = j.smh || {};
+  const smhLine = smh.ok
+    ? `半导体 SMH 利差 <b>${smh.spread}%</b>（盈利收益率 ${smh.earnings_yield}% − 国债 ${smh.bond_yield}%）· 无两年半中枢，只看当前相对债券贵不贵`
+    : '半导体利差暂无';
+  el.innerHTML = `<div>${cnLine}</div><div style="margin-top:2px;">${usLine}</div><div style="color:var(--text-dim);margin-top:2px;">${smhLine}</div><div style="color:var(--text-dim);font-size:10px;margin-top:2px;">只管总仓位，不替代个股操盘。半导体是周期行业，利差不能和标普直接比。</div>`;
+  el.style.display = 'block';
+}
+
 async function loadMarketSpread() {
   const el = document.getElementById('marketSpreadBar');
   if (!el) return;
+  const key = 'autopilot_market_spread_v1';
+  let local = null;
+  try { local = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { local = null; }
+  const age = local && local.ts ? (Date.now() - local.ts) : 1e12;
+  if (local && local.data && local.data.success && age < 12 * 3600 * 1000) {
+    paintMarketSpread(local.data);
+    return;
+  }
+  if (local && local.data && local.data.success) paintMarketSpread(local.data);
   try {
     const res = await api('/api/market-spread');
     const j = await res.json();
-    const cn = j.cn || {};
-    const us = j.us || {};
-    const band = cn.band || {};
-    const cnLine = cn.ok
-      ? `A股 沪深300 利差 <b>${cn.spread}%</b>（盈利收益率 ${cn.earnings_yield}% − 国债 ${cn.bond_yield}%）· ${band.position || '—'} · 中枢 ${band.mean ?? '—'}%`
-      : 'A股利差暂无';
-    const usBand = us.band || {};
-    const usLine = us.ok
-      ? `美股 标普500 利差 <b>${us.spread}%</b>（盈利收益率 ${us.earnings_yield}% − 国债 ${us.bond_yield}%）· ${usBand.position || '—'} · 中枢 ${usBand.mean ?? '—'}%`
-      : (us.bond_yield ? `美股 十年国债 ${us.bond_yield}% · 利差暂无` : '美股利差暂无');
-    const smh = j.smh || {};
-    const smhLine = smh.ok
-      ? `半导体 SMH 利差 <b>${smh.spread}%</b>（盈利收益率 ${smh.earnings_yield}% − 国债 ${smh.bond_yield}%）· 无两年半中枢，只看当前相对债券贵不贵`
-      : '半导体利差暂无';
-    el.innerHTML = `<div>${cnLine}</div><div style="margin-top:2px;">${usLine}</div><div style="color:var(--text-dim);margin-top:2px;">${smhLine}</div><div style="color:var(--text-dim);font-size:10px;margin-top:2px;">只管总仓位，不替代个股操盘。半导体是周期行业，利差不能和标普直接比。</div>`;
-    el.style.display = 'block';
+    if (j && j.success) {
+      try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data: j })); } catch (eS) {}
+    }
+    paintMarketSpread(j);
   } catch (e) {
-    el.style.display = 'none';
+    if (!local || !local.data) el.style.display = 'none';
   }
 }
 
