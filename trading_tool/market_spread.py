@@ -166,6 +166,47 @@ def _join(pe_rows, yld_rows, months=30):
     return out
 
 
+
+def _cn_congestion():
+    """乐咕大盘拥挤度：前5%个股成交额 / 全A成交额。"""
+    import re
+    raw = _get("https://www.legulegu.com/stockdata/ashares-congestion", timeout=18, referer="https://www.legulegu.com/")
+    html = raw.decode("utf-8", "ignore")
+    m = re.search(r"\|\s*(20\d{2}-\d{2}-\d{2})\s*\|[^|]+\|[^|]+\|[^|]+\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|", html)
+    if not m:
+        return None
+    val = float(m.group(2))
+    if val < 40:
+        pos, note = "分散", "交易分散，微观结构正常"
+    elif val < 50:
+        pos, note = "集中升温", "成交向头部集中，留意局部过热"
+    else:
+        pos, note = "拥挤预警", "接近或超过50%，历史上常对应反转或风格切换"
+    return {"ok": True, "date": m.group(1), "value": round(val, 2), "position": pos, "note": note,
+            "source": "前5%成交额占比（乐咕）"}
+
+
+def _us_vix():
+    """CBOE VIX 收盘，衡量美股恐慌/拥挤。"""
+    raw = _get("https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=5d&interval=1d", timeout=12)
+    data = json.loads(raw)
+    result = ((data.get("chart") or {}).get("result") or [None])[0] or {}
+    meta = result.get("meta") or {}
+    px = meta.get("regularMarketPrice") or meta.get("previousClose")
+    if not px:
+        return None
+    val = float(px)
+    if val < 15:
+        pos, note = "低波动", "波动极低，容易自满，不算便宜"
+    elif val < 25:
+        pos, note = "正常", "波动正常，不构成拥挤或恐慌"
+    elif val < 35:
+        pos, note = "偏恐慌", "波动抬升，风险偏好下降"
+    else:
+        pos, note = "极端恐慌", "极端波动，常对应情绪底部区域"
+    return {"ok": True, "value": round(val, 2), "position": pos, "note": note, "source": "VIX"}
+
+
 def build_market_spread():
     cn = {"ok": False, "name": "沪深300"}
     us = {"ok": False, "name": "标普500"}
@@ -229,11 +270,27 @@ def build_market_spread():
     except Exception as e:
         logger.warning("SMH利差失败: %s", e)
         smh["error"] = str(e)[:80]
+    crowd = {"cn": {"ok": False}, "us": {"ok": False}}
+    try:
+        hit = _cn_congestion()
+        if hit:
+            crowd["cn"] = hit
+    except Exception as e:
+        logger.warning("A股拥挤度失败: %s", e)
+        crowd["cn"] = {"ok": False, "error": str(e)[:80]}
+    try:
+        hit = _us_vix()
+        if hit:
+            crowd["us"] = hit
+    except Exception as e:
+        logger.warning("美股VIX失败: %s", e)
+        crowd["us"] = {"ok": False, "error": str(e)[:80]}
     return {
         "success": True,
         "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "cn": cn,
         "us": us,
         "smh": smh,
-        "disclaimer": "只管总仓位，不替代个股操盘动作。不是投资建议。",
+        "congestion": crowd,
+        "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
     }

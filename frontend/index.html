@@ -1013,7 +1013,7 @@ body.landing-locked #freeBanner { display: none !important; }
       <h2>藤本茂融合策略<span class="lg-title-sub">智能分析工具</span></h2>
       <p class="lg-sub">
         <span class="lg-line">可复盘的研究工作流：方向判断 × 仓位节奏</span>
-        <span class="lg-line">开通后解锁：自选看板 · 三层校验 · 阶梯参照</span>
+        <span class="lg-line">开通后解锁：自选看板 · 三层校验 · 仓位节奏</span>
       </p>
     </div>
     <div class="lg-values">
@@ -1189,7 +1189,7 @@ body.landing-locked #freeBanner { display: none !important; }
   </div>
   <div class="main-tab" id="tabLadder" role="button" tabindex="0"
        onclick="switchMainTab('ladder')" onmousedown="switchMainTab('ladder')">
-    <span class="tab-full">📶 藤本茂阶梯</span><span class="tab-short">📶 阶梯</span>
+    <span class="tab-full">🧭 仓位节奏</span><span class="tab-short">🧭 仓位</span>
   </div>
 </div>
 
@@ -1224,7 +1224,6 @@ body.landing-locked #freeBanner { display: none !important; }
       </div>
     </div>
     <div id="watchlistSummary" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px;"></div>
-    <div id="marketSpreadBar" style="display:none;margin-top:8px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.03);font-size:12px;line-height:1.45;"></div>
     <div style="margin-top:4px; font-size:11px; color:var(--text-dim);">
       <span id="watchLoginHint" style="color:var(--blue);cursor:pointer;" onclick="openLogin()">登录后可自定义自选</span>
     </div>
@@ -1265,8 +1264,22 @@ body.landing-locked #freeBanner { display: none !important; }
   <div class="footer-note">点击任意一行加载详细分析 · 汇总旁图标可查看列释义 · 仅供研究不构成投资建议 · <a href="/privacy.html" style="color:var(--text-dim);">隐私政策</a> · <a href="/terms.html" style="color:var(--text-dim);">服务条款</a> <span style="color:var(--text-dim);">· 页面时间: <span id="pageTs"></span></span></div>
 </div>
 
-<!-- 藤本茂阶梯（独立页，与三层校验解耦） -->
+<!-- 仓位节奏：利差 + 拥挤度 + 藤本茂阶梯 -->
 <div id="ladderView" class="hidden" style="padding:12px;max-width:720px;margin:0 auto;">
+  <div class="card" style="margin-bottom:10px;">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+      <div style="font-weight:700;color:var(--gold);">市场仓位</div>
+      <span class="help-q help-q-board" onclick="event.stopPropagation();toggleHelp(this)" title="利差与拥挤度说明" role="button" aria-label="利差与拥挤度说明">
+        <span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
+          <div class="hp-sec"><b>股债利差</b><p>盈利收益率减十年国债。利差高，股票相对债券便宜，总仓位可以更高；利差低，别在顶部乱追。只看总仓位，不替代个股买卖。</p></div>
+          <div class="hp-sec"><b>A股拥挤度</b><p>成交额前5%个股占全A成交额的比例。低于40%交易分散；40%–50%集中升温；超过50%进入预警，历史上常对应反转或风格切换。</p></div>
+          <div class="hp-sec"><b>美股 VIX</b><p>隐含波动。低于15偏自满，15–25正常，25以上偏恐慌。不是拥挤度本身，是情绪温度的免费代理。</p></div>
+        </span>
+      </span>
+    </div>
+    <div id="marketSpreadBar" style="display:none;padding:2px 0;font-size:12px;line-height:1.5;"></div>
+    <div id="marketCrowdBar" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;line-height:1.5;"></div>
+  </div>
   <div class="card" style="margin-bottom:10px;">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
       <div style="font-weight:700;color:var(--gold);">藤本茂阶梯参考</div>
@@ -4005,7 +4018,7 @@ function switchMainTab(tab) {
       else { wv.classList.add('hidden'); wv.style.display = 'none'; }
     }
     if (lv) {
-      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { loadLadderTable(); } catch (eL) {} }
+      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { loadLadderTable(); } catch (eL) {} try { loadMarketSpread(); } catch (eMs) {} }
       else { lv.classList.add('hidden'); lv.style.display = 'none'; }
     }
     if (tl) {
@@ -4855,7 +4868,7 @@ function applyWatchlistSnapshot(json) {
 }
 
 async function loadWatchlist(forceRefresh = false) {
-  try { loadMarketSpread(); } catch (eMs) {}
+  // 利差与拥挤度改在仓位节奏页加载
   if (typeof isDataGated === 'function' && isDataGated()) {
     try {
       _lastWatchRows = [];
@@ -5314,6 +5327,22 @@ function buildWatchlistSummaryFromStocks(stocks) {
   });
   return summary;
 }
+function paintMarketCrowd(j) {
+  const el = document.getElementById('marketCrowdBar');
+  if (!el || !j) return;
+  const c = j.congestion || {};
+  const cn = c.cn || {};
+  const us = c.us || {};
+  const cnLine = cn.ok
+    ? `A股拥挤度 <b>${cn.value}%</b> · ${cn.position || '—'} · ${cn.note || ''}`
+    : 'A股拥挤度暂无';
+  const usLine = us.ok
+    ? `美股 VIX <b>${us.value}</b> · ${us.position || '—'} · ${us.note || ''}`
+    : '美股 VIX 暂无';
+  el.innerHTML = `<div>${cnLine}</div><div style="margin-top:2px;color:var(--text-dim);">${usLine}</div>`;
+  el.style.display = 'block';
+}
+
 function paintMarketSpread(j) {
   const el = document.getElementById('marketSpreadBar');
   if (!el || !j) return;
@@ -5333,12 +5362,13 @@ function paintMarketSpread(j) {
     : '半导体利差暂无';
   el.innerHTML = `<div>${cnLine}</div><div style="margin-top:2px;">${usLine}</div><div style="color:var(--text-dim);margin-top:2px;">${smhLine}</div><div style="color:var(--text-dim);font-size:10px;margin-top:2px;">只管总仓位，不替代个股操盘。半导体是周期行业，利差不能和标普直接比。</div>`;
   el.style.display = 'block';
+  paintMarketCrowd(j);
 }
 
 async function loadMarketSpread() {
   const el = document.getElementById('marketSpreadBar');
   if (!el) return;
-  const key = 'autopilot_market_spread_v1';
+  const key = 'autopilot_market_spread_v2';
   let local = null;
   try { local = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { local = null; }
   const age = local && local.ts ? (Date.now() - local.ts) : 1e12;
