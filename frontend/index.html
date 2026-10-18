@@ -1272,11 +1272,12 @@ body.landing-locked #freeBanner { display: none !important; }
       <span class="help-q help-q-board" onclick="event.stopPropagation();toggleHelp(this)" title="利差与拥挤度说明" role="button" aria-label="利差与拥挤度说明">
         <span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
           <div class="hp-sec"><b>股债利差</b><p>盈利收益率减十年国债。利差高，股票相对债券便宜，总仓位可以更高；利差低，别在顶部乱追。只看总仓位，不替代个股买卖。</p></div>
-          <div class="hp-sec"><b>A股拥挤度</b><p>成交额前5%个股占全A成交额的比例。低于40%交易分散；40%–50%集中升温；超过50%进入预警，历史上常对应反转或风格切换。</p></div>
+          <div class="hp-sec"><b>A股拥挤度</b><p>成交额前5%个股占全A成交额的比例。低于40%交易分散；40%–50%集中升温；超过50%进入预警。预警且利差偏低时提示降总仓；预警但利差不贵时，只减拥挤方向，不建议一键空仓。</p></div>
           <div class="hp-sec"><b>美股 VIX</b><p>隐含波动。低于15偏自满，15–25正常，25以上偏恐慌。不是拥挤度本身，是情绪温度的免费代理。</p></div>
         </span>
       </span>
     </div>
+    <div id="marketPositionHint" style="display:none;margin-bottom:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5;"></div>
     <div id="marketSpreadBar" style="display:none;padding:2px 0;font-size:12px;line-height:1.5;"></div>
     <div id="marketCrowdBar" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;line-height:1.5;"></div>
   </div>
@@ -5327,6 +5328,51 @@ function buildWatchlistSummaryFromStocks(stocks) {
   });
   return summary;
 }
+function _spreadIsExpensive(band, spread) {
+  const pos = String((band && band.position) || '');
+  if (pos.indexOf('靠近下轨') >= 0 || pos.indexOf('略低于') >= 0) return true;
+  if (band && band.mean != null && spread != null && Number(spread) <= Number(band.mean) - 0.3) return true;
+  return false;
+}
+function _spreadIsCheap(band, spread) {
+  const pos = String((band && band.position) || '');
+  if (pos.indexOf('靠近上轨') >= 0 || pos.indexOf('略高于') >= 0) return true;
+  if (band && band.mean != null && spread != null && Number(spread) >= Number(band.mean) + 0.3) return true;
+  return false;
+}
+function paintPositionHint(j) {
+  const el = document.getElementById('marketPositionHint');
+  if (!el || !j) return;
+  const cn = j.cn || {};
+  const crowd = ((j.congestion || {}).cn) || {};
+  const vix = ((j.congestion || {}).us) || {};
+  const lines = [];
+  const crowdVal = crowd.ok ? Number(crowd.value) : null;
+  const cnExpensive = cn.ok && _spreadIsExpensive(cn.band, cn.spread);
+  const cnCheap = cn.ok && _spreadIsCheap(cn.band, cn.spread);
+  if (crowdVal != null && crowdVal >= 50 && cnExpensive) {
+    lines.push('A股预警：拥挤度已过 50%，且利差偏低。总仓位可降到平时一半左右，热点和高波动先减。不是一键空仓。');
+  } else if (crowdVal != null && crowdVal >= 50) {
+    lines.push('A股预警：拥挤度已过 50%。更像风格切换，先减最热的方向，压舱石和现金流好的不必跟着清。');
+  } else if (crowdVal != null && crowdVal < 40 && cnCheap) {
+    lines.push('A股拥挤已回落，利差又偏便宜。可以考虑把降下去的仓位逐步加回，仍按阶梯分批。');
+  }
+  if (vix.ok && Number(vix.value) >= 25 && j.us && j.us.ok && _spreadIsExpensive(j.us.band, j.us.spread)) {
+    lines.push('美股：VIX 偏高且利差偏低。总仓位宜收敛，不必清零。');
+  }
+  if (!lines.length) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  const warn = lines.some(function (s) { return s.indexOf('预警') >= 0; });
+  el.style.display = 'block';
+  el.style.background = warn ? 'rgba(255,92,92,.12)' : 'rgba(80,200,120,.10)';
+  el.style.border = warn ? '1px solid rgba(255,92,92,.45)' : '1px solid rgba(80,200,120,.35)';
+  el.style.color = 'var(--text)';
+  el.innerHTML = lines.map(function (s) { return '<div style="margin-top:2px;">' + s + '</div>'; }).join('');
+}
+
 function paintMarketCrowd(j) {
   const el = document.getElementById('marketCrowdBar');
   if (!el || !j) return;
@@ -5363,6 +5409,7 @@ function paintMarketSpread(j) {
   el.innerHTML = `<div>${cnLine}</div><div style="margin-top:2px;">${usLine}</div><div style="color:var(--text-dim);margin-top:2px;">${smhLine}</div><div style="color:var(--text-dim);font-size:10px;margin-top:2px;">只管总仓位，不替代个股操盘。半导体是周期行业，利差不能和标普直接比。</div>`;
   el.style.display = 'block';
   paintMarketCrowd(j);
+  paintPositionHint(j);
 }
 
 async function loadMarketSpread() {
