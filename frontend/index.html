@@ -5368,7 +5368,7 @@ function paintMarketSpread(j) {
 async function loadMarketSpread() {
   const el = document.getElementById('marketSpreadBar');
   if (!el) return;
-  const key = 'autopilot_market_spread_v2';
+  const key = 'autopilot_market_spread_v3';
   let local = null;
   try { local = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { local = null; }
   const age = local && local.ts ? (Date.now() - local.ts) : 1e12;

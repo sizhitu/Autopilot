@@ -38,7 +38,7 @@ def _legu_pe():
     return out
 
 
-def _cn10y():
+def _cn10y_eastmoney_kline():
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=171.CN10Y&klt=101&fqt=1&lmt=900&end=20500101&fields1=f1,f2,f3&fields2=f51,f53"
     raw = _get(url, referer="https://quote.eastmoney.com/")
     data = json.loads(raw)
@@ -53,6 +53,35 @@ def _cn10y():
         except Exception:
             continue
     return out
+
+
+def _cn10y_datacenter():
+    """东财数据中心中美国债收益率。EMM00166466 为中债十年。行情接口 403 时走这条。"""
+    url = "https://datacenter-web.eastmoney.com/api/data/get?type=RPTA_WEB_TREASURYYIELD&sty=ALL&st=SOLAR_DATE&sr=-1&p=1&ps=800"
+    raw = _get(url, referer="https://data.eastmoney.com/cjsj/zmgzsyl.html")
+    rows = ((json.loads(raw).get("result") or {}).get("data")) or []
+    out = []
+    for r in rows:
+        val = r.get("EMM00166466")
+        day = str(r.get("SOLAR_DATE") or "")[:10]
+        if not day or val in (None, ""):
+            continue
+        try:
+            out.append({"date": day, "yield": float(val)})
+        except Exception:
+            continue
+    out.sort(key=lambda x: x["date"])
+    return out
+
+
+def _cn10y():
+    try:
+        rows = _cn10y_eastmoney_kline()
+        if len(rows) >= 30:
+            return rows
+    except Exception as e:
+        logger.warning("东财国债行情接口失败，改走数据中心: %s", e)
+    return _cn10y_datacenter()
 
 
 def _spx_pe():
@@ -168,11 +197,15 @@ def _join(pe_rows, yld_rows, months=30):
 
 
 def _cn_congestion():
-    """乐咕大盘拥挤度：前5%个股成交额 / 全A成交额。"""
+    """乐咕大盘拥挤度：前5%个股成交额 / 全A成交额。优先读页面描述，不依赖表格结构。"""
     import re
     raw = _get("https://www.legulegu.com/stockdata/ashares-congestion", timeout=18, referer="https://www.legulegu.com/")
     html = raw.decode("utf-8", "ignore")
-    m = re.search(r"\|\s*(20\d{2}-\d{2}-\d{2})\s*\|[^|]+\|[^|]+\|[^|]+\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|", html)
+    m = re.search(r"(20\d{2}-\d{2}-\d{2})，大盘拥挤度：([0-9]+(?:\.[0-9]+)?)%", html)
+    if not m:
+        m = re.search(r"大盘拥挤度：([0-9]+(?:\.[0-9]+)?)%", html)
+        if m:
+            m = type("M", (), {"group": lambda self, i: (date.today().isoformat() if i == 1 else m.group(1))})()
     if not m:
         return None
     val = float(m.group(2))
