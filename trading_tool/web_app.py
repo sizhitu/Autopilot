@@ -538,7 +538,7 @@ except Exception:
     pass
 
 
-_MARKET_SPREAD_KEY = "market_spread_v7"
+_MARKET_SPREAD_KEY = "market_spread_v8"
 _MARKET_SPREAD_TTL = 24 * 3600
 _MARKET_SPREAD_MEM = {"ts": 0, "data": None}
 

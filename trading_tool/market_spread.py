@@ -312,6 +312,45 @@ def _build_hint_history(crowd_rows, spread_rows):
     return [r for r in ranges if r["end"] >= cutoff][-40:]
 
 
+
+def _us_vix_history():
+    raw = _get("https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=1y&interval=1d", timeout=15)
+    data = json.loads(raw)
+    result = ((data.get("chart") or {}).get("result") or [None])[0] or {}
+    ts = result.get("timestamp") or []
+    closes = (((result.get("indicators") or {}).get("quote") or [{}])[0].get("close")) or []
+    out = []
+    for i, sec in enumerate(ts):
+        if i >= len(closes) or closes[i] in (None, ""):
+            continue
+        day = datetime.utcfromtimestamp(int(sec)).strftime("%Y-%m-%d")
+        out.append({"date": day, "value": round(float(closes[i]), 2)})
+    return out
+
+
+def _us_hint_kind(vix, spread_row, band):
+    if vix is None:
+        return None
+    expensive = cheap = False
+    if spread_row and band:
+        pos = band.get("position") or ""
+        sp = spread_row.get("spread")
+        mean = band.get("mean")
+        if "靠近下轨" in pos or "略低于" in pos or (mean is not None and sp is not None and sp <= mean - 0.3):
+            expensive = True
+        if "靠近上轨" in pos or "略高于" in pos or (mean is not None and sp is not None and sp >= mean + 0.3):
+            cheap = True
+    if vix >= 25 and cheap:
+        return "add", "VIX 偏高且利差偏便宜，可按阶梯加回"
+    if vix < 15 and expensive:
+        return "cut", "低波动且利差偏低，总仓宜收敛"
+    if vix >= 35:
+        return "style", "极端恐慌，只按阶梯小步，不追"
+    if vix >= 25:
+        return "style", "波动抬升，总仓宜收敛，不必清仓"
+    return None
+
+
 def _us_vix():
     """CBOE VIX 收盘，衡量美股恐慌/拥挤。"""
     raw = _get("https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=5d&interval=1d", timeout=12)
@@ -398,6 +437,7 @@ def build_market_spread():
         smh["error"] = str(e)[:80]
     crowd = {"cn": {"ok": False}, "us": {"ok": False}}
     hint_history = []
+    us_hint_history = []
     try:
         hit = _cn_congestion()
         if hit:
@@ -418,6 +458,48 @@ def build_market_spread():
     except Exception as e:
         logger.warning("拥挤度历史失败: %s", e)
     try:
+        vix_hist = _us_vix_history()
+        us_spread = []
+        try:
+            pe = _spx_pe()
+            yld = _us10y()
+            us_spread = _join(pe, yld, months=18)
+        except Exception:
+            us_spread = []
+        us_hint_history = _build_hint_history(
+            [{"date": r["date"], "value": r["value"]} for r in vix_hist],
+            us_spread,
+        )
+        # 美股用 VIX 规则重算，避免套用 A 股拥挤阈值
+        band = _band(us_spread) if us_spread else None
+        events = []
+        for row in vix_hist:
+            sp = _nearest(us_spread, row["date"]) if us_spread else None
+            kind = _us_hint_kind(row["value"], sp, band)
+            if not kind:
+                continue
+            events.append({"date": row["date"], "kind": kind[0], "text": kind[1], "crowd": row["value"]})
+        if events:
+            def _gap_days(a, b):
+                try:
+                    return (date.fromisoformat(b) - date.fromisoformat(a)).days
+                except Exception:
+                    return 99
+            ranges = []
+            cur = dict(events[0]); cur["start"] = cur["date"]; cur["end"] = cur["date"]
+            for ev in events[1:]:
+                same = ev["kind"] == cur["kind"] and ev["text"] == cur["text"]
+                if same and _gap_days(cur["end"], ev["date"]) <= 12:
+                    cur["end"] = ev["date"]; cur["crowd"] = ev["crowd"]
+                    continue
+                ranges.append(cur)
+                cur = dict(ev); cur["start"] = ev["date"]; cur["end"] = ev["date"]
+            ranges.append(cur)
+            cutoff = (date.today() - timedelta(days=400)).isoformat()
+            us_hint_history = [r for r in ranges if r["end"] >= cutoff][-40:]
+    except Exception as e:
+        logger.warning("美股提示历史失败: %s", e)
+    try:
         hit = _us_vix()
         if hit:
             crowd["us"] = hit
@@ -432,5 +514,6 @@ def build_market_spread():
         "smh": smh,
         "congestion": crowd,
         "hint_history": hint_history,
+        "us_hint_history": us_hint_history,
         "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
     }
