@@ -1278,6 +1278,7 @@ body.landing-locked #freeBanner { display: none !important; }
       </span>
     </div>
     <div id="marketPositionHint" style="display:none;margin-bottom:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5;"></div>
+    <div id="marketHintHistory" style="display:none;margin-bottom:8px;font-size:11px;line-height:1.5;color:var(--text-dim);"></div>
     <div id="marketSpreadBar" style="display:none;padding:2px 0;font-size:12px;line-height:1.5;"></div>
     <div id="marketCrowdBar" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;line-height:1.5;"></div>
   </div>
@@ -5340,9 +5341,43 @@ function _spreadIsCheap(band, spread) {
   if (band && band.mean != null && spread != null && Number(spread) >= Number(band.mean) + 0.3) return true;
   return false;
 }
+let _hintRange = 'half';
+function _hintInRange(end, range) {
+  if (!end) return false;
+  const days = range === 'year' ? 365 : 183;
+  const cut = Date.now() - days * 86400000;
+  const t = Date.parse(String(end).slice(0, 10));
+  return !isNaN(t) && t >= cut;
+}
+function paintHintHistory(j) {
+  const el = document.getElementById('marketHintHistory');
+  if (!el) return;
+  const all = (j && j.hint_history) || [];
+  const rows = all.filter(function (r) { return _hintInRange(r.end || r.start, _hintRange); });
+  if (!all.length) { el.style.display = 'none'; return; }
+  const label = function (r) {
+    const a = String(r.start || '').slice(0, 10);
+    const b = String(r.end || '').slice(0, 10);
+    return a === b ? a : (a.slice(5) + ' ~ ' + b.slice(5));
+  };
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+    + '<span>历史提示</span>'
+    + '<span>'
+    + '<button type="button" onclick="_hintRange=\'half\';paintHintHistory(window._lastMarketSpread||{})" style="margin-right:4px;border:1px solid var(--border);background:' + (_hintRange==='half'?'var(--gold)':'transparent') + ';color:' + (_hintRange==='half'?'#111':'var(--text-dim)') + ';border-radius:4px;padding:1px 6px;font-size:11px;">半年</button>'
+    + '<button type="button" onclick="_hintRange=\'year\';paintHintHistory(window._lastMarketSpread||{})" style="border:1px solid var(--border);background:' + (_hintRange==='year'?'var(--gold)':'transparent') + ';color:' + (_hintRange==='year'?'#111':'var(--text-dim)') + ';border-radius:4px;padding:1px 6px;font-size:11px;">一年</button>'
+    + '</span></div>';
+  if (!rows.length) html += '<div>这一档没有预警记录</div>';
+  rows.slice().reverse().forEach(function (r) {
+    const color = r.kind === 'cut' ? 'var(--red)' : (r.kind === 'add' ? 'var(--green)' : 'var(--orange)');
+    html += '<div style="margin-top:2px;"><span style="color:' + color + ';">' + label(r) + '</span> · ' + (r.text || '') + '</div>';
+  });
+  el.innerHTML = html;
+  el.style.display = 'block';
+}
 function paintPositionHint(j) {
   const el = document.getElementById('marketPositionHint');
   if (!el || !j) return;
+  window._lastMarketSpread = j;
   const cn = j.cn || {};
   const crowd = ((j.congestion || {}).cn) || {};
   const vix = ((j.congestion || {}).us) || {};
@@ -5351,11 +5386,11 @@ function paintPositionHint(j) {
   const cnExpensive = cn.ok && _spreadIsExpensive(cn.band, cn.spread);
   const cnCheap = cn.ok && _spreadIsCheap(cn.band, cn.spread);
   if (crowdVal != null && crowdVal >= 50 && cnExpensive) {
-    lines.push('A股预警：拥挤度已过 50%，且利差偏低。总仓位可降到平时一半左右，热点和高波动先减。不是一键空仓。');
+    lines.push((crowd.date || cn.date || '') + ' A股预警：拥挤度已过 50%，且利差偏低。总仓位可降到平时一半左右，热点和高波动先减。不是一键空仓。');
   } else if (crowdVal != null && crowdVal >= 50) {
-    lines.push('A股预警：拥挤度已过 50%。更像风格切换，先减最热的方向，压舱石和现金流好的不必跟着清。');
+    lines.push((crowd.date || cn.date || '') + ' A股预警：拥挤度已过 50%。更像风格切换，先减最热的方向，压舱石和现金流好的不必跟着清。');
   } else if (crowdVal != null && crowdVal < 40 && cnCheap) {
-    lines.push('A股拥挤已回落，利差又偏便宜。可以考虑把降下去的仓位逐步加回，仍按阶梯分批。');
+    lines.push((crowd.date || cn.date || '') + ' A股拥挤已回落，利差又偏便宜。可以考虑把降下去的仓位逐步加回，仍按阶梯分批。');
   }
   if (vix.ok && Number(vix.value) >= 25 && j.us && j.us.ok && _spreadIsExpensive(j.us.band, j.us.spread)) {
     lines.push('美股：VIX 偏高且利差偏低。总仓位宜收敛，不必清零。');
@@ -5410,12 +5445,13 @@ function paintMarketSpread(j) {
   el.style.display = 'block';
   paintMarketCrowd(j);
   paintPositionHint(j);
+  paintHintHistory(j);
 }
 
 async function loadMarketSpread() {
   const el = document.getElementById('marketSpreadBar');
   if (!el) return;
-  const key = 'autopilot_market_spread_v3';
+  const key = 'autopilot_market_spread_v4';
   let local = null;
   try { local = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { local = null; }
   const age = local && local.ts ? (Date.now() - local.ts) : 1e12;

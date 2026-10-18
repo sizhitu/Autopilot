@@ -219,6 +219,99 @@ def _cn_congestion():
             "source": "前5%成交额占比（乐咕）"}
 
 
+
+def _cn_congestion_history():
+    """乐咕拥挤度历史。接口覆盖长历史，最新几天用页面描述补齐。"""
+    import hashlib
+    cj = http.cookiejar.CookieJar()
+    op = build_opener(HTTPCookieProcessor(cj))
+    op.addheaders = [("User-Agent", UA)]
+    op.open("https://www.legulegu.com/stockdata/ashares-congestion", timeout=15).read()
+    token = hashlib.md5(date.today().isoformat().encode()).hexdigest()
+    url = f"https://www.legulegu.com/api/stockdata/ashares-congestion?token={token}"
+    raw = op.open(Request(url, headers={"User-Agent": UA, "Referer": "https://www.legulegu.com/stockdata/ashares-congestion"}), timeout=20).read()
+    items = json.loads(raw).get("items") or []
+    out = []
+    for it in items:
+        day = str(it.get("date") or "")[:10]
+        val = it.get("congestionPercent")
+        if not day or val in (None, ""):
+            continue
+        try:
+            out.append({"date": day, "value": round(float(val), 2)})
+        except Exception:
+            continue
+    latest = _cn_congestion()
+    if latest and latest.get("date") and latest.get("value") is not None:
+        if not out or out[-1]["date"] != latest["date"]:
+            out.append({"date": latest["date"], "value": latest["value"]})
+        elif out[-1]["value"] != latest["value"]:
+            out[-1]["value"] = latest["value"]
+    return out
+
+
+def _hint_kind(crowd, spread_row, band):
+    if crowd is None:
+        return None
+    expensive = False
+    cheap = False
+    if spread_row and band:
+        pos = band.get("position") or ""
+        sp = spread_row.get("spread")
+        mean = band.get("mean")
+        if "靠近下轨" in pos or "略低于" in pos or (mean is not None and sp is not None and sp <= mean - 0.3):
+            expensive = True
+        if "靠近上轨" in pos or "略高于" in pos or (mean is not None and sp is not None and sp >= mean + 0.3):
+            cheap = True
+    if crowd >= 50 and expensive:
+        return "cut", "拥挤且利差偏低，总仓宜降到平时一半左右"
+    if crowd >= 50:
+        return "style", "拥挤预警，先减最热方向，不必清仓"
+    if crowd < 40 and cheap:
+        return "add", "拥挤回落且利差偏便宜，可按阶梯加回"
+    return None
+
+
+def _build_hint_history(crowd_rows, spread_rows):
+    """按交易日生成提示，连续同类合并成区间。默认给近一年。"""
+    if not crowd_rows:
+        return []
+    band = _band(spread_rows) if spread_rows else None
+    by_spread = {s["date"]: s for s in (spread_rows or [])}
+    events = []
+    for row in crowd_rows:
+        sp = _nearest(spread_rows, row["date"]) if spread_rows else None
+        kind = _hint_kind(row["value"], sp, band)
+        if not kind:
+            continue
+        events.append({"date": row["date"], "kind": kind[0], "text": kind[1], "crowd": row["value"]})
+    if not events:
+        return []
+    def _gap_days(a, b):
+        try:
+            return (date.fromisoformat(b) - date.fromisoformat(a)).days
+        except Exception:
+            return 99
+    ranges = []
+    cur = dict(events[0])
+    cur["start"] = cur["date"]
+    cur["end"] = cur["date"]
+    for ev in events[1:]:
+        same = ev["kind"] == cur["kind"] and ev["text"] == cur["text"]
+        close = _gap_days(cur["end"], ev["date"]) <= 12
+        if same and close:
+            cur["end"] = ev["date"]
+            cur["crowd"] = ev["crowd"]
+            continue
+        ranges.append(cur)
+        cur = dict(ev)
+        cur["start"] = ev["date"]
+        cur["end"] = ev["date"]
+    ranges.append(cur)
+    cutoff = (date.today() - timedelta(days=400)).isoformat()
+    return [r for r in ranges if r["end"] >= cutoff][-40:]
+
+
 def _us_vix():
     """CBOE VIX 收盘，衡量美股恐慌/拥挤。"""
     raw = _get("https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=5d&interval=1d", timeout=12)
@@ -304,6 +397,7 @@ def build_market_spread():
         logger.warning("SMH利差失败: %s", e)
         smh["error"] = str(e)[:80]
     crowd = {"cn": {"ok": False}, "us": {"ok": False}}
+    hint_history = []
     try:
         hit = _cn_congestion()
         if hit:
@@ -311,6 +405,18 @@ def build_market_spread():
     except Exception as e:
         logger.warning("A股拥挤度失败: %s", e)
         crowd["cn"] = {"ok": False, "error": str(e)[:80]}
+    try:
+        hist = _cn_congestion_history()
+        spread_hist = []
+        try:
+            pe = _legu_pe()
+            yld = _cn10y()
+            spread_hist = _join(pe, yld, months=18)
+        except Exception:
+            spread_hist = []
+        hint_history = _build_hint_history(hist, spread_hist)
+    except Exception as e:
+        logger.warning("拥挤度历史失败: %s", e)
     try:
         hit = _us_vix()
         if hit:
@@ -325,5 +431,6 @@ def build_market_spread():
         "us": us,
         "smh": smh,
         "congestion": crowd,
+        "hint_history": hint_history,
         "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
     }
