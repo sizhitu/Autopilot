@@ -4041,7 +4041,7 @@ function switchMainTab(tab) {
       else { wv.classList.add('hidden'); wv.style.display = 'none'; }
     }
     if (lv) {
-      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { loadLadderTable(); } catch (eL) {} try { loadMarketSpread(); } catch (eMs) {} }
+      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { if (typeof paintMarketSpreadNow === 'function') paintMarketSpreadNow(); } catch (eP) {} try { loadLadderTable(); } catch (eL) {} try { loadMarketSpread(false); } catch (eMs) {} }
       else { lv.classList.add('hidden'); lv.style.display = 'none'; }
     }
     if (tl) {
@@ -6646,44 +6646,67 @@ function paintMarketSpread(j) {
   _paintHistory(document.getElementById('usHintHistory'), j.us_hint_history || [], _usHintRange, '_usHintRange');
 }
 
-async function loadMarketSpread() {
+let _marketSpreadInflight = null;
+function _marketSpreadCache() {
+  try { return JSON.parse(localStorage.getItem('autopilot_market_spread_v7') || 'null'); } catch (e) { return null; }
+}
+function _saveMarketSpread(j) {
+  try { localStorage.setItem('autopilot_market_spread_v7', JSON.stringify({ ts: Date.now(), data: j })); } catch (e) {}
+}
+function paintMarketSpreadNow() {
+  const local = _marketSpreadCache();
+  if (local && local.data && local.data.success) {
+    try { paintMarketSpread(local.data); } catch (e) {}
+    return true;
+  }
   const el = document.getElementById('cnSpreadBar');
   const us = document.getElementById('usSpreadBar');
-  if (!el) return;
-  const key = 'autopilot_market_spread_v7';
-  let local = null;
-  try { local = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { local = null; }
-  const age = local && local.ts ? (Date.now() - local.ts) : 1e12;
-  const paintSafe = function (data) {
-    try { paintMarketSpread(data); } catch (ePaint) { console.warn('market paint failed', ePaint); }
-  };
-  const showWait = function (msg) {
-    el.style.display = 'block';
-    el.innerHTML = msg;
-    if (us) { us.style.display = 'block'; us.innerHTML = '美股市场获取中'; }
-  };
-  if (local && local.data && local.data.success && age < 24 * 3600 * 1000) {
-    paintSafe(local.data);
-    return;
-  }
-  if (local && local.data && local.data.success) paintSafe(local.data);
-  else showWait('A股市场获取中，预计 10 秒');
-  try {
-    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 20000) : null;
-    const res = await api('/api/market-spread', ctrl ? { signal: ctrl.signal } : {});
-    if (timer) clearTimeout(timer);
-    const j = await res.json();
-    if (j && j.success) {
-      try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data: j })); } catch (eS) {}
-      paintSafe(j);
-      return;
-    }
-    if (!local || !local.data) showWait('市场仓位暂时取不到，请稍后再打开');
-  } catch (e) {
-    if (!local || !local.data) showWait('市场仓位暂时取不到，请稍后再打开');
-  }
+  if (el) { el.style.display = 'block'; el.textContent = 'A股市场读取中'; }
+  if (us) { us.style.display = 'block'; us.textContent = '美股市场读取中'; }
+  return false;
 }
+async function loadMarketSpread(force) {
+  const el = document.getElementById('cnSpreadBar');
+  if (!el) return;
+  const local = _marketSpreadCache();
+  const age = local && local.ts ? (Date.now() - local.ts) : 1e12;
+  const has = !!(local && local.data && local.data.success);
+  if (has) {
+    try { paintMarketSpread(local.data); } catch (e) {}
+    if (!force && age < 12 * 3600 * 1000) return;
+  } else {
+    paintMarketSpreadNow();
+  }
+  if (_marketSpreadInflight) return _marketSpreadInflight;
+  _marketSpreadInflight = (async function () {
+    try {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 12000) : null;
+      const res = await api('/api/market-spread', ctrl ? { signal: ctrl.signal } : {});
+      if (timer) clearTimeout(timer);
+      const j = await res.json();
+      if (j && j.success) {
+        _saveMarketSpread(j);
+        try { paintMarketSpread(j); } catch (e) {}
+        return;
+      }
+      if (!has) paintMarketSpreadNow();
+    } catch (e) {
+      if (!has) {
+        el.style.display = 'block';
+        el.textContent = 'A股市场暂时取不到，稍后自动再试';
+        const us = document.getElementById('usSpreadBar');
+        if (us) { us.style.display = 'block'; us.textContent = '美股市场暂时取不到，稍后自动再试'; }
+      }
+    } finally {
+      _marketSpreadInflight = null;
+    }
+  })();
+  return _marketSpreadInflight;
+}
+try {
+  setTimeout(function () { try { loadMarketSpread(false); } catch (e) {} }, 800);
+} catch (eBoot) {}
 } catch (eMod) { console.warn('market module failed', eMod); }
 </script>
 
