@@ -15,6 +15,7 @@ import json
 import logging
 import os
 from datetime import datetime
+import time
 from typing import List, Dict, Any, Tuple
 
 import ai_client
@@ -179,8 +180,14 @@ def _resolve_display_name(symbol: str, name: str = "") -> str:
 def analyze_symbol(symbol: str, name: str = "") -> dict:
     name = _resolve_display_name(symbol, name)
     try:
-        st = watchlist.get_stock_status(symbol, name)
-        d = watchlist._status_to_dict(st)
+        d = None
+        try:
+            d = watchlist._status_dict_cached(symbol, name, 300, force_live=False)
+        except Exception:
+            d = None
+        if not isinstance(d, dict) or d.get("error"):
+            st = watchlist.get_stock_status(symbol, name, days=300)
+            d = watchlist._status_to_dict(st)
         # 状态里若仍是代码占位，再补一次展示名
         if not d.get("name") or str(d.get("name")).upper() == str(symbol).upper():
             d["name"] = name
@@ -827,6 +834,7 @@ def run_reports(period: str = "weekly", force: bool = False) -> dict:
             logger.warning("报告生成失败 %s: %s", email, e)
             gen_fail += 1
             skipped += 1
+        time.sleep(1.5)
     logger.info(
         "报告任务完成 period=%s force=%s sent=%d skipped=%d throttle_skip=%d gen_fail=%d subscribers=%d",
         period, force, sent, skipped, throttle_skip, gen_fail, total,

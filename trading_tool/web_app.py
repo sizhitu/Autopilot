@@ -18,6 +18,7 @@ import json
 import math
 import re
 import time
+import threading
 import asyncio
 import pandas as pd
 import numpy as np
@@ -863,6 +864,9 @@ async def admin_reports_generate(req: ReportGenRequest, admin: dict = Depends(au
 
 
 @app.post("/api/cron/reports")
+_REPORTS_RUNNING = {"on": False}
+
+
 async def cron_reports_generate(
     period: str = Query("weekly"),
     force: bool = Query(False, description="true=忽略节流，用于测试新邮件模板"),
@@ -872,6 +876,7 @@ async def cron_reports_generate(
 
     鉴权：请求头 X-Cron-Secret 必须等于环境变量 CRON_SECRET。
     默认只向开启推送且到达频率的用户发送；force=true 可立即重发（测试用）。
+    立即返回，实际发送放后台，避免免费实例同步生成被代理打成 502。
     """
     expected = (os.getenv("CRON_SECRET") or "").strip()
     if not expected:
@@ -880,8 +885,22 @@ async def cron_reports_generate(
         raise HTTPException(401, "无效的 Cron 密钥")
     if period not in ("weekly", "monthly"):
         raise HTTPException(400, "period 仅支持 weekly / monthly")
-    stats = reports.run_reports(period, force=bool(force))
-    return {"success": True, **stats}
+    if _REPORTS_RUNNING.get("on"):
+        return {"success": True, "queued": True, "already_running": True, "period": period, "force": bool(force)}
+    _REPORTS_RUNNING["on"] = True
+
+    def _run():
+        import threading
+        try:
+            stats = reports.run_reports(period, force=bool(force))
+            print(f"[reports-bg] {stats}")
+        except Exception as e:
+            print(f"[reports-bg] failed: {e}")
+        finally:
+            _REPORTS_RUNNING["on"] = False
+
+    threading.Thread(target=_run, daemon=True, name="reports-bg").start()
+    return {"success": True, "queued": True, "period": period, "force": bool(force)}
 
 
 @app.post("/api/cron/prewarm-cache")
