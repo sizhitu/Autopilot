@@ -538,32 +538,67 @@ except Exception:
     pass
 
 
-_MARKET_SPREAD_KEY = "market_spread_v8"
-_MARKET_SPREAD_TTL = 24 * 3600
+_MARKET_SPREAD_KEY = "market_spread_v9"
+_MARKET_SPREAD_TTL = 36 * 3600
+_MARKET_SPREAD_FRESH = 20 * 3600
 _MARKET_SPREAD_MEM = {"ts": 0, "data": None}
+_MARKET_SPREAD_REFRESHING = {"on": False}
+
+
+def _spread_age(data):
+    try:
+        return max(0, time.time() - float((data or {}).get("stored_at") or 0))
+    except Exception:
+        return 1e12
+
+
+def _refresh_market_spread():
+    if _MARKET_SPREAD_REFRESHING.get("on"):
+        return
+    _MARKET_SPREAD_REFRESHING["on"] = True
+    def _run():
+        try:
+            import cache
+            from market_spread import build_market_spread
+            data = build_market_spread()
+            data["stored_at"] = time.time()
+            cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)
+            _MARKET_SPREAD_MEM["ts"] = time.time()
+            _MARKET_SPREAD_MEM["data"] = data
+        except Exception as e:
+            print(f"[market-spread] refresh failed: {e}")
+        finally:
+            _MARKET_SPREAD_REFRESHING["on"] = False
+    threading.Thread(target=_run, daemon=True, name="market-spread-refresh").start()
 
 
 @app.get("/api/market-spread")
 async def market_spread():
-    """看板顶部市场条。写入 Supabase 缓存，24 小时内不再打外部行情源。"""
+    """市场仓位日快照。先回缓存，超过约 20 小时再后台更新，不每次打外部源。"""
     import cache
-    import time as _time
-    now = _time.time()
+    now = time.time()
     mem = _MARKET_SPREAD_MEM.get("data")
-    if isinstance(mem, dict) and mem.get("success") and now - float(_MARKET_SPREAD_MEM.get("ts") or 0) < 3600:
-        mem = dict(mem)
-        mem["cached"] = True
-        mem["cache_layer"] = "memory"
-        return mem
+    if isinstance(mem, dict) and mem.get("success") and _spread_age(mem) < _MARKET_SPREAD_FRESH:
+        out = dict(mem)
+        out["cached"] = True
+        out["cache_layer"] = "memory"
+        return out
     hit = cache.get_json(_MARKET_SPREAD_KEY)
     if isinstance(hit, dict) and hit.get("success"):
+        age = _spread_age(hit)
+        hit = dict(hit)
         hit["cached"] = True
         hit["cache_layer"] = "supabase"
         _MARKET_SPREAD_MEM["ts"] = now
         _MARKET_SPREAD_MEM["data"] = hit
+        if age >= _MARKET_SPREAD_FRESH:
+            _refresh_market_spread()
         return hit
+    _refresh_market_spread()
+    # 冷启动没有快照时才同步算一次，之后都走缓存
     from market_spread import build_market_spread
     data = await asyncio.to_thread(build_market_spread)
+    data["stored_at"] = now
     try:
         cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)
         data["stored"] = True
@@ -900,6 +935,10 @@ async def cron_prewarm_cache(
                 except Exception:
                     pass
             print(f"[prewarm-bg] market={market} done={done}/{len(ordered)}")
+            try:
+                _refresh_market_spread()
+            except Exception:
+                pass
         except Exception as e:
             print(f"[prewarm-bg] error: {e}")
     threading.Thread(target=_bg_prewarm, daemon=True, name="prewarm-bg").start()

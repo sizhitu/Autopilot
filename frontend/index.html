@@ -6584,7 +6584,7 @@ function paintMarketSpread(j) {
   if (cnBar) {
     const band = cn.band || {};
     cnBar.innerHTML = cn.ok
-      ? '沪深300 利差 <b>' + cn.spread + '%</b>（盈利收益率 ' + cn.earnings_yield + '% − 国债 ' + cn.bond_yield + '%）· ' + (band.position || '—') + ' · 中枢 ' + (band.mean ?? '—') + '% · ' + (cn.date || '')
+      ? '沪深300 利差 <b>' + cn.spread + '%</b>（盈利收益率 ' + cn.earnings_yield + '% − 国债 ' + cn.bond_yield + '%）· ' + (band.position || '—') + ' · 中枢 ' + (band.mean ?? '—') + '% · 数据日 ' + (cn.date || '—')
       : 'A股利差暂无';
     cnBar.style.display = 'block';
   }
@@ -6597,7 +6597,7 @@ function paintMarketSpread(j) {
   if (usBar) {
     const band = us.band || {};
     const sp = us.ok
-      ? '标普500 利差 <b>' + us.spread + '%</b>（盈利收益率 ' + us.earnings_yield + '% − 国债 ' + us.bond_yield + '%）· ' + (band.position || '—') + ' · 中枢 ' + (band.mean ?? '—') + '% · ' + (us.date || '')
+      ? '标普500 利差 <b>' + us.spread + '%</b>（盈利收益率 ' + us.earnings_yield + '% − 国债 ' + us.bond_yield + '%）· ' + (band.position || '—') + ' · 中枢 ' + (band.mean ?? '—') + '% · 数据日 ' + (us.date || '—')
       : (us.bond_yield ? '美股十年国债 ' + us.bond_yield + '% · 利差暂无' : '美股利差暂无');
     const sm = smh.ok
       ? '<div style="margin-top:2px;color:var(--text-dim);">SMH 利差 <b>' + smh.spread + '%</b>（盈利收益率 ' + smh.earnings_yield + '% − 国债 ' + smh.bond_yield + '%）· 无两年半中枢</div>'
@@ -6649,14 +6649,14 @@ function paintMarketSpread(j) {
 async function loadMarketSpread() {
   const el = document.getElementById('cnSpreadBar');
   if (!el) return;
-  const key = 'autopilot_market_spread_v5';
+  const key = 'autopilot_market_spread_v6';
   let local = null;
   try { local = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { local = null; }
   const age = local && local.ts ? (Date.now() - local.ts) : 1e12;
   const paintSafe = function (data) {
     try { paintMarketSpread(data); } catch (ePaint) { console.warn('market paint failed', ePaint); }
   };
-  if (local && local.data && local.data.success && age < 12 * 3600 * 1000) {
+  if (local && local.data && local.data.success && age < 24 * 3600 * 1000) {
     paintSafe(local.data);
     return;
   }
