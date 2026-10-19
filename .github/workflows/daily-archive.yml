@@ -94,6 +94,12 @@ jobs:
             --days 8 \
             --fetch-days 40
 
+      - name: Archive market position snapshot
+        working-directory: app
+        run: |
+          PYTHONPATH=trading_tool python scripts/archive/archive_market_spread.py \
+            --out ../data-repo/data || echo "market spread archive skipped"
+
       - name: Commit and push to Autopilot-data
         if: ${{ github.event.inputs.target != 'self' }}
         working-directory: data-repo
