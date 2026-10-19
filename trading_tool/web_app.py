@@ -863,10 +863,10 @@ async def admin_reports_generate(req: ReportGenRequest, admin: dict = Depends(au
     return {"success": True, **stats}
 
 
-@app.post("/api/cron/reports")
 _REPORTS_RUNNING = {"on": False}
 
 
+@app.post("/api/cron/reports")
 async def cron_reports_generate(
     period: str = Query("weekly"),
     force: bool = Query(False, description="true=忽略节流，用于测试新邮件模板"),
