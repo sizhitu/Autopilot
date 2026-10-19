@@ -1042,6 +1042,8 @@ def _status_cache_put(k: str, data: dict) -> None:
                     return
     except Exception:
         pass
+    if isinstance(data, dict) and not data.get("fetched_at"):
+        data["fetched_at"] = now
     _STATUS_CACHE[k] = {"ts": now, "data": data}
     # 淘汰过期 + 超上限
     dead = [ck for ck, v in list(_STATUS_CACHE.items()) if (now - v.get("ts", 0)) >= _STATUS_TTL]
@@ -1144,6 +1146,35 @@ def _row_price_date_fresh(row: dict, code: str = "") -> bool:
     return bd[:10] >= exp[:10]
 
 
+def _session_close_epoch(code: str, bar_date: str = "") -> float:
+    """该交易日官方收盘的时间戳。A股 15:00 北京，美股 16:00 美东。"""
+    from datetime import datetime, timezone, timedelta
+    c = str(code or "")
+    cn = c.isdigit() or c[:2].upper() in ("SH", "SZ", "BJ")
+    tz = timezone(timedelta(hours=8 if cn else -4))
+    close_h = 15 if cn else 16
+    bd = (bar_date or "")[:10]
+    if len(bd) < 10:
+        bd = datetime.now(tz).strftime("%Y-%m-%d")
+    y, m, d = [int(x) for x in bd.split("-")]
+    return datetime(y, m, d, close_h, 0, tzinfo=tz).timestamp()
+
+
+def _row_is_official_close(row: dict, code: str = "") -> bool:
+    """日期够新，且是收盘后抓到的。盘中抓的同日价格不能当收盘。"""
+    if not _row_price_date_fresh(row, code):
+        return False
+    fetched = row.get("fetched_at") or 0
+    try:
+        fetched = float(fetched)
+    except Exception:
+        fetched = 0
+    if fetched <= 0:
+        return False
+    bd = _bar_date_str(row)
+    return fetched >= _session_close_epoch(code or row.get("code") or "", bd) - 90
+
+
 def _row_is_date_fresh(row: dict, code: str = "") -> bool:
     """行情日已最新，且指标不是占位。用于决定要不要重算指标，不单独决定拉行情。"""
     if not row or not isinstance(row, dict):
@@ -1173,8 +1204,11 @@ def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool
         if name:
             cached_row["name"] = name
         cached_row["pending"] = False
-        # 已是最新交易日：直接返回，不打行情（含 force）
-        if _bar_date_str(cached_row) and _row_is_date_fresh(cached_row, k):
+        # 已是收盘后的最新交易日才直接返回。盘中同日快照在 force 时必须重拉。
+        if _bar_date_str(cached_row) and _row_is_official_close(cached_row, k):
+            cached_row["data_source"] = "status_cache_fresh"
+            return cached_row
+        if (not force_live) and _bar_date_str(cached_row) and _row_is_date_fresh(cached_row, k):
             cached_row["data_source"] = "status_cache_fresh"
             return cached_row
         if (not force_live) and (now - hit["ts"]) < _STATUS_TTL:
@@ -1524,7 +1558,7 @@ def _hard_purge_stale_symbols(stocks_or_items) -> list:
             code = str((r or {}).get("code") or "").strip().upper()
             if not code or code in seen:
                 continue
-            if not _bar_date_str(r) or not _row_is_date_fresh(r, code):
+            if not _bar_date_str(r) or not _row_is_official_close(r, code):
                 stale_items.append((code, (r or {}).get("name") or code))
     for code, name in stale_items:
         code = str(code).upper()
@@ -1737,8 +1771,10 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
                 persisted = _load_persisted_status(cu)
                 if persisted:
                     prev = persisted
-            # A股/美股同一规则：现价已是该市场最近收盘日则不打行情。只拉落后的。
-            if prev and (not _row_incomplete(prev)) and _row_price_date_fresh(prev, cu):
+            # 收盘后的最新价才跳过。盘中快照在手动刷新时重拉收盘价。
+            if prev and (not _row_incomplete(prev)) and _row_is_official_close(prev, cu):
+                fl = False
+            elif prev and (not _row_incomplete(prev)) and _row_price_date_fresh(prev, cu) and not bust_status_cache:
                 fl = False
             else:
                 fl = True
