@@ -553,6 +553,7 @@ def _spread_age(data):
 
 
 def _refresh_market_spread():
+    import threading
     if _MARKET_SPREAD_REFRESHING.get("on"):
         return
     _MARKET_SPREAD_REFRESHING["on"] = True
