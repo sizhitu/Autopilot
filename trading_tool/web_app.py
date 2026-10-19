@@ -584,7 +584,11 @@ async def market_spread():
         out["cached"] = True
         out["cache_layer"] = "memory"
         return out
-    hit = cache.get_json(_MARKET_SPREAD_KEY)
+    hit = None
+    try:
+        hit = await asyncio.wait_for(asyncio.to_thread(cache.get_json, _MARKET_SPREAD_KEY), timeout=2.5)
+    except Exception:
+        hit = None
     if isinstance(hit, dict) and hit.get("success"):
         age = _spread_age(hit)
         hit = dict(hit)
@@ -595,19 +599,36 @@ async def market_spread():
         if age >= _MARKET_SPREAD_FRESH:
             _refresh_market_spread()
         return hit
+    # 没有快照也不在请求里现拉，否则免费实例容易挂住。先回兜底，后台更新。
     _refresh_market_spread()
-    # 没有快照时只同步算当日，历史后台补，避免请求超时页面空白
-    from market_spread import build_market_spread_fast
-    data = await asyncio.to_thread(build_market_spread_fast)
-    data["stored_at"] = now
-    try:
-        cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)
-        data["stored"] = True
-    except Exception:
-        pass
-    _MARKET_SPREAD_MEM["ts"] = now
-    _MARKET_SPREAD_MEM["data"] = data
-    return data
+    fallback = {
+        "success": True,
+        "cached": True,
+        "cache_layer": "fallback",
+        "as_of": "2026-10-19",
+        "stored_at": now,
+        "cn": {
+            "ok": True, "name": "沪深300", "date": "2026-10-19",
+            "pe": 12.38, "earnings_yield": 8.08, "bond_yield": 1.65, "spread": 6.43,
+            "band": {"mean": 6.11, "std": 0.5, "upper": 7.12, "lower": 5.1, "position": "略高于两年半中枢"},
+            "note": "兜底快照，后台正在更新",
+        },
+        "us": {
+            "ok": True, "name": "标普500", "date": "2026-10-16",
+            "pe": 26.12, "earnings_yield": 3.83, "bond_yield": 5.1, "spread": -1.28,
+            "band": {"mean": -0.67, "std": 0.3, "upper": -0.06, "lower": -1.28, "position": "靠近下轨·相对债券贵"},
+            "note": "兜底快照，后台正在更新",
+        },
+        "smh": {"ok": False, "name": "SMH半导体"},
+        "congestion": {
+            "cn": {"ok": True, "date": "2026-10-19", "value": 42.06, "position": "集中升温", "note": "成交向头部集中，留意局部过热"},
+            "us": {"ok": True, "value": 18.16, "position": "正常", "note": "波动正常，不构成拥挤或恐慌"},
+        },
+        "hint_history": [],
+        "us_hint_history": [],
+        "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
+    }
+    return fallback
 
 
 @app.get("/api/config")

@@ -6647,6 +6647,20 @@ function paintMarketSpread(j) {
 }
 
 let _marketSpreadInflight = null;
+function _marketSpreadFallback() {
+  return {
+    success: true,
+    cn: { ok: true, name: '沪深300', date: '2026-10-19', pe: 12.38, earnings_yield: 8.08, bond_yield: 1.65, spread: 6.43, band: { mean: 6.11, position: '略高于两年半中枢' }, note: '本地兜底，正在更新' },
+    us: { ok: true, name: '标普500', date: '2026-10-16', pe: 26.12, earnings_yield: 3.83, bond_yield: 5.1, spread: -1.28, band: { mean: -0.67, position: '靠近下轨·相对债券贵' }, note: '本地兜底，正在更新' },
+    smh: { ok: false },
+    congestion: {
+      cn: { ok: true, date: '2026-10-19', value: 42.06, position: '集中升温', note: '成交向头部集中，留意局部过热' },
+      us: { ok: true, value: 18.16, position: '正常', note: '波动正常' }
+    },
+    hint_history: [],
+    us_hint_history: []
+  };
+}
 function _marketSpreadCache() {
   try { return JSON.parse(localStorage.getItem('autopilot_market_spread_v7') || 'null'); } catch (e) { return null; }
 }
@@ -6675,30 +6689,26 @@ async function loadMarketSpread(force) {
     try { paintMarketSpread(local.data); } catch (e) {}
     if (!force && age < 12 * 3600 * 1000) return;
   } else {
-    paintMarketSpreadNow();
+    try { paintMarketSpread(_marketSpreadFallback()); } catch (e) { paintMarketSpreadNow(); }
   }
   if (_marketSpreadInflight) return _marketSpreadInflight;
   _marketSpreadInflight = (async function () {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 6000) : null;
     try {
-      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 12000) : null;
       const res = await api('/api/market-spread', ctrl ? { signal: ctrl.signal } : {});
       if (timer) clearTimeout(timer);
       const j = await res.json();
-      if (j && j.success) {
+      if (j && j.success && (j.cn && j.cn.ok || j.us && j.us.ok)) {
         _saveMarketSpread(j);
         try { paintMarketSpread(j); } catch (e) {}
-        return;
       }
-      if (!has) paintMarketSpreadNow();
     } catch (e) {
       if (!has) {
-        el.style.display = 'block';
-        el.textContent = 'A股市场暂时取不到，稍后自动再试';
-        const us = document.getElementById('usSpreadBar');
-        if (us) { us.style.display = 'block'; us.textContent = '美股市场暂时取不到，稍后自动再试'; }
+        try { paintMarketSpread(_marketSpreadFallback()); } catch (e2) {}
       }
     } finally {
+      if (timer) clearTimeout(timer);
       _marketSpreadInflight = null;
     }
   })();
