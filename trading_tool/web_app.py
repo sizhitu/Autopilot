@@ -574,17 +574,16 @@ def _refresh_market_spread():
 
 
 @app.get("/api/market-spread")
-async def market_spread(response: Response):
+async def market_spread():
     """全站共用一份日快照。用户请求只读缓存，不按人重复打外部源。"""
     import cache
-    response.headers["Cache-Control"] = "public, max-age=3600"
     now = time.time()
     mem = _MARKET_SPREAD_MEM.get("data")
     if isinstance(mem, dict) and mem.get("success") and _spread_age(mem) < _MARKET_SPREAD_FRESH:
         out = dict(mem)
         out["cached"] = True
         out["cache_layer"] = "memory"
-        return out
+        return JSONResponse(content=out, headers={"Cache-Control": "public, max-age=3600"})
     hit = None
     try:
         hit = await asyncio.wait_for(asyncio.to_thread(cache.get_json, _MARKET_SPREAD_KEY), timeout=2.5)
@@ -599,7 +598,7 @@ async def market_spread(response: Response):
         _MARKET_SPREAD_MEM["data"] = hit
         if age >= _MARKET_SPREAD_FRESH:
             _refresh_market_spread()
-        return hit
+        return JSONResponse(content=hit, headers={"Cache-Control": "public, max-age=3600"})
     # 没有快照也不在请求里现拉，否则免费实例容易挂住。先回兜底，后台更新。
     _refresh_market_spread()
     fallback = {
@@ -629,7 +628,7 @@ async def market_spread(response: Response):
         "us_hint_history": [],
         "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
     }
-    return fallback
+    return JSONResponse(content=fallback, headers={"Cache-Control": "public, max-age=600"})
 
 
 @app.get("/api/config")
