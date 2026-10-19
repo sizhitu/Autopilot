@@ -6683,22 +6683,21 @@ async function loadMarketSpread(force) {
   const el = document.getElementById('cnSpreadBar');
   if (!el) return;
   const local = _marketSpreadCache();
-  const age = local && local.ts ? (Date.now() - local.ts) : 1e12;
   const has = !!(local && local.data && local.data.success);
   if (has) {
     try { paintMarketSpread(local.data); } catch (e) {}
-    if (!force && age < 24 * 3600 * 1000) return;
   } else {
-    try { paintMarketSpread(_marketSpreadFallback()); } catch (e) { paintMarketSpreadNow(); }
+    try { paintMarketSpread(_marketSpreadFallback()); } catch (e) {}
   }
+  if (!force && has && local.ts && (Date.now() - local.ts) < 24 * 3600 * 1000) return;
   if (_marketSpreadInflight) return _marketSpreadInflight;
   _marketSpreadInflight = (async function () {
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 6000) : null;
+    const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 4000) : null;
     try {
-      const res = await api('/api/market-spread', ctrl ? { signal: ctrl.signal } : {});
-      if (timer) clearTimeout(timer);
+      const res = await fetch('/market-spread.json?v=20261019', { cache: 'no-cache', signal: ctrl ? ctrl.signal : undefined });
       const j = await res.json();
+      if (timer) clearTimeout(timer);
       if (j && j.success && (j.cn && j.cn.ok || j.us && j.us.ok)) {
         _saveMarketSpread(j);
         try { paintMarketSpread(j); } catch (e) {}

@@ -1,0 +1,35 @@
+{
+  "success": true,
+  "as_of": "2026-10-19",
+  "source": "static",
+  "cn": {
+    "ok": true,
+    "name": "沪深300",
+    "date": "2026-10-19",
+    "pe": 12.38,
+    "earnings_yield": 8.08,
+    "bond_yield": 1.65,
+    "spread": 6.43,
+    "band": {"mean": 6.11, "std": 0.5, "upper": 7.12, "lower": 5.1, "position": "略高于两年半中枢"},
+    "note": "盈利收益率减中国十年国债"
+  },
+  "us": {
+    "ok": true,
+    "name": "标普500",
+    "date": "2026-10-16",
+    "pe": 26.12,
+    "earnings_yield": 3.83,
+    "bond_yield": 5.1,
+    "spread": -1.28,
+    "band": {"mean": -0.67, "std": 0.3, "upper": -0.06, "lower": -1.28, "position": "靠近下轨·相对债券贵"},
+    "note": "盈利收益率减美国十年国债"
+  },
+  "smh": {"ok": false, "name": "SMH半导体"},
+  "congestion": {
+    "cn": {"ok": true, "date": "2026-10-19", "value": 42.06, "position": "集中升温", "note": "成交向头部集中，留意局部过热"},
+    "us": {"ok": true, "value": 18.16, "position": "正常", "note": "波动正常，不构成拥挤或恐慌"}
+  },
+  "hint_history": [],
+  "us_hint_history": [],
+  "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。"
+}
