@@ -6648,28 +6648,40 @@ function paintMarketSpread(j) {
 
 async function loadMarketSpread() {
   const el = document.getElementById('cnSpreadBar');
+  const us = document.getElementById('usSpreadBar');
   if (!el) return;
-  const key = 'autopilot_market_spread_v6';
+  const key = 'autopilot_market_spread_v7';
   let local = null;
   try { local = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { local = null; }
   const age = local && local.ts ? (Date.now() - local.ts) : 1e12;
   const paintSafe = function (data) {
     try { paintMarketSpread(data); } catch (ePaint) { console.warn('market paint failed', ePaint); }
   };
+  const showWait = function (msg) {
+    el.style.display = 'block';
+    el.innerHTML = msg;
+    if (us) { us.style.display = 'block'; us.innerHTML = '美股市场获取中'; }
+  };
   if (local && local.data && local.data.success && age < 24 * 3600 * 1000) {
     paintSafe(local.data);
     return;
   }
   if (local && local.data && local.data.success) paintSafe(local.data);
+  else showWait('A股市场获取中，预计 10 秒');
   try {
-    const res = await api('/api/market-spread');
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 20000) : null;
+    const res = await api('/api/market-spread', ctrl ? { signal: ctrl.signal } : {});
+    if (timer) clearTimeout(timer);
     const j = await res.json();
     if (j && j.success) {
       try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data: j })); } catch (eS) {}
+      paintSafe(j);
+      return;
     }
-    paintSafe(j);
+    if (!local || !local.data) showWait('市场仓位暂时取不到，请稍后再打开');
   } catch (e) {
-    if (!local || !local.data) el.style.display = 'none';
+    if (!local || !local.data) showWait('市场仓位暂时取不到，请稍后再打开');
   }
 }
 } catch (eMod) { console.warn('market module failed', eMod); }

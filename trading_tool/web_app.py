@@ -596,9 +596,9 @@ async def market_spread():
             _refresh_market_spread()
         return hit
     _refresh_market_spread()
-    # 冷启动没有快照时才同步算一次，之后都走缓存
-    from market_spread import build_market_spread
-    data = await asyncio.to_thread(build_market_spread)
+    # 没有快照时只同步算当日，历史后台补，避免请求超时页面空白
+    from market_spread import build_market_spread_fast
+    data = await asyncio.to_thread(build_market_spread_fast)
     data["stored_at"] = now
     try:
         cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)

@@ -75,12 +75,7 @@ def _cn10y_datacenter():
 
 
 def _cn10y():
-    try:
-        rows = _cn10y_eastmoney_kline()
-        if len(rows) >= 30:
-            return rows
-    except Exception as e:
-        logger.warning("东财国债行情接口失败，改走数据中心: %s", e)
+    """行情接口长期 403，直接走数据中心，避免每次白等。"""
     return _cn10y_datacenter()
 
 
@@ -370,6 +365,84 @@ def _us_vix():
     else:
         pos, note = "极端恐慌", "极端波动，常对应情绪底部区域"
     return {"ok": True, "value": round(val, 2), "position": pos, "note": note, "source": "VIX"}
+
+
+def build_market_spread_fast():
+    """只取当日仓位，不拉历史。给页面先出数。"""
+    from concurrent.futures import ThreadPoolExecutor
+    cn = {"ok": False, "name": "沪深300"}
+    us = {"ok": False, "name": "标普500"}
+    smh = {"ok": False, "name": "SMH半导体"}
+    crowd = {"cn": {"ok": False}, "us": {"ok": False}}
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {
+            "pe": ex.submit(_legu_pe),
+            "yld": ex.submit(_cn10y),
+            "crowd": ex.submit(_cn_congestion),
+            "spx": ex.submit(_spx_pe),
+            "usy": ex.submit(_us10y),
+            "smh": ex.submit(_smh_pe),
+            "vix": ex.submit(_us_vix),
+        }
+        got = {}
+        for k, f in futs.items():
+            try:
+                got[k] = f.result(timeout=12)
+            except Exception as e:
+                logger.warning("快照 %s 失败: %s", k, e)
+                got[k] = None
+    try:
+        series = _join(got.get("pe") or [], got.get("yld") or [])
+        if series:
+            last = series[-1]
+            cn = {
+                "ok": True, "name": "沪深300", "date": last["date"],
+                "pe": last["pe"], "earnings_yield": last["earnings_yield"],
+                "bond_yield": last["bond_yield"], "spread": last["spread"],
+                "band": _band(series),
+                "note": "盈利收益率=1/总市值加权滚动市盈率，减去中国十年国债",
+            }
+    except Exception as e:
+        cn["error"] = str(e)[:80]
+    try:
+        series = _join(got.get("spx") or [], got.get("usy") or [])
+        if series:
+            last = series[-1]
+            us = {
+                "ok": True, "name": "标普500", "date": last["date"],
+                "pe": last["pe"], "earnings_yield": last["earnings_yield"],
+                "bond_yield": last["bond_yield"], "spread": last["spread"],
+                "band": _band(series),
+                "note": "盈利收益率=1/标普滚动市盈率（Multpl），减去美国十年国债",
+            }
+    except Exception as e:
+        us["error"] = str(e)[:80]
+    try:
+        pe = got.get("smh")
+        yld = got.get("usy") or []
+        if pe and pe > 0 and yld:
+            bond = float(yld[-1]["yield"])
+            ey = 100.0 / pe
+            smh = {
+                "ok": True, "name": "SMH半导体", "date": yld[-1]["date"],
+                "pe": round(pe, 2), "earnings_yield": round(ey, 2),
+                "bond_yield": round(bond, 2), "spread": round(ey - bond, 2),
+                "note": "盈利收益率=1/SMH滚动市盈率，减去美国十年国债。行业周期强，不能和标普中枢直接比",
+            }
+    except Exception as e:
+        smh["error"] = str(e)[:80]
+    if got.get("crowd"):
+        crowd["cn"] = got["crowd"]
+    if got.get("vix"):
+        crowd["us"] = got["vix"]
+    return {
+        "success": bool(cn.get("ok") or us.get("ok")),
+        "fast": True,
+        "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "cn": cn, "us": us, "smh": smh, "congestion": crowd,
+        "hint_history": [], "us_hint_history": [],
+        "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
+    }
 
 
 def build_market_spread():
