@@ -5373,6 +5373,13 @@ function _paintHintBox(el, text, warn) {
   el.style.color = 'var(--text)';
   el.innerHTML = text;
 }
+function setHintRange(btn) {
+  const which = btn.getAttribute('data-which');
+  const key = btn.getAttribute('data-range');
+  if (which === '_cnHintRange') _cnHintRange = key;
+  else _usHintRange = key;
+  paintMarketSpread(window._lastMarketSpread || {});
+}
 function _paintHistory(el, rows, range, which) {
   if (!el) return;
   const all = rows || [];
@@ -5385,7 +5392,7 @@ function _paintHistory(el, rows, range, which) {
   };
   const btn = function (key, text) {
     const on = range === key;
-    return '<button type="button" onclick="' + which + '=\\'' + key + '\\';paintMarketSpread(window._lastMarketSpread||{})" style="margin-left:4px;border:1px solid var(--border);background:' + (on ? 'var(--gold)' : 'transparent') + ';color:' + (on ? '#111' : 'var(--text-dim)') + ';border-radius:4px;padding:1px 6px;font-size:11px;">' + text + '</button>';
+    return '<button type="button" data-which="' + which + '" data-range="' + key + '" onclick="setHintRange(this)" style="margin-left:4px;border:1px solid var(--border);background:' + (on ? 'var(--gold)' : 'transparent') + ';color:' + (on ? '#111' : 'var(--text-dim)') + ';border-radius:4px;padding:1px 6px;font-size:11px;">' + text + '</button>';
   };
   let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><span>历史提示</span><span>' + btn('half', '半年') + btn('year', '一年') + '</span></div>';
   if (!shown.length) html += '<div>这一档没有记录</div>';
