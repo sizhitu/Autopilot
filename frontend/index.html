@@ -4212,6 +4212,16 @@ function _barDateKey(row) {
 }
 // 会话级「历史最新」：同一代码 bar_date 只升不降（跨多次刷新）
 const _bestWatchByCode = Object.create(null);
+function _rowScore(s) {
+  if (!s) return 0;
+  let n = 0;
+  if (s.price && s.price !== '-' && s.price !== '…') n += 2;
+  ['timing', 'trend_filter', 'action', 'signal'].forEach(function (k) {
+    const v = s[k];
+    if (v && v !== '-' && v !== '—' && v !== '计算中') n += 1;
+  });
+  return n;
+}
 function _preferFresherRow(a, b) {
   if (!a) return b;
   if (!b) return a;
@@ -4224,9 +4234,11 @@ function _preferFresherRow(a, b) {
   if (da && db && da > db) return a;
   if (db && !da) return b;
   if (da && !db) return a;
+  const fa = Number(a.fetched_at || 0), fb = Number(b.fetched_at || 0);
+  if (fa && fb && Math.abs(fa - fb) > 60) return fa > fb ? a : b;
   if (a.bar_stale && !b.bar_stale) return b;
   if (b.bar_stale && !a.bar_stale) return a;
-  return a;
+  return _rowScore(b) > _rowScore(a) ? b : a;
 }
 function _lockFresherRow(row) {
   if (!row || !row.code) return row;

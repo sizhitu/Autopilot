@@ -957,7 +957,7 @@ def _row_richness(s: dict) -> int:
 
 
 def _row_fresher(a: dict, b: dict) -> dict:
-    """两者都可用时取 bar_date 更新的；缺日期/更陈旧的不覆盖；同日取指标更完整的。"""
+    """两者都可用时取 bar_date 更新的；同日优先收盘后抓取，再比完整度。盘中完整行不能盖收盘价。"""
     ua = _row_usable(a) if a else False
     ub = _row_usable(b) if b else False
     if ua and not ub:
@@ -965,7 +965,6 @@ def _row_fresher(a: dict, b: dict) -> dict:
     if ub and not ua:
         return b
     if not ua and not ub:
-        # 都不可用：仍选相对更完整的，避免空行
         ra, rb = _row_richness(a), _row_richness(b)
         if rb > ra:
             return b
@@ -976,7 +975,13 @@ def _row_fresher(a: dict, b: dict) -> dict:
             return b
         if da > db:
             return a
-        # 同日：优先非 bar_stale，再比完整度
+        code = (a or {}).get("code") or (b or {}).get("code") or ""
+        oa = _row_is_official_close(a, code)
+        ob = _row_is_official_close(b, code)
+        if oa and not ob:
+            return a
+        if ob and not oa:
+            return b
         sa = bool((a or {}).get("bar_stale"))
         sb = bool((b or {}).get("bar_stale"))
         if sa and not sb:
@@ -1038,7 +1043,15 @@ def _status_cache_put(k: str, data: dict) -> None:
             if _row_usable(old) and not _row_usable(data):
                 return
             if old_d and new_d and old_d == new_d:
-                if _row_richness(old) > _row_richness(data):
+                code = (data or {}).get("code") or k
+                old_off = _row_is_official_close(old, code)
+                new_off = _row_is_official_close(data, code)
+                # 盘中完整行不能盖掉收盘后的行
+                if new_off and not old_off:
+                    pass
+                elif old_off and not new_off:
+                    return
+                elif _row_richness(old) > _row_richness(data):
                     return
     except Exception:
         pass
@@ -1117,7 +1130,7 @@ def _rows_all_session_fresh(stocks) -> bool:
         if _row_incomplete(s):
             return False
         code = str(s.get('code') or '')
-        if not _row_price_date_fresh(s, code):
+        if not _row_is_official_close(s, code):
             return False
         usable += 1
     return usable > 0
@@ -1335,7 +1348,7 @@ def verify_and_refresh_symbols(symbols_with_names: list) -> dict:
         if before is None and isinstance(item, dict) and item.get("price") not in (None, "", "-"):
             before = dict(item)
         # 已是最新交易日：原样返回，不打行情、不重算
-        if before and _row_is_date_fresh(before, code):
+        if before and _row_is_official_close(before, code) and not _row_incomplete(before):
             row = dict(before)
             row["data_source"] = row.get("data_source") or "already_fresh"
             row["pending"] = False
@@ -1716,15 +1729,19 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
             new_r = dict(done_map[cu]) if cu in done_map else None
             old_r = dict(base[cu]) if cu in base else None
             if new_r and old_r:
-                # 强制刷新：有有效现价的新行优先，避免旧 base 盖住实拉
-                if bust_status_cache:
+                # 新行只有价、指标是空：不要用它盖掉已有指标，除非它是更新的收盘且旧行不是收盘
+                new_thin = _row_incomplete(new_r) or _row_richness(new_r) + 2 < _row_richness(old_r)
+                if bust_status_cache and not new_thin:
                     npx = new_r.get('price')
-                    if npx not in (None, '', '-', '…'):
-                        r = dict(new_r)
-                    else:
-                        r = _row_fresher(new_r, old_r)
+                    r = dict(new_r) if npx not in (None, '', '-', '…') else _row_fresher(new_r, old_r)
                 else:
                     r = _row_fresher(new_r, old_r)
+                    if new_thin and _row_is_official_close(new_r, cu) and not _row_is_official_close(old_r, cu):
+                        r = dict(old_r)
+                        for k in ("price", "bar_date", "bar_stale", "change_1d", "fetched_at", "data_source"):
+                            if new_r.get(k) not in (None, "", "-"):
+                                r[k] = new_r.get(k)
+                        r["indicators_stale"] = True
                 r['name'] = n or r.get('name') or c
                 r['pending'] = False
                 rows.append(r)
