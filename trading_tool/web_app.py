@@ -574,9 +574,10 @@ def _refresh_market_spread():
 
 
 @app.get("/api/market-spread")
-async def market_spread():
-    """市场仓位日快照。先回缓存，超过约 20 小时再后台更新，不每次打外部源。"""
+async def market_spread(response: Response):
+    """全站共用一份日快照。用户请求只读缓存，不按人重复打外部源。"""
     import cache
+    response.headers["Cache-Control"] = "public, max-age=3600"
     now = time.time()
     mem = _MARKET_SPREAD_MEM.get("data")
     if isinstance(mem, dict) and mem.get("success") and _spread_age(mem) < _MARKET_SPREAD_FRESH:

@@ -6687,7 +6687,7 @@ async function loadMarketSpread(force) {
   const has = !!(local && local.data && local.data.success);
   if (has) {
     try { paintMarketSpread(local.data); } catch (e) {}
-    if (!force && age < 12 * 3600 * 1000) return;
+    if (!force && age < 24 * 3600 * 1000) return;
   } else {
     try { paintMarketSpread(_marketSpreadFallback()); } catch (e) { paintMarketSpreadNow(); }
   }
