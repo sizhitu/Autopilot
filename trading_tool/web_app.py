@@ -539,9 +539,9 @@ except Exception:
     pass
 
 
-_MARKET_SPREAD_KEY = "market_spread_v9"
-_MARKET_SPREAD_TTL = 36 * 3600
-_MARKET_SPREAD_FRESH = 20 * 3600
+_MARKET_SPREAD_KEY = "market_spread_v10"
+_MARKET_SPREAD_TTL = 18 * 3600
+_MARKET_SPREAD_FRESH = 4 * 3600
 _MARKET_SPREAD_MEM = {"ts": 0, "data": None}
 _MARKET_SPREAD_REFRESHING = {"on": False}
 
@@ -553,6 +553,35 @@ def _spread_age(data):
         return 1e12
 
 
+def _spread_data_day(data):
+    try:
+        cn = str(((data or {}).get("cn") or {}).get("date") or "")[:10]
+        us = str(((data or {}).get("us") or {}).get("date") or "")[:10]
+        return max(cn, us)
+    except Exception:
+        return ""
+
+
+def _spread_behind_session(data) -> bool:
+    """缓存数据日落后于该市场最近收盘日，就要更新。"""
+    try:
+        from data_fetcher import _expected_session_date
+        day = _spread_data_day(data)
+        if not day:
+            return True
+        cn_exp = _expected_session_date("cn").isoformat()
+        us_exp = _expected_session_date("us").isoformat()
+        cn = str(((data or {}).get("cn") or {}).get("date") or "")[:10]
+        us = str(((data or {}).get("us") or {}).get("date") or "")[:10]
+        if cn and cn < cn_exp:
+            return True
+        if us and us < us_exp:
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def _refresh_market_spread():
     import threading
     if _MARKET_SPREAD_REFRESHING.get("on"):
@@ -561,9 +590,16 @@ def _refresh_market_spread():
     def _run():
         try:
             import cache
-            from market_spread import build_market_spread
-            data = build_market_spread()
+            from market_spread import build_market_spread_fast
+            prev = _MARKET_SPREAD_MEM.get("data") if isinstance(_MARKET_SPREAD_MEM.get("data"), dict) else {}
+            data = build_market_spread_fast()
             data["stored_at"] = time.time()
+            data["cache_layer"] = "live"
+            # 快照没有历史时，保留上一份历史提示
+            if not data.get("hint_history") and prev.get("hint_history"):
+                data["hint_history"] = prev.get("hint_history")
+            if not data.get("us_hint_history") and prev.get("us_hint_history"):
+                data["us_hint_history"] = prev.get("us_hint_history")
             cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)
             _MARKET_SPREAD_MEM["ts"] = time.time()
             _MARKET_SPREAD_MEM["data"] = data
@@ -580,11 +616,11 @@ async def market_spread():
     import cache
     now = time.time()
     mem = _MARKET_SPREAD_MEM.get("data")
-    if isinstance(mem, dict) and mem.get("success") and _spread_age(mem) < _MARKET_SPREAD_FRESH:
+    if isinstance(mem, dict) and mem.get("success") and _spread_age(mem) < _MARKET_SPREAD_FRESH and not _spread_behind_session(mem):
         out = dict(mem)
         out["cached"] = True
-        out["cache_layer"] = "memory"
-        return JSONResponse(content=out, headers={"Cache-Control": "public, max-age=3600"})
+        out["cache_layer"] = out.get("cache_layer") or "memory"
+        return JSONResponse(content=out, headers={"Cache-Control": "public, max-age=300"})
     hit = None
     try:
         hit = await asyncio.wait_for(asyncio.to_thread(cache.get_json, _MARKET_SPREAD_KEY), timeout=2.5)
@@ -597,9 +633,9 @@ async def market_spread():
         hit["cache_layer"] = "supabase"
         _MARKET_SPREAD_MEM["ts"] = now
         _MARKET_SPREAD_MEM["data"] = hit
-        if age >= _MARKET_SPREAD_FRESH:
+        if age >= _MARKET_SPREAD_FRESH or _spread_behind_session(hit):
             _refresh_market_spread()
-        return JSONResponse(content=hit, headers={"Cache-Control": "public, max-age=3600"})
+        return JSONResponse(content=hit, headers={"Cache-Control": "public, max-age=300"})
     # 没有快照也不在请求里现拉，否则免费实例容易挂住。先回兜底，后台更新。
     _refresh_market_spread()
     fallback = {

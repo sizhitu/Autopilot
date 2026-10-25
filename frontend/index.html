@@ -6714,7 +6714,11 @@ function paintMarketSpreadNow() {
 function _pickNewerSpread(a, b) {
   if (!a || !a.success) return b;
   if (!b || !b.success) return a;
-  return _spreadDay(b) > _spreadDay(a) ? b : a;
+  const da = _spreadDay(a), db = _spreadDay(b);
+  if (db > da) return b;
+  if (da > db) return a;
+  const live = (b.cache_layer === 'live' || b.cache_layer === 'memory' || b.cache_layer === 'supabase');
+  return live ? b : a;
 }
 async function loadMarketSpread(force) {
   const el = document.getElementById('cnSpreadBar');
@@ -6724,7 +6728,7 @@ async function loadMarketSpread(force) {
   try { paintMarketSpread(best); } catch (e) {}
   const localDay = _spreadDay(best);
   const today = new Date().toISOString().slice(0, 10);
-  if (!force && local && local.ts && (Date.now() - local.ts) < 6 * 3600 * 1000 && localDay && localDay >= today) return;
+  if (!force && local && local.ts && (Date.now() - local.ts) < 2 * 3600 * 1000 && localDay && localDay >= today) return;
   if (_marketSpreadInflight) return _marketSpreadInflight;
   _marketSpreadInflight = (async function () {
     const grab = async function (url, ms) {
