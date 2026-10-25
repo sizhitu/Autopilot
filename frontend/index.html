@@ -6583,6 +6583,20 @@ function _paintHistory(el, rows, range, which) {
   el.innerHTML = html;
   el.style.display = 'block';
 }
+function _spreadDay(j) {
+  const cn = (j && j.cn && j.cn.date) || '';
+  const us = (j && j.us && j.us.date) || '';
+  return String(cn > us ? cn : us || cn || (j && j.as_of) || '').slice(0, 10);
+}
+function _spreadAgeNote(day) {
+  if (!day) return '日期未知';
+  const t = Date.parse(day + 'T00:00:00');
+  if (!t) return day;
+  const days = Math.floor((Date.now() - t) / 86400000);
+  if (days <= 1) return day + ' · 最新';
+  if (days <= 4) return day + ' · ' + days + '天前';
+  return day + ' · 偏旧';
+}
 function paintMarketSpread(j) {
   if (!j) return;
   window._lastMarketSpread = j;
@@ -6596,11 +6610,13 @@ function paintMarketSpread(j) {
   const usBar = document.getElementById('usSpreadBar');
   const cnCrowdBar = document.getElementById('cnCrowdBar');
   const usCrowdBar = document.getElementById('usCrowdBar');
+  const src = j.cache_layer || j.source || '快照';
   if (cnBar) {
     const band = cn.band || {};
-    cnBar.innerHTML = cn.ok
-      ? '沪深300 利差 <b>' + cn.spread + '%</b>（盈利收益率 ' + cn.earnings_yield + '% − 国债 ' + cn.bond_yield + '%）· ' + (band.position || '—') + ' · 中枢 ' + (band.mean ?? '—') + '% · 数据日 ' + (cn.date || '—')
-      : 'A股利差暂无';
+    const head = '<div style="margin-bottom:4px;color:var(--gold);font-weight:700;">数据日 ' + _spreadAgeNote(cn.date || j.as_of) + ' · ' + src + '</div>';
+    cnBar.innerHTML = head + (cn.ok
+      ? '沪深300 利差 <b>' + cn.spread + '%</b>（盈利收益率 ' + cn.earnings_yield + '% − 国债 ' + cn.bond_yield + '%）· ' + (band.position || '—') + ' · 中枢 ' + (band.mean ?? '—') + '%'
+      : 'A股利差暂无');
     cnBar.style.display = 'block';
   }
   if (cnCrowdBar) {
@@ -6612,12 +6628,13 @@ function paintMarketSpread(j) {
   if (usBar) {
     const band = us.band || {};
     const sp = us.ok
-      ? '标普500 利差 <b>' + us.spread + '%</b>（盈利收益率 ' + us.earnings_yield + '% − 国债 ' + us.bond_yield + '%）· ' + (band.position || '—') + ' · 中枢 ' + (band.mean ?? '—') + '% · 数据日 ' + (us.date || '—')
+      ? '标普500 利差 <b>' + us.spread + '%</b>（盈利收益率 ' + us.earnings_yield + '% − 国债 ' + us.bond_yield + '%）· ' + (band.position || '—') + ' · 中枢 ' + (band.mean ?? '—') + '%'
       : (us.bond_yield ? '美股十年国债 ' + us.bond_yield + '% · 利差暂无' : '美股利差暂无');
+    const usHead = '<div style="margin-bottom:4px;color:var(--gold);font-weight:700;">数据日 ' + _spreadAgeNote(us.date || j.as_of) + '</div>';
     const sm = smh.ok
       ? '<div style="margin-top:2px;color:var(--text-dim);">SMH 利差 <b>' + smh.spread + '%</b>（盈利收益率 ' + smh.earnings_yield + '% − 国债 ' + smh.bond_yield + '%）· 无两年半中枢</div>'
       : '';
-    usBar.innerHTML = '<div>' + sp + '</div>' + sm;
+    usBar.innerHTML = usHead + '<div>' + sp + '</div>' + sm;
     usBar.style.display = 'block';
   }
   if (usCrowdBar) {
@@ -6694,35 +6711,46 @@ function paintMarketSpreadNow() {
   if (us) { us.style.display = 'block'; us.textContent = '美股市场读取中'; }
   return false;
 }
+function _pickNewerSpread(a, b) {
+  if (!a || !a.success) return b;
+  if (!b || !b.success) return a;
+  return _spreadDay(b) > _spreadDay(a) ? b : a;
+}
 async function loadMarketSpread(force) {
   const el = document.getElementById('cnSpreadBar');
   if (!el) return;
   const local = _marketSpreadCache();
-  const has = !!(local && local.data && local.data.success);
-  if (has) {
-    try { paintMarketSpread(local.data); } catch (e) {}
-  } else {
-    try { paintMarketSpread(_marketSpreadFallback()); } catch (e) {}
-  }
-  if (!force && has && local.ts && (Date.now() - local.ts) < 24 * 3600 * 1000) return;
+  let best = (local && local.data && local.data.success) ? local.data : _marketSpreadFallback();
+  try { paintMarketSpread(best); } catch (e) {}
+  const localDay = _spreadDay(best);
+  const today = new Date().toISOString().slice(0, 10);
+  if (!force && local && local.ts && (Date.now() - local.ts) < 6 * 3600 * 1000 && localDay && localDay >= today) return;
   if (_marketSpreadInflight) return _marketSpreadInflight;
   _marketSpreadInflight = (async function () {
-    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 4000) : null;
-    try {
-      const res = await fetch('/market-spread.json?v=20261019', { cache: 'no-cache', signal: ctrl ? ctrl.signal : undefined });
-      const j = await res.json();
-      if (timer) clearTimeout(timer);
-      if (j && j.success && (j.cn && j.cn.ok || j.us && j.us.ok)) {
-        _saveMarketSpread(j);
-        try { paintMarketSpread(j); } catch (e) {}
+    const grab = async function (url, ms) {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, ms) : null;
+      try {
+        const res = await fetch(url, { cache: 'no-cache', signal: ctrl ? ctrl.signal : undefined });
+        const j = await res.json();
+        if (timer) clearTimeout(timer);
+        return (j && j.success) ? j : null;
+      } catch (e) {
+        if (timer) clearTimeout(timer);
+        return null;
       }
-    } catch (e) {
-      if (!has) {
-        try { paintMarketSpread(_marketSpreadFallback()); } catch (e2) {}
+    };
+    try {
+      const staticJ = await grab('/market-spread.json?v=' + Date.now(), 4000);
+      best = _pickNewerSpread(best, staticJ);
+      let apiJ = null;
+      try { apiJ = await apiJSON('/api/market-spread'); } catch (eApi) { apiJ = null; }
+      best = _pickNewerSpread(best, apiJ);
+      if (best && best.success) {
+        _saveMarketSpread(best);
+        try { paintMarketSpread(best); } catch (e) {}
       }
     } finally {
-      if (timer) clearTimeout(timer);
       _marketSpreadInflight = null;
     }
   })();
