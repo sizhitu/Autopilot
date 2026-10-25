@@ -6686,12 +6686,12 @@ let _marketSpreadInflight = null;
 function _marketSpreadFallback() {
   return {
     success: true,
-    cn: { ok: true, name: '沪深300', date: '2026-10-19', pe: 12.38, earnings_yield: 8.08, bond_yield: 1.65, spread: 6.43, band: { mean: 6.11, position: '略高于两年半中枢' }, note: '本地兜底，正在更新' },
-    us: { ok: true, name: '标普500', date: '2026-10-16', pe: 26.12, earnings_yield: 3.83, bond_yield: 5.1, spread: -1.28, band: { mean: -0.67, position: '靠近下轨·相对债券贵' }, note: '本地兜底，正在更新' },
-    smh: { ok: false },
+    cn: { ok: true, name: '沪深300', date: '2026-10-23', pe: 12.15, earnings_yield: 8.23, bond_yield: 1.64, spread: 6.59, band: { mean: 6.12, position: '略高于两年半中枢' }, note: '本地兜底' },
+    us: { ok: true, name: '标普500', date: '2026-10-23', pe: 26.01, earnings_yield: 3.84, bond_yield: 4.99, spread: -1.14, band: { mean: -0.66, position: '靠近下轨·相对债券贵' }, note: '本地兜底' },
+    smh: { ok: true, name: 'SMH半导体', date: '2026-10-23', pe: 28.17, earnings_yield: 3.55, bond_yield: 4.99, spread: -1.44 },
     congestion: {
-      cn: { ok: true, date: '2026-10-19', value: 42.06, position: '集中升温', note: '成交向头部集中，留意局部过热' },
-      us: { ok: true, value: 18.16, position: '正常', note: '波动正常' }
+      cn: { ok: true, date: '2026-10-23', value: 43.28, position: '集中升温', note: '成交向头部集中，留意局部过热' },
+      us: { ok: true, value: 19.45, position: '正常', note: '波动正常，不构成拥挤或恐慌' }
     },
     hint_history: [],
     us_hint_history: []
@@ -6705,15 +6705,9 @@ function _saveMarketSpread(j) {
 }
 function paintMarketSpreadNow() {
   const local = _marketSpreadCache();
-  if (local && local.data && local.data.success) {
-    try { paintMarketSpread(local.data); } catch (e) {}
-    return true;
-  }
-  const el = document.getElementById('cnSpreadBar');
-  const us = document.getElementById('usSpreadBar');
-  if (el) { el.style.display = 'block'; el.textContent = 'A股市场读取中'; }
-  if (us) { us.style.display = 'block'; us.textContent = '美股市场读取中'; }
-  return false;
+  const data = (local && local.data && local.data.success) ? local.data : (window._lastMarketSpread && window._lastMarketSpread.success ? window._lastMarketSpread : _marketSpreadFallback());
+  try { paintMarketSpread(data); } catch (e) {}
+  return true;
 }
 function _pickNewerSpread(a, b) {
   if (!a || !a.success) return b;
