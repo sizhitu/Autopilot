@@ -1173,6 +1173,47 @@ def _session_close_epoch(code: str, bar_date: str = "") -> float:
     return datetime(y, m, d, close_h, 0, tzinfo=tz).timestamp()
 
 
+def _price_close_enough(a, b) -> bool:
+    try:
+        a, b = float(a), float(b)
+    except Exception:
+        return False
+    if a <= 0 or b <= 0:
+        return False
+    return abs(a - b) <= 0.02 or abs(a - b) / max(a, b) <= 0.001
+
+
+def _latest_close_quote(code: str):
+    """只取最新一根收盘，用来和缓存比价。失败返回空。"""
+    try:
+        from data_fetcher import invalidate_kline_cache, DataFetcher, _df_last_date
+        invalidate_kline_cache(code)
+        df = DataFetcher().fetch(code, days=8)
+        if df is None or len(df) < 1:
+            return None, ""
+        px = round(float(df["close"].iloc[-1]), 2)
+        last = _df_last_date(df)
+        day = last.strftime("%Y-%m-%d") if hasattr(last, "strftime") else str(last or "")[:10]
+        return px, day
+    except Exception:
+        return None, ""
+
+
+def _row_close_is_stale(row: dict, code: str = "") -> bool:
+    """先比日期，再比收盘价。日期落后，或同日收盘价已变，都算旧。"""
+    if not row or not isinstance(row, dict):
+        return True
+    if not _row_price_date_fresh(row, code):
+        return True
+    px, day = _latest_close_quote(code)
+    if px is None:
+        return not _row_is_official_close(row, code)
+    bd = _bar_date_str(row)
+    if day and bd and day[:10] > bd[:10]:
+        return True
+    return not _price_close_enough(row.get("price"), px)
+
+
 def _row_is_official_close(row: dict, code: str = "") -> bool:
     """日期够新，且是收盘后抓到的。盘中抓的同日价格不能当收盘。"""
     if not _row_price_date_fresh(row, code):
@@ -1794,10 +1835,15 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
                 if persisted:
                     prev = persisted
             # 收盘后的最新价才跳过。盘中快照在手动刷新时重拉收盘价。
-            if prev and (not _row_incomplete(prev)) and _row_is_official_close(prev, cu):
-                fl = False
-            elif bust_status_cache:
+            if bust_status_cache:
                 fl = True
+                if prev and (not _row_incomplete(prev)) and _row_is_official_close(prev, cu):
+                    try:
+                        fl = _row_close_is_stale(prev, cu)
+                    except Exception:
+                        fl = True
+            elif prev and (not _row_incomplete(prev)) and _row_is_official_close(prev, cu):
+                fl = False
             elif prev and (not _row_incomplete(prev)) and _row_price_date_fresh(prev, cu):
                 fl = False
             else:
