@@ -540,6 +540,14 @@ class DataFetcher:
         symbol = symbol.strip().upper().replace('.', '-')
         if symbol == "WTI":
             symbol = "CL=F"
+        if symbol in ("VIX",):
+            symbol = "^VIX"
+        elif symbol in ("SPX", "GSPC"):
+            symbol = "^GSPC"
+        elif symbol == "DJI":
+            symbol = "^DJI"
+        elif symbol == "IXIC":
+            symbol = "^IXIC"
 
         # 分析/看板需要长 K 线。Nasdaq 历史经常只有约 15 根，冷却期也不再先打它。
         # 冷却只缩短 Yahoo 超时，避免 2×10s 空等。
@@ -996,6 +1004,13 @@ class DataFetcher:
             pd.DataFrame with columns: date, open, high, low, close, volume
         """
         symbol = symbol.strip()
+        _INDEX_ALIAS = {
+            "VIX": "^VIX", "波动率": "^VIX", "波动率指数": "^VIX",
+            "SPX": "^GSPC", "GSPC": "^GSPC", "标普": "^GSPC", "标普500": "^GSPC",
+            "DJI": "^DJI", "道指": "^DJI", "道琼斯": "^DJI",
+            "IXIC": "^IXIC", "纳指": "^IXIC", "纳斯达克": "^IXIC",
+        }
+        symbol = _INDEX_ALIAS.get(symbol.upper(), symbol)
         days = int(days or 300)
         key = (symbol, days)
         market = "cn" if self._is_cn_stock(symbol) and not self._is_us_index(symbol) else "us"
@@ -1204,6 +1219,15 @@ class DataFetcher:
             code = _NAME_ALIAS.get(name_kw) or _NAME_ALIAS.get(keyword)
             nm = self.US_STOCKS.get(code) or ("谷歌" if code.startswith("GOOG") else code)
             exact.append({"code": code, "name": nm, "market": "美股"})
+        _INDEX_ALIAS = {
+            "VIX": ("^VIX", "波动率指数"), "波动率指数": ("^VIX", "波动率指数"),
+            "SPX": ("^GSPC", "标普500"), "GSPC": ("^GSPC", "标普500"), "标普500": ("^GSPC", "标普500"),
+            "DJI": ("^DJI", "道琼斯"), "道琼斯": ("^DJI", "道琼斯"),
+            "IXIC": ("^IXIC", "纳斯达克"), "纳斯达克": ("^IXIC", "纳斯达克"),
+        }
+        if keyword in _INDEX_ALIAS or name_kw in _INDEX_ALIAS:
+            code, nm = _INDEX_ALIAS.get(keyword) or _INDEX_ALIAS.get(name_kw)
+            exact.insert(0, {"code": code, "name": nm, "market": "美股"})
 
         # 指数
         for code, name in {**self.US_INDICES, **self.CN_INDICES}.items():

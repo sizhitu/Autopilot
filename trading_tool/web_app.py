@@ -1740,6 +1740,10 @@ async def watchlist_add(req: WatchAddRequest, request: Request,
     _ALIASES = {
         "谷歌": "GOOGL", "GOOGLE": "GOOGL", "ALPHABET": "GOOGL",
         "谷歌A": "GOOGL", "谷歌C": "GOOG", "GOOG": "GOOG", "GOOGL": "GOOGL",
+        "VIX": "^VIX", "波动率指数": "^VIX",
+        "SPX": "^GSPC", "GSPC": "^GSPC", "标普500": "^GSPC",
+        "DJI": "^DJI", "道琼斯": "^DJI",
+        "IXIC": "^IXIC", "纳斯达克": "^IXIC",
     }
     alias_key = raw.strip().upper() if symbols.is_code_like(raw) else raw.strip()
     if alias_key in _ALIASES or raw.strip() in _ALIASES:
@@ -1747,7 +1751,7 @@ async def watchlist_add(req: WatchAddRequest, request: Request,
         if mapped:
             raw = mapped
             if not name:
-                name = "谷歌" if mapped.startswith("GOOG") else name
+                name = {"GOOGL": "谷歌", "GOOG": "谷歌", "^VIX": "波动率指数", "^GSPC": "标普500", "^DJI": "道琼斯", "^IXIC": "纳斯达克"}.get(mapped, name)
     # 代码型（不含中文）直接当作代码；否则视为名称，走搜索解析
     if not symbols.is_code_like(raw):
         try:
