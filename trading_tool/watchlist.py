@@ -1205,7 +1205,7 @@ def _row_is_date_fresh(row: dict, code: str = "") -> bool:
 def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool = False) -> dict:
     k = str(code).strip().upper()
     hit = _STATUS_CACHE.get(k)
-    if not (hit and isinstance(hit.get("data"), dict)):
+    if not force_live and not (hit and isinstance(hit.get("data"), dict)):
         persisted = _load_persisted_status(k)
         if persisted:
             hit = {"ts": time.time(), "data": persisted}
@@ -1585,6 +1585,11 @@ def _hard_purge_stale_symbols(stocks_or_items) -> list:
             invalidate_kline_cache(str(code).lower())
         except Exception:
             pass
+        try:
+            import cache as _cache
+            _cache.delete(_status_persist_key(code))
+        except Exception:
+            pass
     return stale
 
 def _annotate_and_maybe_refresh_dates(out: dict, key, items: list = None) -> dict:
@@ -1791,7 +1796,9 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
             # 收盘后的最新价才跳过。盘中快照在手动刷新时重拉收盘价。
             if prev and (not _row_incomplete(prev)) and _row_is_official_close(prev, cu):
                 fl = False
-            elif prev and (not _row_incomplete(prev)) and _row_price_date_fresh(prev, cu) and not bust_status_cache:
+            elif bust_status_cache:
+                fl = True
+            elif prev and (not _row_incomplete(prev)) and _row_price_date_fresh(prev, cu):
                 fl = False
             else:
                 fl = True
@@ -1999,6 +2006,12 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
     # 连续手动刷新 ≥2 次：对仍非最新日期的代码强制清缓存
     hard = bool(hard) or (bool(force) and force_streak >= 2)
     hard_purged = []
+    # 盘后手动刷新：先清掉还不是收盘后抓取的代码，避免只提示不清缓存
+    if force and cache and isinstance(cache.get("data"), dict):
+        try:
+            hard_purged = _hard_purge_stale_symbols(cache["data"].get("stocks") or items)
+        except Exception:
+            hard_purged = []
     if hard and cache and isinstance(cache.get("data"), dict):
         hard_purged = _hard_purge_stale_symbols(cache["data"].get("stocks") or items)
         if not hard_purged:
@@ -2059,7 +2072,8 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         # 交易日未变（含周末）：锁定已有九转/操盘，不因 45s TTL 或普通刷新重算
         session_locked = False
         try:
-            session_locked = (not hard) and _rows_all_session_fresh(out.get('stocks') or [])
+            # 手动刷新不锁。盘中快照即使日期已是今天，也不能挡住盘后收盘重拉。
+            session_locked = (not force) and (not hard) and _rows_all_session_fresh(out.get('stocks') or [])
         except Exception:
             session_locked = False
         if session_locked:
