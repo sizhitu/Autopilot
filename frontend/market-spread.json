@@ -1,35 +1,147 @@
 {
   "success": true,
-  "as_of": "2026-10-19",
-  "source": "static",
+  "fast": true,
+  "as_of": "2026-10-25 14:04",
   "cn": {
     "ok": true,
     "name": "沪深300",
-    "date": "2026-10-19",
-    "pe": 12.38,
-    "earnings_yield": 8.08,
-    "bond_yield": 1.65,
-    "spread": 6.43,
-    "band": {"mean": 6.11, "std": 0.5, "upper": 7.12, "lower": 5.1, "position": "略高于两年半中枢"},
-    "note": "盈利收益率减中国十年国债"
+    "date": "2026-10-23",
+    "pe": 12.15,
+    "earnings_yield": 8.23,
+    "bond_yield": 1.64,
+    "spread": 6.59,
+    "band": {
+      "mean": 6.12,
+      "std": 0.51,
+      "upper": 7.14,
+      "lower": 5.1,
+      "position": "略高于两年半中枢",
+      "to_upper": 0.55
+    },
+    "note": "盈利收益率=1/总市值加权滚动市盈率，减去中国十年国债"
   },
   "us": {
     "ok": true,
     "name": "标普500",
-    "date": "2026-10-16",
-    "pe": 26.12,
-    "earnings_yield": 3.83,
-    "bond_yield": 5.1,
-    "spread": -1.28,
-    "band": {"mean": -0.67, "std": 0.3, "upper": -0.06, "lower": -1.28, "position": "靠近下轨·相对债券贵"},
-    "note": "盈利收益率减美国十年国债"
+    "date": "2026-10-23",
+    "pe": 26.01,
+    "earnings_yield": 3.84,
+    "bond_yield": 4.99,
+    "spread": -1.14,
+    "band": {
+      "mean": -0.66,
+      "std": 0.29,
+      "upper": -0.08,
+      "lower": -1.24,
+      "position": "靠近下轨·相对债券贵",
+      "to_upper": 1.06
+    },
+    "note": "盈利收益率=1/标普滚动市盈率（Multpl），减去美国十年国债"
   },
-  "smh": {"ok": false, "name": "SMH半导体"},
+  "smh": {
+    "ok": true,
+    "name": "SMH半导体",
+    "date": "2026-10-23",
+    "pe": 28.17,
+    "earnings_yield": 3.55,
+    "bond_yield": 4.99,
+    "spread": -1.44,
+    "note": "盈利收益率=1/SMH滚动市盈率，减去美国十年国债。行业周期强，不能和标普中枢直接比"
+  },
   "congestion": {
-    "cn": {"ok": true, "date": "2026-10-19", "value": 42.06, "position": "集中升温", "note": "成交向头部集中，留意局部过热"},
-    "us": {"ok": true, "value": 18.16, "position": "正常", "note": "波动正常，不构成拥挤或恐慌"}
+    "cn": {
+      "ok": true,
+      "date": "2026-10-23",
+      "value": 43.28,
+      "position": "集中升温",
+      "note": "成交向头部集中，留意局部过热",
+      "source": "前5%成交额占比（乐咕）"
+    },
+    "us": {
+      "ok": true,
+      "value": 19.45,
+      "position": "正常",
+      "note": "波动正常，不构成拥挤或恐慌",
+      "source": "VIX"
+    }
   },
-  "hint_history": [],
-  "us_hint_history": [],
-  "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。"
+  "hint_history": [
+    {
+      "date": "2025-11-14",
+      "kind": "add",
+      "text": "拥挤回落且利差偏便宜，可按阶梯加回",
+      "crowd": 39.4,
+      "start": "2025-11-14",
+      "end": "2025-11-21"
+    },
+    {
+      "date": "2026-06-03",
+      "kind": "cut",
+      "text": "拥挤且利差偏低，总仓宜降到平时一半左右",
+      "crowd": 50.46,
+      "start": "2026-06-03",
+      "end": "2026-08-06"
+    }
+  ],
+  "us_hint_history": [
+    {
+      "date": "2025-11-20",
+      "kind": "style",
+      "text": "波动抬升，总仓宜收敛，不必清仓",
+      "crowd": 26.42,
+      "start": "2025-11-20",
+      "end": "2025-11-20"
+    },
+    {
+      "date": "2025-12-11",
+      "kind": "cut",
+      "text": "低波动且利差偏低，总仓宜收敛",
+      "crowd": 14.49,
+      "start": "2025-12-11",
+      "end": "2026-01-09"
+    },
+    {
+      "date": "2026-03-06",
+      "kind": "add",
+      "text": "VIX 偏高且利差偏便宜，可按阶梯加回",
+      "crowd": 27.19,
+      "start": "2026-03-06",
+      "end": "2026-03-13"
+    },
+    {
+      "date": "2026-03-18",
+      "kind": "style",
+      "text": "波动抬升，总仓宜收敛，不必清仓",
+      "crowd": 25.78,
+      "start": "2026-03-18",
+      "end": "2026-04-07"
+    },
+    {
+      "date": "2026-08-07",
+      "kind": "cut",
+      "text": "低波动且利差偏低，总仓宜收敛",
+      "crowd": 14.53,
+      "start": "2026-08-07",
+      "end": "2026-09-04"
+    },
+    {
+      "date": "2026-09-18",
+      "kind": "cut",
+      "text": "低波动且利差偏低，总仓宜收敛",
+      "crowd": 14.87,
+      "start": "2026-09-18",
+      "end": "2026-09-25"
+    },
+    {
+      "date": "2026-10-09",
+      "kind": "cut",
+      "text": "低波动且利差偏低，总仓宜收敛",
+      "crowd": 14.84,
+      "start": "2026-10-09",
+      "end": "2026-10-09"
+    }
+  ],
+  "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
+  "cache_layer": "static",
+  "source": "static"
 }

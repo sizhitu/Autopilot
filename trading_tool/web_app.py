@@ -595,11 +595,21 @@ def _refresh_market_spread():
             data = build_market_spread_fast()
             data["stored_at"] = time.time()
             data["cache_layer"] = "live"
-            # 快照没有历史时，保留上一份历史提示
             if not data.get("hint_history") and prev.get("hint_history"):
                 data["hint_history"] = prev.get("hint_history")
             if not data.get("us_hint_history") and prev.get("us_hint_history"):
                 data["us_hint_history"] = prev.get("us_hint_history")
+            # 快照先落地，历史提示再补，避免页面一直没有历史
+            if not data.get("hint_history") or not data.get("us_hint_history"):
+                try:
+                    from market_spread import build_market_spread
+                    full = build_market_spread()
+                    if full.get("hint_history"):
+                        data["hint_history"] = full.get("hint_history")
+                    if full.get("us_hint_history"):
+                        data["us_hint_history"] = full.get("us_hint_history")
+                except Exception as e:
+                    print(f"[market-spread] history fill failed: {e}")
             cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)
             _MARKET_SPREAD_MEM["ts"] = time.time()
             _MARKET_SPREAD_MEM["data"] = data

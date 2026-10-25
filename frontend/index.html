@@ -6564,7 +6564,11 @@ function _paintHistory(el, rows, range, which) {
   if (!el) return;
   const all = rows || [];
   const shown = all.filter(function (r) { return _hintInRange(r.end || r.start, range); });
-  if (!all.length) { el.style.display = 'none'; return; }
+  if (!all.length) {
+    el.style.display = 'block';
+    el.innerHTML = '<div style="color:var(--text-dim);">历史提示暂无。仓位数据更新后会在这里显示近一年的加减仓提示。</div>';
+    return;
+  }
   const label = function (r) {
     const a = String(r.start || '').slice(0, 10);
     const b = String(r.end || '').slice(0, 10);
@@ -6747,6 +6751,7 @@ async function loadMarketSpread(force) {
     try {
       const staticJ = await grab('/market-spread.json?v=' + Date.now(), 4000);
       best = _pickNewerSpread(best, staticJ);
+      if (staticJ) { try { paintMarketSpread(best); } catch (e) {} }
       let apiJ = null;
       try { apiJ = await apiJSON('/api/market-spread'); } catch (eApi) { apiJ = null; }
       best = _pickNewerSpread(best, apiJ);
