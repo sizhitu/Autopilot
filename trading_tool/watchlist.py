@@ -1261,6 +1261,21 @@ def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool
         # 已是收盘后的最新交易日才直接返回。盘中同日快照在 force 时必须重拉。
         if _bar_date_str(cached_row) and _row_is_official_close(cached_row, k):
             cached_row["data_source"] = "status_cache_fresh"
+            try:
+                import cache as _cache
+                if cached_row.get("bar_date") and not cached_row.get("error"):
+                    _cache.append_action_log(k, {
+                        "date": cached_row.get("bar_date"),
+                        "action": cached_row.get("action") or cached_row.get("signal") or "观望",
+                        "strength": cached_row.get("action_strength") or 0,
+                        "side": cached_row.get("action_side") or "",
+                        "timing": cached_row.get("timing") or "",
+                        "trend": cached_row.get("trend_filter") or cached_row.get("trend") or "",
+                        "price": cached_row.get("price"),
+                        "reason": cached_row.get("action_reason") or "",
+                    })
+            except Exception:
+                pass
             return cached_row
         if (not force_live) and _bar_date_str(cached_row) and _row_is_date_fresh(cached_row, k):
             cached_row["data_source"] = "status_cache_fresh"
