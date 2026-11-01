@@ -992,10 +992,19 @@ class DataFetcher:
 
     def get_extended_hours(self, symbol: str) -> dict:
         """
-        获取美股盘前/盘后价格（仅美股有效）。
+        获取美股盘前/盘后价格（仅美股有效，展示用，不参与指标计算）。
         返回 {"price": float|None, "label": "盘前"|"盘后"|"" , "change_pct": float|None, "market_state": str}
-        非交易时段或无数据时 label 为空。
+        非交易时段或无数据时 label 为空。失败不影响主流程。
         """
+        # 短缓存，避免看板多只股票重复打点
+        if not hasattr(self, "_ext_cache"):
+            self._ext_cache = {}
+        cache_key = (symbol or "").strip().upper()
+        now = time.time()
+        hit = self._ext_cache.get(cache_key)
+        if hit and now - hit[0] < 45:
+            return hit[1]
+
         sym = (symbol or "").strip().upper().replace(".", "-")
         if not sym or sym.isdigit() or self._is_cn_index(sym):
             return {"price": None, "label": "", "change_pct": None, "market_state": ""}
@@ -1054,15 +1063,19 @@ class DataFetcher:
                     label = "盘后"
                     chg = float(post_pct) if post_pct is not None else None
 
-                return {
+                result = {
                     "price": price,
                     "label": label,
                     "change_pct": chg,
                     "market_state": state,
                 }
+                self._ext_cache[cache_key] = (now, result)
+                return result
             except Exception:
                 continue
-        return {"price": None, "label": "", "change_pct": None, "market_state": ""}
+        empty = {"price": None, "label": "", "change_pct": None, "market_state": ""}
+        self._ext_cache[cache_key] = (now, empty)
+        return empty
 
     def fetch(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
