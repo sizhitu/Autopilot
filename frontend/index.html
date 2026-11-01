@@ -5399,7 +5399,7 @@ function renderWatchlistSummary(summary) {
     <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板。<br>
 · <b>美股 / 美股 ETF</b> — Yahoo Finance、Nasdaq 官方历史接口、Stooq 等公开源，取最近可用交易日收盘价<br>
 · <b>A 股 / 场内基金</b> — 腾讯、东方财富、新浪等公开行情接口（前复权口径优先）<br>
-· 强制刷新时会清空短时缓存并重拉；若某标的仍偏旧，现价下日期会标「·延」；美股盘前/盘后价仅展示参考，后面九转/趋势/操盘等指标始终按收盘价计算<br>
+· 强制刷新时会清空短时缓存并重拉；若某标的仍偏旧，现价下日期会标「·延」<br>
 · 现价为<strong>日线收盘价</strong>（非逐笔实时），仅供研究参考</p></div>
     <div class="hp-sec"><b>提示</b><p>点任意行进入分析详情。仅供研究，不构成投资建议。</p></div>
   </span></span>`;
@@ -5573,15 +5573,7 @@ function renderWatchlist(stocks) {
           ? `行情日期 ${s.bar_date || bd}（可能延迟，已尝试多源）`
           : `行情日期 ${s.bar_date || bd}`;
         const bdHtml = bd ? `<span class="sub-nt" style="color:${bdColor};" title="${bdTitle}">${bd}${stale ? '·延' : ''}</span>` : '';
-        // 美股盘前/盘后：仅展示参考，不参与后面指标计算
-        let extHtml = '';
-        if (s.market === '美股' && s.ext_label && s.ext_price != null) {
-          const ec = (s.ext_change_pct != null && Number(s.ext_change_pct) >= 0) ? 'var(--green)' : 'var(--red)';
-          const esign = (s.ext_change_pct != null && Number(s.ext_change_pct) >= 0) ? '+' : '';
-          const epct = (s.ext_change_pct != null) ? ` ${esign}${Number(s.ext_change_pct).toFixed(1)}%` : '';
-          extHtml = `<span class="sub-nt" style="color:${ec};font-size:10px;" title="仅参考，指标仍按收盘价计算">${s.ext_label} ${s.ext_price}${epct}</span>`;
-        }
-        return px + bdHtml + (extHtml ? '<br>' + extHtml : '');
+        return px + bdHtml;
       })()}</td>
       <td style="padding:5px 6px;color:${dayColor};font-weight:600;">${dayText}</td>
       <td style="padding:5px 6px;color:${chgColor};font-weight:600;">${chgText}</td>
