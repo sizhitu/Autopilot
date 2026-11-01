@@ -292,12 +292,76 @@ ACTION_LOG_TTL = int(os.getenv("CACHE_ACTION_LOG_TTL", str(400 * 86400)))
 ACTION_LOG_MAX = 260
 
 
+def _action_log_from_db(symbol: str) -> list:
+    """从持久表 action_logs 加载（service_role）。失败返回空列表。"""
+    if not supabase_client.using_supabase():
+        return []
+    try:
+        client = supabase_client.get_service_client()
+        res = (client.table("action_logs")
+               .select("bar_date,action,strength,side,timing,trend,price,reason")
+               .eq("symbol", str(symbol or "").upper())
+               .order("bar_date", desc=False)
+               .limit(ACTION_LOG_MAX)
+               .execute())
+        rows = []
+        for r in (res.data or []):
+            rows.append({
+                "date": str(r.get("bar_date") or "")[:10],
+                "action": r.get("action") or "",
+                "strength": int(r.get("strength") or 0),
+                "side": r.get("side") or "",
+                "timing": r.get("timing") or "",
+                "trend": r.get("trend") or "",
+                "price": r.get("price"),
+                "reason": r.get("reason") or "",
+            })
+        return rows
+    except Exception:
+        return []
+
+
+def _action_log_upsert_db(symbol: str, row: dict) -> None:
+    """单条非观望信号写入持久表（幂等 upsert）。"""
+    if not supabase_client.using_supabase():
+        return
+    day = str(row.get("date") or "")[:10]
+    if not day or _is_watch_action(row.get("action")):
+        return
+    try:
+        client = supabase_client.get_service_client()
+        payload = {
+            "symbol": str(symbol or "").upper(),
+            "bar_date": day,
+            "action": row.get("action") or "",
+            "strength": int(row.get("strength") or 0),
+            "side": row.get("side") or "",
+            "timing": row.get("timing") or "",
+            "trend": row.get("trend") or "",
+            "price": row.get("price"),
+            "reason": (row.get("reason") or "")[:120],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        client.table("action_logs").upsert(payload, on_conflict="symbol,bar_date").execute()
+    except Exception:
+        pass
+
+
 def get_action_log(symbol: str):
-    raw = get_json(f"actionlog:{str(symbol or '').upper()}")
-    if isinstance(raw, dict) and isinstance(raw.get("rows"), list):
+    key = f"actionlog:{str(symbol or '').upper()}"
+    raw = get_json(key)
+    if isinstance(raw, dict) and isinstance(raw.get("rows"), list) and raw["rows"]:
         return raw["rows"]
-    if isinstance(raw, list):
+    if isinstance(raw, list) and raw:
         return raw
+    # 缓存空或未命中时回落到持久表，并回填热缓存
+    db_rows = _action_log_from_db(symbol)
+    if db_rows:
+        try:
+            set_json(key, {"rows": db_rows}, ACTION_LOG_TTL)
+        except Exception:
+            pass
+        return db_rows
     return []
 
 
@@ -307,7 +371,8 @@ def _is_watch_action(action) -> bool:
 
 
 def append_action_log(symbol: str, row: dict) -> None:
-    """只持久化非观望动作。同一天后来变成观望时，保留已存买卖，不删历史。"""
+    """只持久化非观望动作。同一天后来变成观望时，保留已存买卖，不删历史。
+    热缓存 + Supabase action_logs 双写。"""
     if not symbol or not isinstance(row, dict):
         return
     day = str(row.get("date") or "")[:10]
@@ -316,8 +381,7 @@ def append_action_log(symbol: str, row: dict) -> None:
     existing = [r for r in (get_action_log(symbol) or []) if isinstance(r, dict)]
     if _is_watch_action(row.get("action")):
         return
-    rows = [r for r in existing if str(r.get("date") or "")[:10] != day]
-    rows.append({
+    new_row = {
         "date": day,
         "action": row.get("action") or "",
         "strength": int(row.get("strength") or 0),
@@ -326,7 +390,11 @@ def append_action_log(symbol: str, row: dict) -> None:
         "trend": row.get("trend") or "",
         "price": row.get("price"),
         "reason": (row.get("reason") or "")[:120],
-    })
+    }
+    rows = [r for r in existing if str(r.get("date") or "")[:10] != day]
+    rows.append(new_row)
     rows.sort(key=lambda r: str(r.get("date") or ""))
     rows = rows[-ACTION_LOG_MAX:]
     set_json(f"actionlog:{str(symbol).upper()}", {"rows": rows}, ACTION_LOG_TTL)
+    # 持久化（不依赖缓存 TTL）
+    _action_log_upsert_db(symbol, new_row)

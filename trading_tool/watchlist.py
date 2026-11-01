@@ -222,6 +222,10 @@ class StockStatus:
     valuation_detail: str = ""    # 估值依据（如 "MA250 -8%" / "分位85%"）
     analyst_target: object = None  # 参考价：个股=去极值分析师均价；基金=NAV float | None
     analyst_upside_pct: object = None  # 相对现价涨幅空间% | None
+    # 美股盘前/盘后（仅美股有效；A股始终为空）
+    ext_price: object = None          # 盘前或盘后价格 float | None
+    ext_label: str = ""               # "盘前" / "盘后" / ""
+    ext_change_pct: object = None     # 相对收盘的涨跌幅% | None
     error: str = ""
 
 
@@ -632,6 +636,18 @@ def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
         except Exception:
             status.bar_stale = False
 
+        # 美股盘前/盘后（A股不处理）
+        if market == "美股" and not code.isdigit():
+            try:
+                ext = fetcher.get_extended_hours(code)
+                if ext and ext.get("label") and ext.get("price") is not None:
+                    status.ext_price = round(float(ext["price"]), 2)
+                    status.ext_label = ext["label"]
+                    if ext.get("change_pct") is not None:
+                        status.ext_change_pct = round(float(ext["change_pct"]), 2)
+            except Exception:
+                pass
+
         # 当日涨跌幅（昨收口径：今收/昨收 - 1，即最近一根K线收盘价相对前一根）。
         # A-share primary K-line is Eastmoney forward-adjusted; avoids false day-change after split/dividend.
         if len(df) >= 2:
@@ -908,6 +924,9 @@ def _status_to_dict(st: StockStatus) -> dict:
         'valuation_detail': st.valuation_detail,
         'analyst_target': st.analyst_target,
         'analyst_upside_pct': st.analyst_upside_pct,
+        'ext_price': st.ext_price,
+        'ext_label': st.ext_label,
+        'ext_change_pct': st.ext_change_pct,
         'error': st.error,
     }
 

@@ -989,6 +989,81 @@ class DataFetcher:
             raise ValueError("腾讯/东方财富/新浪均未返回数据，请检查股票代码")
         return out.tail(days).reset_index(drop=True)
 
+
+    def get_extended_hours(self, symbol: str) -> dict:
+        """
+        获取美股盘前/盘后价格（仅美股有效）。
+        返回 {"price": float|None, "label": "盘前"|"盘后"|"" , "change_pct": float|None, "market_state": str}
+        非交易时段或无数据时 label 为空。
+        """
+        sym = (symbol or "").strip().upper().replace(".", "-")
+        if not sym or sym.isdigit() or self._is_cn_index(sym):
+            return {"price": None, "label": "", "change_pct": None, "market_state": ""}
+        # 指数别名
+        if sym in ("VIX",):
+            sym = "^VIX"
+        elif sym in ("SPX", "GSPC"):
+            sym = "^GSPC"
+        elif sym == "DJI":
+            sym = "^DJI"
+        elif sym == "IXIC":
+            sym = "^IXIC"
+        elif sym == "WTI":
+            sym = "CL=F"
+
+        if _yahoo_in_cooldown():
+            return {"price": None, "label": "", "change_pct": None, "market_state": ""}
+
+        domains = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]
+        for domain in domains:
+            try:
+                url = f"https://{domain}/v8/finance/chart/{sym}"
+                r = self.session.get(url, params={"interval": "1d", "range": "1d", "includePrePost": "true"}, timeout=6)
+                if r.status_code == 429:
+                    _trigger_yahoo_cooldown()
+                    continue
+                if r.status_code != 200:
+                    continue
+                data = (r.json().get("chart") or {}).get("result") or [{}]
+                meta = (data[0] or {}).get("meta") or {}
+                state = str(meta.get("marketState") or "").upper()
+                pre_px = meta.get("preMarketPrice")
+                post_px = meta.get("postMarketPrice")
+                reg_px = meta.get("regularMarketPrice")
+                pre_pct = meta.get("preMarketChangePercent")
+                post_pct = meta.get("postMarketChangePercent")
+
+                price = None
+                label = ""
+                chg = None
+                if state in ("PRE", "PREPRE") and pre_px is not None:
+                    price = float(pre_px)
+                    label = "盘前"
+                    chg = float(pre_pct) if pre_pct is not None else None
+                elif state in ("POST", "POSTPOST") and post_px is not None:
+                    price = float(post_px)
+                    label = "盘后"
+                    chg = float(post_pct) if post_pct is not None else None
+                # 有些时段 marketState 为空但价格存在
+                elif pre_px is not None and (post_px is None or abs(float(pre_px) - float(reg_px or 0)) > 0.01):
+                    price = float(pre_px)
+                    label = "盘前"
+                    chg = float(pre_pct) if pre_pct is not None else None
+                elif post_px is not None:
+                    price = float(post_px)
+                    label = "盘后"
+                    chg = float(post_pct) if post_pct is not None else None
+
+                return {
+                    "price": price,
+                    "label": label,
+                    "change_pct": chg,
+                    "market_state": state,
+                }
+            except Exception:
+                continue
+        return {"price": None, "label": "", "change_pct": None, "market_state": ""}
+
     def fetch(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
         统一获取接口，自动判断美股/A股。

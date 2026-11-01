@@ -5573,7 +5573,15 @@ function renderWatchlist(stocks) {
           ? `行情日期 ${s.bar_date || bd}（可能延迟，已尝试多源）`
           : `行情日期 ${s.bar_date || bd}`;
         const bdHtml = bd ? `<span class="sub-nt" style="color:${bdColor};" title="${bdTitle}">${bd}${stale ? '·延' : ''}</span>` : '';
-        return px + bdHtml;
+        // 美股盘前/盘后：在日期行附加标签与价格
+        let extHtml = '';
+        if (s.market === '美股' && s.ext_label && s.ext_price != null) {
+          const ec = (s.ext_change_pct != null && s.ext_change_pct >= 0) ? 'var(--green)' : 'var(--red)';
+          const esign = (s.ext_change_pct != null && s.ext_change_pct >= 0) ? '+' : '';
+          const epct = (s.ext_change_pct != null) ? ` ${esign}${Number(s.ext_change_pct).toFixed(2)}%` : '';
+          extHtml = `<span class="sub-nt" style="color:${ec};font-weight:600;" title="${s.ext_label}实时价">${s.ext_label} ${s.ext_price}${epct}</span>`;
+        }
+        return px + bdHtml + (extHtml ? '<br>' + extHtml : '');
       })()}</td>
       <td style="padding:5px 6px;color:${dayColor};font-weight:600;">${dayText}</td>
       <td style="padding:5px 6px;color:${chgColor};font-weight:600;">${chgText}</td>
