@@ -1227,8 +1227,17 @@ body.landing-locked #freeBanner { display: none !important; }
           <div class="search-results" id="watchSuggest" style="top:100%; left:0; width:min(260px, 78vw); display:none; z-index:80;"></div>
           <button class="btn btn-green btn-sm" onclick="addWatch()">+ 添加</button>
         </span>
+        <button class="btn btn-sm" id="wlAiToggle" onclick="toggleWatchAi()" style="display:none;background:var(--bg);border:1px solid var(--border);color:var(--text);">✨ AI</button>
         <button class="btn btn-gold btn-sm" onclick="manualWatchlistRefresh()">🔄 刷新</button>
       </div>
+    </div>
+    <!-- AI 自选助手 -->
+    <div id="wlAiPanel" style="margin-top:8px;display:none;">
+      <div style="display:flex;gap:6px;align-items:center;">
+        <input id="wlAiInput" type="text" placeholder="例如：添加苹果特斯拉、删除伊利、我的自选" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;">
+        <button class="btn btn-gold btn-sm" id="wlAiSend" onclick="sendWatchAi()">发送</button>
+      </div>
+      <div id="wlAiLog" style="max-height:160px;overflow-y:auto;margin-top:6px;font-size:12px;line-height:1.5;"></div>
     </div>
     <div id="watchlistSummary" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px;"></div>
     <div style="margin-top:4px; font-size:11px; color:var(--text-dim);">
@@ -2827,6 +2836,7 @@ function refreshAuthUI() {
       if (!canDig) digEn.title = '邮件推送需 Plus 套餐';
     }
     document.getElementById('addWatchRow').style.display = 'inline-flex';
+    var _aiBtn = document.getElementById('wlAiToggle'); if (_aiBtn) _aiBtn.style.display = 'inline-flex';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = 'none';
     const dw = document.getElementById('digestToggleWrap');
     if (dw) dw.style.display = 'inline-flex';
@@ -2839,6 +2849,7 @@ function refreshAuthUI() {
     else a.classList.remove('hidden');
     u.classList.add('hidden');
     document.getElementById('addWatchRow').style.display = 'none';
+    var _aiBtn = document.getElementById('wlAiToggle'); if (_aiBtn) { _aiBtn.style.display = 'none'; } var _aiPanel = document.getElementById('wlAiPanel'); if (_aiPanel) _aiPanel.style.display = 'none';
     const h = document.getElementById('watchLoginHint'); if (h) h.style.display = gated ? 'none' : '';
     const dw = document.getElementById('digestToggleWrap');
     if (dw) dw.style.display = 'none';
@@ -3582,6 +3593,64 @@ function optimisticWatchInsert(code, name) {
     setWatchUpdatedLabel({ computing: true, updated_at: _lastWatchUpdatedAt });
   } catch (e) {}
 }
+
+
+function toggleWatchAi() {
+  const panel = document.getElementById('wlAiPanel');
+  if (!panel) return;
+  if (!currentUser) { openLogin(); showToast('请先登录后再使用 AI 助手'); return; }
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (panel.style.display === 'block') {
+    const inp = document.getElementById('wlAiInput');
+    if (inp) inp.focus();
+  }
+}
+function _appendAiLog(role, text) {
+  const log = document.getElementById('wlAiLog');
+  if (!log) return;
+  const div = document.createElement('div');
+  div.style.cssText = 'margin:4px 0;padding:4px 8px;border-radius:6px;' +
+    (role === 'me' ? 'background:rgba(59,130,246,.12);text-align:right;' : 'background:rgba(201,162,39,.1);');
+  div.textContent = (role === 'me' ? '我：' : 'AI：') + text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+async function sendWatchAi() {
+  if (!currentUser) { openLogin(); showToast('请先登录'); return; }
+  if (isFreeUser()) { openUpgradeModal(); showToast('升级后可用 AI 管理自选'); return; }
+  const inp = document.getElementById('wlAiInput');
+  const msg = (inp && inp.value || '').trim();
+  if (!msg) return;
+  _appendAiLog('me', msg);
+  inp.value = '';
+  const btn = document.getElementById('wlAiSend');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const res = await apiJSON('/api/watchlist/ai-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg })
+    });
+    _appendAiLog('ai', res.reply || '已处理');
+    // 有增删则刷新看板
+    if ((res.added && res.added.length) || (res.removed && res.removed.length)) {
+      try { loadWatchlist(true); } catch (e) {}
+    }
+  } catch (e) {
+    const m = String(e.message || e);
+    if (/登录|令牌|401|未登录/i.test(m)) showToast('请先登录');
+    else _appendAiLog('ai', '处理失败：' + m);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '发送'; }
+  }
+}
+document.addEventListener('keydown', function (e) {
+  const inp = document.getElementById('wlAiInput');
+  if (e.key === 'Enter' && document.activeElement === inp) {
+    e.preventDefault();
+    sendWatchAi();
+  }
+});
 
 async function addWatch() {
   if (isFreeUser()) { openUpgradeModal(); showToast('免费版仅体验 AAPL / TSLA，升级后可添加自选', 'ok'); return; }

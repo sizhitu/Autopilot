@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from strategy_engine import FujimotoStrategy, generate_sample_data, SignalType, TrendType
 from data_fetcher import DataFetcher
 from backtest import Backtester, result_to_dict as bt_to_dict
+import ai_client
 from watchlist import (
     get_watchlist_status, get_user_watchlist_symbols,
     add_user_watchlist, remove_user_watchlist,
@@ -1804,6 +1805,226 @@ async def watchlist_remove(symbol: str = Query(...), user: dict = Depends(auth.g
     except Exception:
         pass
     return {"success": ok, "symbol": symbol}
+
+
+class WatchAiChatRequest(BaseModel):
+    message: str = ""
+
+
+def _resolve_symbol_for_watch(raw: str) -> dict:
+    """把用户输入（代码或名称）解析为 {symbol, name, market}。失败返回空。"""
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    name = ""
+    _ALIASES = {
+        "谷歌": "GOOGL", "GOOGLE": "GOOGL", "ALPHABET": "GOOGL",
+        "谷歌A": "GOOGL", "谷歌C": "GOOG",
+        "特斯拉": "TSLA", "TESLA": "TSLA",
+        "苹果": "AAPL", "APPLE": "AAPL",
+        "英伟达": "NVDA", "NVIDIA": "NVDA",
+        "微软": "MSFT", "MICROSOFT": "MSFT",
+        "亚马逊": "AMZN", "AMAZON": "AMZN",
+        "伊利": "600887", "伊利股份": "600887",
+        "VIX": "^VIX", "波动率指数": "^VIX",
+        "SPX": "^GSPC", "标普500": "^GSPC", "标普": "^GSPC",
+        "DJI": "^DJI", "道琼斯": "^DJI",
+        "IXIC": "^IXIC", "纳斯达克": "^IXIC",
+    }
+    key = raw.upper() if symbols.is_code_like(raw) else raw
+    if key in _ALIASES or raw in _ALIASES:
+        mapped = _ALIASES.get(key) or _ALIASES.get(raw)
+        if mapped:
+            raw = mapped
+            name = {"GOOGL": "谷歌", "TSLA": "特斯拉", "AAPL": "苹果", "NVDA": "英伟达",
+                    "MSFT": "微软", "AMZN": "亚马逊", "600887": "伊利股份",
+                    "^VIX": "波动率指数", "^GSPC": "标普500", "^DJI": "道琼斯", "^IXIC": "纳斯达克"}.get(mapped, "")
+    if not symbols.is_code_like(raw):
+        try:
+            hits = fetcher.search(raw)
+            if hits:
+                raw = hits[0]["code"]
+                name = name or hits[0].get("name", "")
+        except Exception:
+            pass
+    norm = symbols.normalize_symbol(raw)
+    if not norm.get("symbol"):
+        return {}
+    if not name:
+        try:
+            name = fetcher.lookup_name(norm["symbol"]) or ""
+        except Exception:
+            name = ""
+    return {"symbol": norm["symbol"], "name": name, "market": norm.get("market", "")}
+
+
+def _parse_watch_intent(message: str, current: list) -> dict:
+    """规则优先解析增删查意图。返回 {intent, symbols, reply}。"""
+    text = (message or "").strip()
+    low = text.lower()
+    # 查询
+    if any(k in text for k in ("我的自选", "所有自选", "自选列表", "有哪些", "看一下自选", "列出")) or low in ("list", "ls"):
+        return {"intent": "list", "symbols": [], "reply": ""}
+    # 删除
+    if any(k in text for k in ("删除", "移除", "去掉", "取消", "删掉")) or low.startswith(("remove ", "delete ", "del ")):
+        # 提取可能的代码/名称
+        cleaned = re.sub(r"(删除|移除|去掉|取消|删掉|自选|股票|代码)", " ", text)
+        cleaned = re.sub(r"(?i)\b(remove|delete|del)\b", " ", cleaned)
+        parts = [p.strip() for p in re.split(r"[,，、\s]+", cleaned) if p.strip()]
+        return {"intent": "remove", "symbols": parts, "reply": ""}
+    # 添加
+    if any(k in text for k in ("添加", "加入", "增加", "加上", "关注")) or low.startswith(("add ", "加 ")):
+        cleaned = re.sub(r"(添加|加入|增加|加上|关注|自选|股票|代码|帮我|请)", " ", text)
+        cleaned = re.sub(r"(?i)\badd\b", " ", cleaned)
+        parts = [p.strip() for p in re.split(r"[,，、\s]+", cleaned) if p.strip()]
+        return {"intent": "add", "symbols": parts, "reply": ""}
+    return {"intent": "query", "symbols": [], "reply": ""}
+
+
+@app.post("/api/watchlist/ai-chat")
+async def watchlist_ai_chat(req: WatchAiChatRequest, request: Request,
+                            user: dict = Depends(auth.get_current_user),
+                            authorization: Optional[str] = Header(None)):
+    """自然语言管理自选：添加 / 删除 / 列出。需登录。"""
+    _rate_check(authorization, request, "watchlist_ai", 20, 60)
+    msg = (req.message or "").strip()
+    if not msg:
+        raise HTTPException(400, "请输入内容")
+    if len(msg) > 500:
+        raise HTTPException(400, "内容过长")
+
+    token = _bearer(authorization)
+    try:
+        items = watchlist_store.get_all(user["id"], token) or []
+    except Exception:
+        items = []
+    current = [{"symbol": it.get("symbol"), "name": it.get("name") or ""} for it in items]
+
+    # 规则解析优先（稳定、快）；AI 仅在意图不清时辅助
+    parsed = _parse_watch_intent(msg, current)
+    intent = parsed.get("intent") or "query"
+    raw_syms = parsed.get("symbols") or []
+
+    # 意图不清时尝试 AI
+    if intent == "query" and ai_client.available():
+        try:
+            sys_p = (
+                "你是自选股管理助手。用户会用中文或英文说想添加、删除或查看自选。"
+                "只返回 JSON，不要其他文字。格式："
+                '{"intent":"add|remove|list|query","symbols":["代码或名称"],"reply":"一句话回复"}'
+                "。symbols 只放股票代码或中文名称，不要放动词。"
+                f"当前自选：{json.dumps(current, ensure_ascii=False)[:800]}"
+            )
+            ai_text = await asyncio.to_thread(ai_client.chat, sys_p, msg, 400, 0.1)
+            m = re.search(r"\{.*\}", ai_text or "", re.S)
+            if m:
+                ai_obj = json.loads(m.group(0))
+                if ai_obj.get("intent") in ("add", "remove", "list"):
+                    intent = ai_obj["intent"]
+                    raw_syms = ai_obj.get("symbols") or []
+                    parsed["reply"] = ai_obj.get("reply") or ""
+        except Exception:
+            pass
+
+    added, removed, failed = [], [], []
+    if intent == "add":
+        for raw in raw_syms[:10]:
+            resolved = await asyncio.to_thread(_resolve_symbol_for_watch, raw)
+            if not resolved:
+                failed.append(raw)
+                continue
+            try:
+                ok = watchlist_store.add(
+                    user["id"], resolved["symbol"], resolved.get("name") or "",
+                    resolved.get("market") or "", "", token,
+                )
+                if ok:
+                    added.append(resolved)
+                else:
+                    failed.append(raw)
+            except Exception:
+                failed.append(raw)
+        try:
+            invalidate_user_cache(user["id"])
+        except Exception:
+            pass
+    elif intent == "remove":
+        # 先用当前自选做模糊匹配
+        by_code = {str(it.get("symbol") or "").upper(): it for it in items}
+        by_name = {str(it.get("name") or ""): it for it in items if it.get("name")}
+        for raw in raw_syms[:10]:
+            key = raw.strip()
+            hit = by_code.get(key.upper()) or by_name.get(key)
+            if not hit:
+                # 再尝试解析
+                resolved = await asyncio.to_thread(_resolve_symbol_for_watch, key)
+                if resolved:
+                    hit = by_code.get(resolved["symbol"].upper())
+            if not hit:
+                failed.append(raw)
+                continue
+            try:
+                ok = watchlist_store.remove(user["id"], hit["symbol"], token)
+                if ok:
+                    removed.append({"symbol": hit["symbol"], "name": hit.get("name") or ""})
+                else:
+                    failed.append(raw)
+            except Exception:
+                failed.append(raw)
+        try:
+            invalidate_user_cache(user["id"])
+        except Exception:
+            pass
+
+    # 重新取最新列表
+    try:
+        latest = watchlist_store.get_all(user["id"], token) or []
+    except Exception:
+        latest = items
+    latest_brief = [{"symbol": it.get("symbol"), "name": it.get("name") or ""} for it in latest]
+
+    # 组织回复
+    if intent == "list":
+        if not latest_brief:
+            reply = "你还没有自选股。可以说「添加 苹果 特斯拉」来加入。"
+        else:
+            lines = [f"{it['symbol']}" + (f"（{it['name']}）" if it["name"] else "") for it in latest_brief]
+            reply = f"你当前有 {len(lines)} 只自选：\n" + "、".join(lines)
+    elif intent == "add":
+        parts = []
+        if added:
+            parts.append("已添加：" + "、".join(
+                f"{a['symbol']}" + (f"（{a['name']}）" if a.get("name") else "") for a in added
+            ))
+        if failed:
+            parts.append("未识别：" + "、".join(failed))
+        reply = "；".join(parts) or "没有识别到要添加的股票。可以说「添加 NVDA 伊利股份」。"
+    elif intent == "remove":
+        parts = []
+        if removed:
+            parts.append("已删除：" + "、".join(
+                f"{r['symbol']}" + (f"（{r['name']}）" if r.get("name") else "") for r in removed
+            ))
+        if failed:
+            parts.append("未在自选中找到：" + "、".join(failed))
+        reply = "；".join(parts) or "没有识别到要删除的股票。"
+    else:
+        reply = parsed.get("reply") or (
+            "我可以帮你管理自选。试试：\n"
+            "· 添加 苹果 特斯拉 NVDA\n"
+            "· 删除 伊利股份\n"
+            "· 我的自选"
+        )
+
+    return {
+        "success": True,
+        "intent": intent,
+        "reply": reply,
+        "added": added,
+        "removed": removed,
+        "failed": failed,
+        "watchlist": latest_brief,
+    }
 
 
 class WatchReorderRequest(BaseModel):
