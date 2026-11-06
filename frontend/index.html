@@ -1234,9 +1234,11 @@ body.landing-locked #freeBanner { display: none !important; }
     <!-- AI 自选助手 -->
     <div id="wlAiPanel" style="margin-top:8px;display:none;">
       <div style="display:flex;gap:6px;align-items:center;">
-        <input id="wlAiInput" type="text" placeholder="例如：添加苹果特斯拉、删除伊利、我的自选" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;">
+        <input id="wlAiInput" type="text" placeholder="文字或语音：添加苹果特斯拉、删除伊利、我的自选" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;">
+        <button class="btn btn-sm" id="wlAiMic" onclick="toggleWatchAiVoice()" title="语音输入" style="background:var(--bg);border:1px solid var(--border);color:var(--text);min-width:36px;">🎤</button>
         <button class="btn btn-gold btn-sm" id="wlAiSend" onclick="sendWatchAi()">发送</button>
       </div>
+      <div id="wlAiVoiceHint" style="display:none;font-size:11px;color:var(--gold);margin-top:4px;">正在听…说完后自动填入</div>
       <div id="wlAiLog" style="max-height:160px;overflow-y:auto;margin-top:6px;font-size:12px;line-height:1.5;"></div>
     </div>
     <div id="watchlistSummary" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px;"></div>
@@ -3604,6 +3606,60 @@ function toggleWatchAi() {
     const inp = document.getElementById('wlAiInput');
     if (inp) inp.focus();
   }
+}
+let _wlRec = null;
+let _wlListening = false;
+function toggleWatchAiVoice() {
+  if (!currentUser) { openLogin(); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { showToast('当前浏览器不支持语音，请用文字输入或换 Chrome / Safari'); return; }
+  const mic = document.getElementById('wlAiMic');
+  const hint = document.getElementById('wlAiVoiceHint');
+  const inp = document.getElementById('wlAiInput');
+  if (_wlListening && _wlRec) {
+    try { _wlRec.stop(); } catch (e) {}
+    return;
+  }
+  const rec = new SR();
+  rec.lang = 'zh-CN';
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.onstart = function () {
+    _wlListening = true;
+    if (mic) { mic.textContent = '⏹'; mic.style.color = 'var(--gold)'; }
+    if (hint) hint.style.display = 'block';
+  };
+  rec.onresult = function (e) {
+    let finalText = '';
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalText += t;
+      else interim += t;
+    }
+    if (inp) inp.value = finalText || interim;
+    if (finalText) {
+      try { rec.stop(); } catch (e2) {}
+    }
+  };
+  rec.onerror = function (ev) {
+    _wlListening = false;
+    if (mic) { mic.textContent = '🎤'; mic.style.color = ''; }
+    if (hint) hint.style.display = 'none';
+    if (ev.error === 'not-allowed') showToast('请允许麦克风权限');
+    else if (ev.error !== 'aborted' && ev.error !== 'no-speech') showToast('语音识别失败，请改用文字');
+  };
+  rec.onend = function () {
+    _wlListening = false;
+    if (mic) { mic.textContent = '🎤'; mic.style.color = ''; }
+    if (hint) hint.style.display = 'none';
+    // 识别到内容则自动发送
+    if (inp && inp.value.trim()) {
+      setTimeout(function () { sendWatchAi(); }, 200);
+    }
+  };
+  _wlRec = rec;
+  try { rec.start(); } catch (e) { showToast('无法启动语音'); }
 }
 function _appendAiLog(role, text) {
   const log = document.getElementById('wlAiLog');
