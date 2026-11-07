@@ -1314,6 +1314,17 @@ body.landing-locked #freeBanner { display: none !important; }
     <div id="usPositionHint" style="display:none;margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5;"></div>
     <div id="usHintHistory" style="display:none;margin-top:8px;font-size:11px;line-height:1.5;color:var(--text-dim);"></div>
   </div>
+  <!-- 个股仓位建议：独立模块，失败不影响其他 -->
+  <div class="card" id="stockAdviceCard" style="margin-bottom:10px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;">
+      <div style="font-weight:700;color:var(--gold);">个股仓位建议</div>
+      <span id="stockAdviceSymbol" style="font-size:11px;color:var(--text-dim);"></span>
+    </div>
+    <div id="stockAdviceBody" style="font-size:12px;line-height:1.5;color:var(--text-dim);">
+      先在分析页选择一只股票，再回来查看仓位建议。
+    </div>
+    <div id="stockAdviceTimeline" style="margin-top:8px;max-height:160px;overflow-y:auto;font-size:11px;line-height:1.5;"></div>
+  </div>
   <div class="card" style="margin-bottom:10px;">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
       <div style="font-weight:700;color:var(--gold);">藤本茂阶梯参考</div>
@@ -4166,7 +4177,7 @@ function switchMainTab(tab) {
       else { wv.classList.add('hidden'); wv.style.display = 'none'; }
     }
     if (lv) {
-      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { if (typeof paintMarketSpreadNow === 'function') paintMarketSpreadNow(); } catch (eP) {} try { loadLadderTable(); } catch (eL) {} try { loadMarketSpread(false); } catch (eMs) {} }
+      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { if (typeof paintMarketSpreadNow === 'function') paintMarketSpreadNow(); } catch (eP) {} try { loadLadderTable(); } catch (eL) {} try { loadMarketSpread(false); } catch (eMs) {} try { loadStockAdvice(); } catch (eSA) {} }
       else { lv.classList.add('hidden'); lv.style.display = 'none'; }
     }
     if (tl) {
@@ -6845,6 +6856,55 @@ function _pickNewerSpread(a, b) {
   const live = (b.cache_layer === 'live' || b.cache_layer === 'memory' || b.cache_layer === 'supabase');
   return live ? b : a;
 }
+
+async function loadStockAdvice() {
+  // 独立模块：任何错误都不抛出
+  try {
+    const body = document.getElementById('stockAdviceBody');
+    const symEl = document.getElementById('stockAdviceSymbol');
+    const tl = document.getElementById('stockAdviceTimeline');
+    if (!body) return;
+    const sym = (typeof currentSymbol !== 'undefined' && currentSymbol) ? String(currentSymbol).toUpperCase() : '';
+    if (!sym) {
+      body.textContent = '先在分析页选择一只股票，再回来查看仓位建议。';
+      if (symEl) symEl.textContent = '';
+      if (tl) tl.innerHTML = '';
+      return;
+    }
+    if (symEl) symEl.textContent = sym;
+    body.textContent = '读取中…';
+    const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(sym));
+    const data = await res.json();
+    if (!data || !data.success) {
+      body.textContent = '暂无数据（不影响其他功能）';
+      return;
+    }
+    const c = data.current || {};
+    if (c.advice) {
+      body.innerHTML = '<b style="color:var(--gold);">' + c.advice + '</b>' +
+        (c.reason ? ' · ' + c.reason : '') +
+        (c.percentile != null ? '<br>拥挤度分位 ' + c.percentile + '% · ' + (c.level || '') + ' · ' + (c.speed || '') : '');
+    } else {
+      body.textContent = '当前无特别提醒。拥挤度' + (c.level || '正常') +
+        (c.percentile != null ? '（' + c.percentile + '%分位）' : '') + '。';
+    }
+    if (tl && Array.isArray(data.timeline) && data.timeline.length) {
+      tl.innerHTML = data.timeline.slice(0, 20).map(function (r) {
+        const d = (r.bar_date || r.date || '').slice(0, 10);
+        return '<div style="padding:3px 0;border-bottom:1px solid var(--border);">' +
+          d + ' · ' + (r.advice || '') + (r.reason ? ' · ' + r.reason : '') + '</div>';
+      }).join('');
+    } else if (tl) {
+      tl.innerHTML = '';
+    }
+  } catch (e) {
+    try {
+      const body = document.getElementById('stockAdviceBody');
+      if (body) body.textContent = '暂无数据';
+    } catch (e2) {}
+  }
+}
+
 async function loadMarketSpread(force) {
   const el = document.getElementById('cnSpreadBar');
   if (!el) return;

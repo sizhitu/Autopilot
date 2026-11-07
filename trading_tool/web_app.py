@@ -3099,3 +3099,160 @@ async def billing_webhook(request: Request):
         return {"received": True, "provider": "stripe", "type": etype}
 
     raise HTTPException(status_code=503, detail="未配置 Polar 或 Stripe Webhook")
+
+
+# ---------------------------------------------------------------------------
+#  个股仓位建议（拥挤度三维度，独立模块，失败不影响其他接口）
+# ---------------------------------------------------------------------------
+class StockAdviceRequest(BaseModel):
+    symbol: str = ""
+
+
+def _compute_crowding_from_df(df) -> dict:
+    """从行情 DataFrame 计算拥挤度三维度。失败返回空。"""
+    try:
+        if df is None or len(df) < 30:
+            return {}
+        close = df["close"].astype(float)
+        vol = df["volume"].astype(float) if "volume" in df.columns else None
+        if vol is None or vol.sum() <= 0:
+            return {}
+        # 近 20 日均成交量 vs 过去 1 年分位
+        win = 20
+        recent = vol.tail(win).mean()
+        hist = vol.tail(min(250, len(vol)))
+        pct = float((hist < recent).mean() * 100)
+        # 变化速度：近 20 日 vs 前 20 日
+        if len(vol) >= 40:
+            prev = vol.iloc[-40:-20].mean()
+            speed_chg = (recent - prev) / prev * 100 if prev > 0 else 0
+        else:
+            speed_chg = 0
+        # 价格变化
+        price_chg = (close.iloc[-1] / close.iloc[-20] - 1) * 100 if len(close) >= 20 else 0
+        # 维度判断
+        if pct >= 95:
+            level = "极端"
+        elif pct >= 80:
+            level = "高"
+        elif pct >= 60:
+            level = "偏高"
+        else:
+            level = "正常"
+        if speed_chg > 30:
+            speed = "快速上升"
+        elif speed_chg > 10:
+            speed = "上升"
+        elif speed_chg < -20:
+            speed = "下降"
+        else:
+            speed = "平稳"
+        # 背离
+        if price_chg > 5 and speed_chg < -10:
+            divergence = "价涨拥挤降"
+        elif price_chg < -5 and speed_chg > 15:
+            divergence = "价跌拥挤升"
+        elif price_chg > 8 and speed_chg > 25:
+            divergence = "价涨拥挤同步升"
+        else:
+            divergence = ""
+        # 建议
+        advice = ""
+        reason = ""
+        if level in ("高", "极端") and speed in ("快速上升", "上升"):
+            advice = "暂停加仓"
+            reason = f"拥挤度{level}（{pct:.0f}%分位）且{speed}"
+        elif level == "极端":
+            advice = "避免追涨"
+            reason = f"拥挤度极端（{pct:.0f}%分位）"
+        elif divergence == "价涨拥挤同步升":
+            advice = "仓位打7折"
+            reason = "价格与拥挤度同步快速上升"
+        elif divergence == "价跌拥挤升":
+            advice = "观察不追"
+            reason = "下跌中拥挤度仍在上升"
+        elif level == "正常" and speed == "下降" and price_chg < -5:
+            advice = "可考虑分批"
+            reason = "拥挤度回落且价格回调"
+        return {
+            "percentile": round(pct, 1),
+            "level": level,
+            "speed": speed,
+            "speed_chg": round(speed_chg, 1),
+            "divergence": divergence,
+            "price_chg": round(price_chg, 1),
+            "advice": advice,
+            "reason": reason,
+        }
+    except Exception:
+        return {}
+
+
+def _fetch_for_advice(symbol: str):
+    """多源兜底取行情。优先已有缓存，再 Yahoo，再 Stooq。"""
+    import cache as _cache
+    # 1) 已有 kline 缓存
+    try:
+        cached = _cache.get_kline(symbol)
+        if cached is not None and len(cached) >= 30:
+            return cached
+    except Exception:
+        pass
+    # 2) fetcher（内部已有 Yahoo/Stooq 等多源）
+    try:
+        df = fetcher.fetch(symbol, days=300)
+        if df is not None and len(df) >= 30:
+            return df
+    except Exception:
+        pass
+    # 3) 再试一次更短窗口
+    try:
+        df = fetcher.fetch(symbol, days=120)
+        if df is not None and len(df) >= 30:
+            return df
+    except Exception:
+        pass
+    return None
+
+
+@app.get("/api/position/stock-advice")
+async def stock_position_advice(symbol: str = "", authorization: Optional[str] = Header(None),
+                                request: Request = None):
+    """个股仓位建议。独立模块，任何失败都返回空结果而非报错。"""
+    try:
+        _rate_check(authorization, request, "stock_advice", 30, 60)
+    except Exception:
+        pass
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return {"success": False, "advice": None, "timeline": [], "error": "缺少代码"}
+    try:
+        df = await asyncio.to_thread(_fetch_for_advice, sym)
+        metrics = _compute_crowding_from_df(df) if df is not None else {}
+        # 有明确建议才写入时间轴
+        if metrics.get("advice"):
+            from datetime import date
+            import cache as _cache
+            row = {
+                "bar_date": date.today().isoformat(),
+                "level": metrics.get("level"),
+                "percentile": metrics.get("percentile"),
+                "speed": metrics.get("speed"),
+                "divergence": metrics.get("divergence"),
+                "advice": metrics.get("advice"),
+                "reason": metrics.get("reason"),
+            }
+            try:
+                _cache.append_position_advice(sym, row)
+            except Exception:
+                pass
+        import cache as _cache
+        timeline = _cache.get_position_advice(sym) or []
+        return {
+            "success": True,
+            "symbol": sym,
+            "current": metrics,
+            "timeline": timeline[:60],
+        }
+    except Exception as e:
+        return {"success": False, "advice": None, "timeline": [], "error": str(e)[:120]}

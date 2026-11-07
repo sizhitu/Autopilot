@@ -398,3 +398,73 @@ def append_action_log(symbol: str, row: dict) -> None:
     set_json(f"actionlog:{str(symbol).upper()}", {"rows": rows}, ACTION_LOG_TTL)
     # 持久化（不依赖缓存 TTL）
     _action_log_upsert_db(symbol, new_row)
+
+
+# ---------------------------------------------------------------------------
+#  个股仓位建议时间轴（拥挤度三维度触发）
+# ---------------------------------------------------------------------------
+POS_ADVICE_TTL = 400 * 86400
+
+def _pos_advice_from_db(symbol: str) -> list:
+    try:
+        import supabase_client
+        if not supabase_client.using_supabase():
+            return []
+        client = supabase_client.get_service_client()
+        rows = (client.table("position_advice_logs")
+                .select("symbol,bar_date,level,percentile,speed,divergence,advice,reason")
+                .eq("symbol", str(symbol or "").upper())
+                .order("bar_date", desc=True)
+                .limit(200).execute()).data or []
+        return rows
+    except Exception:
+        return []
+
+def get_position_advice(symbol: str) -> list:
+    key = f"posadvice:{str(symbol or '').upper()}"
+    raw = get_json(key)
+    if isinstance(raw, dict) and isinstance(raw.get("rows"), list) and raw["rows"]:
+        return raw["rows"]
+    db_rows = _pos_advice_from_db(symbol)
+    if db_rows:
+        try:
+            set_json(key, {"rows": db_rows}, POS_ADVICE_TTL)
+        except Exception:
+            pass
+        return db_rows
+    return []
+
+def append_position_advice(symbol: str, row: dict) -> None:
+    if not symbol or not isinstance(row, dict):
+        return
+    day = str(row.get("bar_date") or row.get("date") or "")[:10]
+    if not day or not row.get("advice"):
+        return
+    sym = str(symbol).upper()
+    existing = [r for r in (get_position_advice(sym) or []) if isinstance(r, dict)]
+    # 同一天覆盖
+    existing = [r for r in existing if str(r.get("bar_date") or r.get("date") or "")[:10] != day]
+    new_row = {
+        "symbol": sym,
+        "bar_date": day,
+        "level": row.get("level") or "",
+        "percentile": row.get("percentile"),
+        "speed": row.get("speed") or "",
+        "divergence": row.get("divergence") or "",
+        "advice": row.get("advice") or "",
+        "reason": row.get("reason") or "",
+    }
+    existing.insert(0, new_row)
+    existing = existing[:200]
+    try:
+        set_json(f"posadvice:{sym}", {"rows": existing}, POS_ADVICE_TTL)
+    except Exception:
+        pass
+    # 双写 Supabase
+    try:
+        import supabase_client
+        if supabase_client.using_supabase():
+            client = supabase_client.get_service_client()
+            client.table("position_advice_logs").upsert(new_row, on_conflict="symbol,bar_date").execute()
+    except Exception:
+        pass
