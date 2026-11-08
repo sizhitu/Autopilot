@@ -1296,7 +1296,10 @@ def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool
             cached_row["name"] = name
         cached_row["pending"] = False
         # 已是收盘后的最新交易日才直接返回。盘中同日快照在 force 时必须重拉。
-        if _bar_date_str(cached_row) and _row_is_official_close(cached_row, k):
+        # 缺少拥挤度字段时强制重算
+        if cached_row.get("crowding_pct") is None and cached_row.get("crowding_level") in (None, ""):
+            cached_row = None  # 强制重算
+        elif _bar_date_str(cached_row) and _row_is_official_close(cached_row, k):
             cached_row["data_source"] = "status_cache_fresh"
             try:
                 import cache as _cache

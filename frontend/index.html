@@ -5742,9 +5742,9 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 4px;font-size:11px;text-align:center;">${(function(){
         const lv = s.crowding_level || '';
         const pct = s.crowding_pct;
-        if (!lv && pct == null) return '<span style="color:var(--text-dim);">--</span>';
+        if (!lv && (pct == null || pct === '')) return '<span style="color:var(--text-dim);font-size:10px;">计算中</span>';
         const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
-        return '<span style="color:' + c + ';font-weight:600;">' + (lv || '') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '%</div>' : '');
+        return '<span style="color:' + c + ';font-weight:600;">' + (lv || '正常') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '%</div>' : '');
       })()}</td>
     </tr>`;
   }
@@ -6894,11 +6894,17 @@ async function loadCrowdingForAnalysis(sym) {
     badge.textContent = '读取中…';
     const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(sym));
     const data = await res.json();
-    if (!data || !data.success || !data.current) {
-      badge.textContent = '--';
+    if (!data || !data.success) {
+      badge.textContent = '暂无';
+      if (detail) detail.textContent = data && data.error ? data.error : '数据获取失败';
       return;
     }
-    const c = data.current;
+    const c = data.current || {};
+    if (!c.level && c.percentile == null) {
+      badge.textContent = '暂无';
+      if (detail) detail.textContent = '成交量数据不足，无法计算拥挤度';
+      return;
+    }
     const lv = c.level || '正常';
     const col = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
     badge.innerHTML = '<span style="color:' + col + ';font-weight:700;">' + lv + '</span>' +
@@ -6909,7 +6915,11 @@ async function loadCrowdingForAnalysis(sym) {
         (c.advice ? '建议：' + c.advice + '。' : '当前无特别提醒。');
     }
   } catch (e) {
-    try { document.getElementById('crowdingBadge').textContent = '--'; } catch (e2) {}
+    try {
+      document.getElementById('crowdingBadge').textContent = '暂无';
+      const d = document.getElementById('crowdingDetail');
+      if (d) d.textContent = '读取失败';
+    } catch (e2) {}
   }
 }
 

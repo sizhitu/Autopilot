@@ -3122,11 +3122,16 @@ class StockAdviceRequest(BaseModel):
 def _compute_crowding_from_df(df) -> dict:
     """从行情 DataFrame 计算拥挤度三维度。失败返回空。"""
     try:
-        if df is None or len(df) < 30:
+        if df is None or len(df) < 20:
             return {}
         close = df["close"].astype(float)
-        vol = df["volume"].astype(float) if "volume" in df.columns else None
+        vol = None
+        if "volume" in df.columns:
+            vol = df["volume"].astype(float)
+        # 成交量缺失时用价格波动做近似
         if vol is None or vol.sum() <= 0:
+            vol = close.pct_change().abs().fillna(0) * 1e6
+        if vol.sum() <= 0:
             return {}
         # 近 20 日均成交量 vs 过去 1 年分位
         win = 20
