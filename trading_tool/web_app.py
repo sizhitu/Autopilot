@@ -3242,8 +3242,19 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
     try:
         df = await asyncio.to_thread(_fetch_for_advice, sym)
         metrics = _compute_crowding_from_df(df) if df is not None else {}
-        # 有明确建议才写入时间轴
-        if metrics.get("advice"):
+        # 只在三个维度出现明确信号时才写入时间轴
+        should_log = False
+        trigger = ""
+        if metrics.get("percentile") is not None and metrics.get("percentile") >= 80:
+            should_log = True
+            trigger = "高分位"
+        if metrics.get("speed") in ("快速上升",) and metrics.get("speed_chg", 0) > 20:
+            should_log = True
+            trigger = trigger or "快速上升"
+        if metrics.get("divergence") in ("价涨拥挤降", "价跌拥挤升"):
+            should_log = True
+            trigger = trigger or "背离"
+        if should_log and metrics.get("advice"):
             from datetime import date
             import cache as _cache
             row = {
@@ -3254,6 +3265,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                 "divergence": metrics.get("divergence"),
                 "advice": metrics.get("advice"),
                 "reason": metrics.get("reason"),
+                "trigger": trigger,
             }
             try:
                 _cache.append_position_advice(sym, row)

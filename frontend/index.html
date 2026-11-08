@@ -1500,7 +1500,12 @@ body.landing-locked #freeBanner { display: none !important; }
         <span style="font-size:12px;font-weight:700;color:var(--gold);">拥挤度</span>
         <span id="crowdingBadge" style="font-size:11px;color:var(--text-dim);">--</span>
       </div>
-      <div id="crowdingDetail" style="font-size:11px;color:var(--text-dim);margin-top:4px;line-height:1.4;">近20日成交量历史分位。高位时避免追涨。</div>
+      <div id="crowdingDims" style="margin-top:6px;font-size:11px;line-height:1.5;">
+        <div id="dimA" style="color:var(--text-dim);">水平：--</div>
+        <div id="dimB" style="color:var(--text-dim);">速度：--</div>
+        <div id="dimC" style="color:var(--text-dim);">背离：--</div>
+      </div>
+      <div id="crowdingDetail" style="font-size:11px;color:var(--text-dim);margin-top:4px;line-height:1.4;">自身历史分位。高位时避免追涨。</div>
     </div>
     <!-- 三层一致性 -->
     
@@ -5553,6 +5558,12 @@ function renderWatchlistSummary(summary) {
 <b>斜率</b>用来判断中长期均线方向：升=年线仍在抬高，跌幅更可能是回撤；降=年线走弱，低位更可能是下跌中继。不是 PE/DCF 公允价。
 </p></div>
     <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股 — 分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF — 以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
+    <div class="hp-sec"><b>拥挤度</b><p>个股自身历史分位，不跨股比绝对值。<br>
+· <b>A股</b> — 近20日均成交量 vs 过去1年分位。≥95%极端，≥80%高，≥60%偏高。<br>
+· <b>美股</b> — Nasdaq/FINRA 空头半月报（约滞后7个工作日）。复合拥挤度 = (空头占流通/15%) × (回补天数/5)。≥2极端，≥1高，≥0.5偏高。<br>
+· <b>三维度</b> — 水平（自身历史分位）、变化速度（近20日 vs 前20日）、价格背离（价涨拥挤降或价跌拥挤升）。<br>
+· 只在高位+快速上升、极端、或明确背离时给出仓位提醒。次新/小流通盘空头占比天然易偏高，需结合锁定期和套利盘理解。<br>
+· 数据源：A股成交量（腾讯/东财），美股空头（Nasdaq/FINRA）。非实时，仅供研究参考。</p></div>
     <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板。<br>
 · <b>美股 / 美股 ETF</b> — Yahoo Finance、Nasdaq 官方历史接口、Stooq 等公开源，取最近可用交易日收盘价<br>
 · <b>A 股 / 场内基金</b> — 腾讯、东方财富、新浪等公开行情接口（前复权口径优先）<br>
@@ -5742,11 +5753,9 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 4px;font-size:11px;text-align:center;" title="${escapeAttr(s.crowding_source || '')}">${(function(){
         const lv = s.crowding_level || '';
         const pct = s.crowding_pct;
-        const src = s.crowding_source || '';
-        if (!lv && (pct == null || pct === '')) return '<span style="color:var(--text-dim);font-size:10px;">数据不足</span>';
+        if (!lv && (pct == null || pct === '')) return '<span style="color:var(--text-dim);font-size:10px;">--</span>';
         const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
-        let tip = src ? '<div style="font-size:9px;color:var(--text-dim);">' + src.split('（')[0] + '</div>' : '';
-        return '<span style="color:' + c + ';font-weight:600;">' + (lv || '正常') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '</div>' : '') + tip;
+        return '<span style="color:' + c + ';font-weight:600;">' + (lv || '正常') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '</div>' : '');
       })()}</td>
     </tr>`;
   }
@@ -6892,8 +6901,14 @@ async function loadCrowdingForAnalysis(sym) {
   try {
     const badge = document.getElementById('crowdingBadge');
     const detail = document.getElementById('crowdingDetail');
+    const dimA = document.getElementById('dimA');
+    const dimB = document.getElementById('dimB');
+    const dimC = document.getElementById('dimC');
     if (!badge) return;
     badge.textContent = '读取中…';
+    if (dimA) dimA.textContent = '水平：读取中…';
+    if (dimB) dimB.textContent = '速度：--';
+    if (dimC) dimC.textContent = '背离：--';
     const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(sym));
     const data = await res.json();
     if (!data || !data.success) {
@@ -6904,18 +6919,22 @@ async function loadCrowdingForAnalysis(sym) {
     const c = data.current || {};
     if (!c.level && c.percentile == null) {
       badge.textContent = '暂无';
-      if (detail) detail.textContent = '成交量数据不足，无法计算拥挤度';
+      if (detail) detail.textContent = '数据不足，无法计算拥挤度';
       return;
     }
     const lv = c.level || '正常';
     const col = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
     badge.innerHTML = '<span style="color:' + col + ';font-weight:700;">' + lv + '</span>' +
       (c.percentile != null ? ' · ' + c.percentile + '%分位' : '');
+    if (dimA) dimA.textContent = '水平：' + (c.percentile != null ? c.percentile + '%分位（自身历史）' : '--');
+    if (dimB) dimB.textContent = '速度：' + (c.speed || '--') + (c.speed_chg != null ? '（' + (c.speed_chg > 0 ? '+' : '') + c.speed_chg + '%）' : '');
+    if (dimC) dimC.textContent = '背离：' + (c.divergence || '无');
     if (detail) {
-      detail.textContent = (c.speed ? '变化：' + c.speed + '。' : '') +
-        (c.divergence ? c.divergence + '。' : '') +
-        (c.advice ? '建议：' + c.advice + '。' : '当前无特别提醒。');
+      detail.textContent = (c.advice ? '建议：' + c.advice + '。' : '当前无特别提醒。') +
+        (c.reason ? c.reason : '');
     }
+    // 同时更新仓位页（如果已打开）
+    try { if (typeof loadStockAdvice === 'function') loadStockAdvice(); } catch (eL) {}
   } catch (e) {
     try {
       document.getElementById('crowdingBadge').textContent = '暂无';
@@ -6944,13 +6963,17 @@ async function loadStockAdvice() {
       return;
     }
     const c = data.current || {};
+    let dims = '';
+    if (c.percentile != null) dims += '水平 ' + c.percentile + '%分位';
+    if (c.speed) dims += (dims ? ' · ' : '') + '速度 ' + c.speed;
+    if (c.divergence) dims += (dims ? ' · ' : '') + '背离 ' + c.divergence;
     if (c.advice) {
       body.innerHTML = '<b style="color:var(--gold);">' + c.advice + '</b>' +
         (c.reason ? ' · ' + c.reason : '') +
-        (c.percentile != null ? '<br>拥挤度分位 ' + c.percentile + '% · ' + (c.level || '') + ' · ' + (c.speed || '') : '');
+        (dims ? '<br><span style="font-size:11px;color:var(--text-dim);">' + dims + '</span>' : '');
     } else {
-      body.textContent = '当前无特别提醒。拥挤度' + (c.level || '正常') +
-        (c.percentile != null ? '（' + c.percentile + '%分位）' : '') + '。';
+      body.innerHTML = '当前无特别提醒。' +
+        (dims ? '<br><span style="font-size:11px;color:var(--text-dim);">' + dims + '</span>' : '拥挤度' + (c.level || '正常') + '。');
     }
     if (tl && Array.isArray(data.timeline) && data.timeline.length) {
       tl.innerHTML = data.timeline.slice(0, 20).map(function (r) {
