@@ -554,7 +554,9 @@ def _fetch_finra_short_interest(code: str) -> dict:
             avg_raw = row.get("averageDailyVolumeQuantity")
             avg_volume = float(avg_raw) if avg_raw not in (None, "") else None
             days_raw = row.get("daysToCoverQuantity")
-            days = float(days_raw) if days_raw not in (None, "") else (shares / avg_volume if avg_volume and avg_volume > 0 else None)
+            days = (shares / avg_volume) if avg_volume and avg_volume > 0 else (
+                float(days_raw) if days_raw not in (None, "") else None
+            )
             history.append({
                 "date": settlement,
                 "short_interest": shares,
