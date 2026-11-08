@@ -6917,7 +6917,7 @@ async function loadCrowdingForAnalysis(sym) {
       return;
     }
     const c = data.current || {};
-    if (!c.level && c.percentile == null) {
+    if (!c.level && c.percentile == null && !c.short_pct_float && !c.days_to_cover) {
       badge.textContent = '暂无';
       if (detail) detail.textContent = '数据不足，无法计算拥挤度';
       return;
