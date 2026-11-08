@@ -7022,6 +7022,10 @@ async function loadStockAdvice(requestedSymbol) {
   }
 }
 
+// Expose the position-module functions to the main analysis script.
+window.loadCrowdingForAnalysis = loadCrowdingForAnalysis;
+window.loadStockAdvice = loadStockAdvice;
+
 async function loadMarketSpread(force) {
   const el = document.getElementById('cnSpreadBar');
   if (!el) return;
