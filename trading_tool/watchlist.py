@@ -373,6 +373,7 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 _SHORT_CACHE = {}
 _SHORT_TTL = 3600 * 12  # 12 小时，半月数据不需要频繁拉
 
+
 def _get_cached_short(code: str) -> dict:
     import time
     hit = _SHORT_CACHE.get(code.upper())
@@ -382,76 +383,187 @@ def _get_cached_short(code: str) -> dict:
     _SHORT_CACHE[code.upper()] = {"ts": time.time(), "data": data}
     return data
 
+
+def _fetch_ortex_official_short_interest(code: str, api_key: str) -> dict:
+    """读取 ORTEX 按交易所/监管机构发布的官方半月度空头持仓，不使用日度估算值。"""
+    import requests
+    from datetime import date, timedelta
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=550)  # 约覆盖一年、最多 24 个半月报告
+    url = f"https://api.ortex.com/api/v11/stock/US/{code}/short/official_short_interest/"
+    params = {
+        "from_date": start_date.isoformat(),
+        "to_date": end_date.isoformat(),
+        "page": 1,
+        "page_size": 100,
+        "split_adjusted": "true",
+    }
+    headers = {"Ortex-Api-Key": api_key, "Accept": "application/json"}
+    response = requests.get(url, params=params, headers=headers, timeout=15)
+    if response.status_code != 200:
+        return {
+            "status": "provider_error",
+            "source": "ORTEX Official Short Interest",
+            "message": f"ORTEX 官方空头数据接口返回 HTTP {response.status_code}；请检查 API 权限或额度。",
+        }
+
+    payload = response.json() or {}
+    rows = payload.get("data") or []
+    if isinstance(rows, dict):
+        rows = rows.get("results") or rows.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        meta = payload.get("meta") or {}
+        return {
+            "status": "no_records",
+            "source": "ORTEX Official Short Interest",
+            "message": str(meta.get("emptyReason") or "ORTEX 未返回该证券的官方空头报告。"),
+        }
+
+    history = []
+    for row in rows:
+        try:
+            settlement = str(row.get("settlementDate") or "")[:10]
+            shares = float(row.get("officialSiShares") or 0)
+            if not settlement or shares <= 0:
+                continue
+            avg_volume = float(row.get("officialAvgDailyVolume") or 0)
+            days = row.get("officialDaysToCover")
+            days = float(days) if days not in (None, "") else (shares / avg_volume if avg_volume > 0 else 0)
+            history.append({
+                "date": settlement,
+                "published_date": str(row.get("publishedDate") or "")[:10] or None,
+                "short_interest": shares,
+                "avg_volume": avg_volume or None,
+                "days_to_cover": round(days, 2) if days > 0 else None,
+            })
+        except (TypeError, ValueError):
+            continue
+
+    # 去重并按结算日升序，供行为矩阵按相邻报告期计算。
+    by_date = {row["date"]: row for row in history}
+    history = sorted(by_date.values(), key=lambda row: row["date"])
+    if not history:
+        return {
+            "status": "no_records",
+            "source": "ORTEX Official Short Interest",
+            "message": "接口已响应，但没有可用的官方空头持仓记录。",
+        }
+
+    latest = history[-1]
+    return {
+        "status": "ok",
+        "short_interest": latest["short_interest"],
+        "avg_volume": latest.get("avg_volume"),
+        "days_to_cover": latest.get("days_to_cover"),
+        "short_pct_float": None,  # 官方持仓接口不提供流通股比例时不推算
+        "composite": None,        # 缺少流通股比例，不伪造复合评分
+        "settlement_date": latest["date"],
+        "published_date": latest.get("published_date"),
+        "history": history[-24:],
+        "source": "ORTEX 官方交易所空头报告",
+    }
+
+
 def _fetch_us_short_interest(code: str) -> dict:
-    """从 Nasdaq 取美股空头数据（FINRA 半月报，约滞后一周）。失败返回空。"""
+    """先取 Nasdaq 个股报告；无记录时可选用 ORTEX 跨交易所官方报告。"""
+    import os
+    import requests
+
+    code = str(code or "").strip().upper()
+    if not code:
+        return {"status": "invalid_symbol", "message": "股票代码为空。"}
+
     try:
-        import requests
         url = f"https://api.nasdaq.com/api/quote/{code}/short-interest?assetclass=stocks"
         headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-        r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code != 200:
-            return {}
-        d = r.json()
-        rows = d.get("data", {}).get("shortInterestTable", {}).get("rows", [])
-        if not rows:
-            return {}
-        latest = rows[0]
-        def _num(x):
-            return float(str(x).replace(",", "").replace("$", "").strip() or 0)
-        interest = _num(latest.get("interest"))
-        avg_vol = _num(latest.get("avgDailyShareVolume"))
-        days = float(latest.get("daysToCover") or 0)
-        date = latest.get("settlementDate") or ""
-        # 尝试从 summary 拿流通股近似（用市值/现价）
-        float_shares = None
-        try:
-            s = requests.get(f"https://api.nasdaq.com/api/quote/{code}/summary?assetclass=stocks",
-                             headers=headers, timeout=8).json()
-            mcap = s.get("data", {}).get("summaryData", {}).get("MarketCap", {}).get("value")
-            prev = s.get("data", {}).get("summaryData", {}).get("PreviousClose", {}).get("value")
-            if mcap and prev:
-                mcap_n = _num(mcap)
-                prev_n = _num(prev)
-                if prev_n > 0:
-                    float_shares = mcap_n / prev_n  # 近似总股本，非严格流通股
-        except Exception:
-            pass
-        short_pct = None
-        if float_shares and float_shares > 0 and interest > 0:
-            short_pct = interest / float_shares * 100
-        # 复合拥挤度
-        composite = None
-        if short_pct is not None and days > 0:
-            composite = (short_pct / 15.0) * (days / 5.0)
-        history = []
-        for row in rows:
-            try:
-                h_interest = _num(row.get("interest"))
-                h_days = float(row.get("daysToCover") or 0)
-                h_date = str(row.get("settlementDate") or "")
-                if h_interest <= 0 or not h_date:
-                    continue
-                history.append({
-                    "date": h_date,
-                    "short_interest": h_interest,
-                    "days_to_cover": round(h_days, 2) if h_days > 0 else None,
-                })
-            except Exception:
-                continue
-        history.sort(key=lambda x: x["date"], reverse=True)
-        return {
-            "short_interest": interest,
-            "avg_volume": avg_vol,
-            "days_to_cover": round(days, 2),
-            "short_pct_float": round(short_pct, 1) if short_pct else None,
-            "composite": round(composite, 2) if composite else None,
-            "settlement_date": date,
-            "history": history[:12],
-            "source": "Nasdaq/FINRA",
-        }
-    except Exception:
-        return {}
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            payload = response.json() or {}
+            rows = payload.get("data", {}).get("shortInterestTable", {}).get("rows", []) or []
+            if rows:
+                latest = rows[0]
 
+                def _num(value):
+                    return float(str(value).replace(",", "").replace("$", "").strip() or 0)
+
+                interest = _num(latest.get("interest"))
+                avg_volume = _num(latest.get("avgDailyShareVolume"))
+                days = _num(latest.get("daysToCover"))
+                settlement = str(latest.get("settlementDate") or "")[:10]
+
+                # 市值/前收盘价只能近似总股本，保留旧字段但不称为严格流通股。
+                float_shares = None
+                try:
+                    summary = requests.get(
+                        f"https://api.nasdaq.com/api/quote/{code}/summary?assetclass=stocks",
+                        headers=headers, timeout=8
+                    ).json()
+                    summary_data = summary.get("data", {}).get("summaryData", {})
+                    market_cap = summary_data.get("MarketCap", {}).get("value")
+                    previous_close = summary_data.get("PreviousClose", {}).get("value")
+                    if market_cap and previous_close:
+                        cap_value, close_value = _num(market_cap), _num(previous_close)
+                        if close_value > 0:
+                            float_shares = cap_value / close_value
+                except Exception:
+                    pass
+
+                short_pct = interest / float_shares * 100 if float_shares and interest > 0 else None
+                composite = (short_pct / 15.0) * (days / 5.0) if short_pct is not None and days > 0 else None
+                history = []
+                for row in rows:
+                    try:
+                        shares = _num(row.get("interest"))
+                        report_date = str(row.get("settlementDate") or "")[:10]
+                        if shares > 0 and report_date:
+                            history.append({
+                                "date": report_date,
+                                "short_interest": shares,
+                                "days_to_cover": round(_num(row.get("daysToCover")), 2) or None,
+                            })
+                    except (TypeError, ValueError):
+                        continue
+                history = sorted({item["date"]: item for item in history}.values(), key=lambda item: item["date"])
+                return {
+                    "status": "ok",
+                    "short_interest": interest,
+                    "avg_volume": avg_volume,
+                    "days_to_cover": round(days, 2) if days > 0 else None,
+                    "short_pct_float": round(short_pct, 1) if short_pct else None,
+                    "composite": round(composite, 2) if composite else None,
+                    "settlement_date": settlement,
+                    "history": history[-24:],
+                    "source": "Nasdaq 官方空头报告",
+                }
+
+        # Nasdaq 个股页面只覆盖 Nasdaq-listed securities；NYSE 等交易所需独立官方数据源。
+        api_key = os.getenv("ORTEX_API_KEY", "").strip()
+        if api_key:
+            try:
+                return _fetch_ortex_official_short_interest(code, api_key)
+            except Exception as exc:
+                return {
+                    "status": "provider_error",
+                    "source": "ORTEX Official Short Interest",
+                    "message": f"ORTEX 官方空头数据请求失败：{type(exc).__name__}。请检查网络、API Key 和权限。",
+                }
+
+        return {
+            "status": "provider_required",
+            "source": "Nasdaq",
+            "message": (
+                "Nasdaq 个股接口没有返回记录，且该接口仅覆盖 Nasdaq 上市证券。"
+                "NYSE 等交易所的官方半月度空头持仓需要 NYSE Group 授权数据，"
+                "或配置 ORTEX_API_KEY 接入跨交易所官方报告；当前未用日度卖空成交量替代。"
+            ),
+        }
+    except Exception as exc:
+        return {
+            "status": "source_error",
+            "source": "Nasdaq",
+            "message": f"空头持仓数据源请求失败：{type(exc).__name__}。",
+        }
 
 def _fetch_volume_only(code: str) -> "pd.Series | None":
     """专门取成交量。美股走 Stooq，A股走腾讯。失败返回 None。"""
