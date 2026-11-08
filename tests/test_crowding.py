@@ -13,11 +13,11 @@ def test_us_short_interest():
         si = _fetch_us_short_interest(code)
         assert isinstance(si, dict), f"{code} 应返回 dict"
         # Nasdaq 上市股应有 days_to_cover
-        if si:
+        if si.get("status") == "ok":
             assert "days_to_cover" in si or "composite" in si, f"{code} 缺少关键字段: {si}"
             print(f"  {code}: composite={si.get('composite')} days={si.get('days_to_cover')}")
         else:
-            print(f"  {code}: 空（非 Nasdaq 或接口无数据）")
+            print(f"  {code}: {si.get('status')} - {si.get('message', '')}")
 
 
 def test_non_nasdaq_fallback(monkeypatch):
