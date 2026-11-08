@@ -72,7 +72,7 @@ if __name__ == "__main__":
     print("=== test_us_short_interest ===")
     test_us_short_interest()
     print("=== test_non_nasdaq_fallback ===")
-    test_non_nasdaq_fallback()
+    test_nyse_stock_does_not_fall_back_to_nasdaq_or_finra()
     print("=== test_compute_crowding_volume ===")
     test_compute_crowding_volume()
     print("=== test_stock_advice_endpoint_logic ===")
