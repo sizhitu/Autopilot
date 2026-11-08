@@ -397,8 +397,6 @@ def _fetch_ortex_official_short_interest(code: str, api_key: str, namespace: str
         "from_date": start_date.isoformat(),
         "to_date": end_date.isoformat(),
         "split_adjusted": "true",
-        "page": 1,
-        "page_size": 50,
     }
     headers = {"Ortex-Api-Key": api_key, "Accept": "application/json"}
     response = requests.get(url, params=params, headers=headers, timeout=20)
