@@ -65,7 +65,7 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 
 - **后端 · Backend**：Python 3.11 · FastAPI · uvicorn · pandas / numpy
 - **前端 · Frontend**：原生 HTML/CSS/JS · Canvas 绘图（无第三方框架）
-- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（现价与 Nasdaq 上市股票空头报告）· ORTEX 官方空头报告（可选，需 ORTEX_API_KEY）
+- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（现价与 Nasdaq 上市股票空头报告）· FINRA Consolidated Short Interest（免费跨交易所官方空头持仓）
 - **美股源探测**：`docs/us_market_data.md` · `python3 trading_tool/probe_us_sources.py`
 - **部署 · Deploy**：Docker · docker-compose · 预览看门狗（自愈重启）
 
@@ -74,10 +74,11 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 
 ### 美股官方空头持仓 · US Official Short Interest
 
-- Nasdaq 个股接口仅覆盖 Nasdaq 上市证券；NYSE Group 的完整半月度历史报告属于授权数据产品。
-- 如需覆盖 NYSE 等交易所，在部署环境设置 `ORTEX_API_KEY`。系统调用 ORTEX 的 **Official Short Interest** 接口，读取交易所/监管机构公布的半月度持仓，并保留结算日与发布日期。
-- 未配置 Key 或接口无权限时，页面会说明数据源覆盖限制；不会用 daily short-sale volume（每日卖空成交量）冒充 short interest（空头持仓）。
-- `ORTEX_API_KEY` 应仅配置在服务端环境变量中，不要提交到代码仓库或前端。
+- Nasdaq 个股接口优先提供 Nasdaq 上市证券的半月度官方空头报告。
+- Nasdaq 无记录时，系统回退到 FINRA **Consolidated Short Interest** 免费公开接口，覆盖 Nasdaq、NYSE 等美国交易市场，按股票代码查询半月度官方申报持仓，并保留结算日、空头数量、平均日成交量与 Days to Cover。
+- FINRA 数据不提供流通股比例时，不会臆造 short % float 或复合拥挤度分数；历史行为矩阵仍可基于空头持仓与同期股价变化计算。
+- FINRA 数据接口：`POST https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest`。请求使用 `symbolCode` 精确过滤，避免下载全市场数据。
+- 不会用 daily short-sale volume（每日卖空成交量）冒充 short interest（空头持仓）。
 
 ## 快速开始 · Quick Start
 
