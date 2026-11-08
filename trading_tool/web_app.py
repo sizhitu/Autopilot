@@ -3264,6 +3264,42 @@ def _compute_crowding_from_df(df) -> dict:
         return {}
 
 
+def _build_volume_crowding_history(df, limit: int = 60) -> list:
+    """生成日频成交量拥挤度历史序列，口径与当前值一致。"""
+    try:
+        if df is None or len(df) < 20 or "volume" not in df.columns or "close" not in df.columns:
+            return []
+        work = df.copy()
+        vol = pd.to_numeric(work["volume"], errors="coerce")
+        close = pd.to_numeric(work["close"], errors="coerce")
+        dates = pd.to_datetime(work["date"], errors="coerce") if "date" in work.columns else pd.to_datetime(work.index, errors="coerce")
+        rows = []
+        for i in range(19, len(work)):
+            recent = vol.iloc[i-19:i+1].dropna()
+            hist = vol.iloc[max(0, i-249):i+1].dropna()
+            px = close.iloc[i]
+            if len(recent) < 20 or len(hist) < 20 or not pd.notna(px) or px <= 0:
+                continue
+            avg20 = float(recent.mean())
+            if not np.isfinite(avg20) or avg20 <= 0:
+                continue
+            pct = float((hist < avg20).mean() * 100)
+            d = dates.iloc[i]
+            if pd.isna(d):
+                continue
+            rows.append({
+                "date": d.strftime("%Y-%m-%d"),
+                "percentile": round(pct, 1),
+                "level": "极端" if pct >= 95 else "高" if pct >= 80 else "偏高" if pct >= 60 else "正常",
+                "avg_volume_20": round(avg20, 2),
+                "volume": round(float(vol.iloc[i]), 2) if pd.notna(vol.iloc[i]) else None,
+                "close": round(float(px), 4),
+            })
+        return rows[-max(2, min(int(limit), 120)):]
+    except Exception:
+        return []
+
+
 def _fetch_for_advice(symbol: str):
     """多源兜底取行情。优先已有缓存，再 Yahoo，再 Stooq。"""
     import cache as _cache
@@ -3407,6 +3443,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                     bar_date = ""
             if metrics:
                 metrics.update({"score": None, "metric_type": "volume_percentile", "source": "日线成交量", "as_of": bar_date or None})
+                metrics["volume_history"] = _build_volume_crowding_history(df, limit=60)
         if short_interest_note:
             metrics["short_interest_status"] = "unavailable"
             metrics["short_interest_note"] = short_interest_note
