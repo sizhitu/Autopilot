@@ -35,8 +35,20 @@ def test_non_nasdaq_fallback(monkeypatch):
         def json(self):
             return []
 
+    monkeypatch.setenv("FINRA_API_CLIENT_ID", "test-client")
+    monkeypatch.setenv("FINRA_API_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(watchlist, "_FINRA_TOKEN_CACHE", {"token": None, "expires_at": 0})
     monkeypatch.setattr(requests, "get", lambda *a, **k: EmptyResponse())
-    monkeypatch.setattr(requests, "post", lambda *a, **k: FinraEmptyResponse())
+
+    def fake_post(url, **kwargs):
+        if "access_token" in url:
+            return type("TokenResponse", (), {
+                "status_code": 200,
+                "json": lambda self: {"access_token": "test-token", "expires_in": 3600},
+            })()
+        return FinraEmptyResponse()
+
+    monkeypatch.setattr(requests, "post", fake_post)
     si = watchlist._fetch_us_short_interest("BE")
     assert si["status"] == "no_records"
     assert si["source"] == "FINRA Consolidated Short Interest"
@@ -151,8 +163,18 @@ def test_finra_consolidated_short_interest_parsing(monkeypatch):
             ]
 
     captured = {}
-    def fake_post(url, json, headers, timeout):
-        captured.update({"url": url, "body": json, "headers": headers})
+    monkeypatch.setenv("FINRA_API_CLIENT_ID", "test-client")
+    monkeypatch.setenv("FINRA_API_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(watchlist, "_FINRA_TOKEN_CACHE", {"token": None, "expires_at": 0})
+
+    def fake_post(url, **kwargs):
+        if "access_token" in url:
+            captured["auth"] = kwargs.get("auth")
+            return type("TokenResponse", (), {
+                "status_code": 200,
+                "json": lambda self: {"access_token": "test-token", "expires_in": 3600},
+            })()
+        captured.update({"url": url, "body": kwargs.get("json"), "headers": kwargs.get("headers")})
         return Response()
 
     monkeypatch.setattr(requests, "post", fake_post)
@@ -162,5 +184,7 @@ def test_finra_consolidated_short_interest_parsing(monkeypatch):
     assert result["days_to_cover"] == 4.0
     assert result["composite"] is None
     assert [row["date"] for row in result["history"]] == ["2026-10-15", "2026-10-30"]
+    assert captured["auth"] == ("test-client", "test-secret")
+    assert captured["headers"]["Authorization"] == "Bearer test-token"
     assert captured["body"]["compareFilters"][0]["fieldName"] == "symbolCode"
     assert captured["body"]["compareFilters"][0]["fieldValue"] == "BE"
