@@ -3240,8 +3240,29 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
     if not sym:
         return {"success": False, "advice": None, "timeline": [], "error": "缺少代码"}
     try:
-        df = await asyncio.to_thread(_fetch_for_advice, sym)
-        metrics = _compute_crowding_from_df(df) if df is not None else {}
+        is_us = not (sym.isdigit() or sym.startswith(("SH", "SZ", "BJ")))
+        if is_us:
+            # 美股走空头数据
+            from watchlist import _get_cached_short
+            si = _get_cached_short(sym)
+            if si:
+                metrics = {
+                    "percentile": si.get("composite"),
+                    "level": "极端" if (si.get("composite") or 0) >= 2 else ("高" if (si.get("composite") or 0) >= 1 else ("偏高" if (si.get("composite") or 0) >= 0.5 else "正常")),
+                    "speed": f"空头{si.get('short_pct_float') or '--'}%",
+                    "speed_chg": None,
+                    "divergence": "",
+                    "price_chg": None,
+                    "advice": "",
+                    "reason": si.get("source") or "",
+                    "short_pct_float": si.get("short_pct_float"),
+                    "days_to_cover": si.get("days_to_cover"),
+                }
+            else:
+                metrics = {}
+        else:
+            df = await asyncio.to_thread(_fetch_for_advice, sym)
+            metrics = _compute_crowding_from_df(df) if df is not None else {}
         # 只在三个维度出现明确信号时才写入时间轴
         should_log = False
         trigger = ""

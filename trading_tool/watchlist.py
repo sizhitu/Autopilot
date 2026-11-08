@@ -1830,7 +1830,10 @@ def _fill_crowding_if_missing(stocks: list) -> list:
         if not isinstance(s, dict):
             out.append(s)
             continue
-        if s.get("crowding_level") or s.get("crowding_pct") is not None:
+        # 已有有效拥挤度则跳过；空字符串或 None 才补算
+        lv = s.get("crowding_level") or ""
+        pct = s.get("crowding_pct")
+        if lv and pct is not None and pct != 0:
             out.append(s)
             continue
         code = str(s.get("code") or "").strip().upper()
