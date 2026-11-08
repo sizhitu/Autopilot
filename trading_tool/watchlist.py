@@ -373,48 +373,6 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 _SHORT_CACHE = {}
 _SHORT_TTL = 3600 * 12  # 12 小时，半月数据不需要频繁拉
 
-_FINRA_TOKEN_CACHE = {"token": None, "expires_at": 0}
-
-
-def _get_finra_access_token() -> str | None:
-    """使用免费 Public Credential 获取 FINRA OAuth access token，进程内缓存。"""
-    import os
-    import time
-    import requests
-
-    cached = _FINRA_TOKEN_CACHE
-    if cached.get("token") and time.time() < cached.get("expires_at", 0):
-        return cached["token"]
-
-    client_id = os.getenv("FINRA_API_CLIENT_ID", "").strip()
-    client_secret = os.getenv("FINRA_API_CLIENT_SECRET", "").strip()
-    if not client_id or not client_secret:
-        return None
-
-    url = "https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token?grant_type=client_credentials"
-    response = requests.post(url, auth=(client_id, client_secret), timeout=15)
-    if response.status_code != 200:
-        raise RuntimeError(f"FINRA OAuth token endpoint returned HTTP {response.status_code}")
-
-    payload = response.json() or {}
-    token = payload.get("access_token")
-    if not token:
-        raise RuntimeError("FINRA OAuth response did not contain access_token")
-
-    try:
-        expires_in = int(payload.get("expires_in") or 1800)
-    except (TypeError, ValueError):
-        expires_in = 1800
-    cache_seconds = max(60, min(expires_in - 60, 1800))
-    _FINRA_TOKEN_CACHE.update({
-        "token": token,
-        "expires_at": time.time() + cache_seconds,
-    })
-    return token
-
-
-
-
 def _get_cached_short(code: str) -> dict:
     import time
     hit = _SHORT_CACHE.get(code.upper())
@@ -425,114 +383,8 @@ def _get_cached_short(code: str) -> dict:
     return data
 
 
-def _fetch_finra_consolidated_short_interest(code: str) -> dict:
-    """读取 FINRA 免费 Consolidated Short Interest：跨交易所、半月度官方申报数据。"""
-    import requests
-
-    code = str(code or "").strip().upper()
-    if not code:
-        return {"status": "invalid_symbol", "message": "股票代码为空。"}
-
-    token = _get_finra_access_token()
-    if not token:
-        return {
-            "status": "credential_required",
-            "source": "FINRA Consolidated Short Interest",
-            "message": "FINRA 免费 Public Credential 尚未配置。请在服务端设置 FINRA_API_CLIENT_ID 和 FINRA_API_CLIENT_SECRET。",
-        }
-
-    url = "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-        "User-Agent": "Autopilot research app",
-    }
-    body = {
-        "compareFilters": [{
-            "compareType": "EQUAL",
-            "fieldName": "symbolCode",
-            "fieldValue": code,
-        }],
-        "limit": 5000,
-    }
-    response = requests.post(url, json=body, headers=headers, timeout=20)
-    if response.status_code == 204:
-        rows = []
-    elif response.status_code != 200:
-        return {
-            "status": "provider_error",
-            "source": "FINRA Consolidated Short Interest",
-            "message": f"FINRA 空头持仓接口返回 HTTP {response.status_code}。",
-        }
-    else:
-        payload = response.json()
-        rows = payload if isinstance(payload, list) else (
-            payload.get("data") or payload.get("results") or []
-            if isinstance(payload, dict) else []
-        )
-
-    history = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        try:
-            settlement = str(row.get("settlementDate") or "")[:10]
-            shares_raw = row.get("currentShortPositionQuantity")
-            if not settlement or shares_raw in (None, ""):
-                continue
-            shares = float(shares_raw)
-            if shares <= 0:
-                continue
-            avg_volume_raw = row.get("averageDailyVolumeQuantity")
-            avg_volume = float(avg_volume_raw) if avg_volume_raw not in (None, "") else None
-            days_raw = row.get("daysToCoverQuantity")
-            days = float(days_raw) if days_raw not in (None, "") else (
-                shares / avg_volume if avg_volume and avg_volume > 0 else None
-            )
-            history.append({
-                "date": settlement,
-                "short_interest": shares,
-                "previous_short_interest": (
-                    float(row["previousShortPositionQuantity"])
-                    if row.get("previousShortPositionQuantity") not in (None, "") else None
-                ),
-                "avg_volume": avg_volume,
-                "days_to_cover": round(days, 2) if days is not None and days > 0 else None,
-                "change_pct": (
-                    float(row["changePercent"])
-                    if row.get("changePercent") not in (None, "") else None
-                ),
-                "market_class": row.get("marketClassCode"),
-            })
-        except (TypeError, ValueError):
-            continue
-
-    by_date = {row["date"]: row for row in history}
-    history = sorted(by_date.values(), key=lambda row: row["date"])
-    if not history:
-        return {
-            "status": "no_records",
-            "source": "FINRA Consolidated Short Interest",
-            "message": f"FINRA 合并空头持仓数据中没有找到 {code} 的记录。",
-        }
-
-    latest = history[-1]
-    return {
-        "status": "ok",
-        "short_interest": latest["short_interest"],
-        "avg_volume": latest.get("avg_volume"),
-        "days_to_cover": latest.get("days_to_cover"),
-        "short_pct_float": None,
-        "composite": None,
-        "settlement_date": latest["date"],
-        "history": history[-24:],
-        "source": "FINRA 官方合并空头持仓",
-    }
-
-
 def _fetch_us_short_interest(code: str) -> dict:
-    """先取 Nasdaq 个股报告；无记录时回退 FINRA 跨交易所官方合并报告。"""
+    """读取 Nasdaq 上市证券官方半月度空头报告；不把 OTC 数据冒充 NYSE 数据。"""
     import requests
 
     code = str(code or "").strip().upper()
@@ -605,21 +457,16 @@ def _fetch_us_short_interest(code: str) -> dict:
                     "source": "Nasdaq 官方空头报告",
                 }
 
-        # Nasdaq 无记录时，回退到 FINRA 免费跨交易所官方合并空头持仓。
-        try:
-            finra = _fetch_finra_consolidated_short_interest(code)
-            if finra.get("status") == "ok":
-                return finra
-            return {
-                **finra,
-                "message": finra.get("message") or "FINRA 暂无该证券的官方空头持仓记录。",
-            }
-        except Exception as exc:
-            return {
-                "status": "provider_error",
-                "source": "FINRA Consolidated Short Interest",
-                "message": f"FINRA 官方空头持仓请求失败：{type(exc).__name__}。",
-            }
+        # Nasdaq 无记录时不将 FINRA OTC 数据误当作 NYSE/Nasdaq 上市股持仓。
+        return {
+            "status": "provider_required",
+            "source": "Nasdaq",
+            "message": (
+                "Nasdaq 个股接口未返回记录。FINRA 的 consolidatedShortInterest API "
+                "仅提供 OTC 空头持仓，不覆盖此处需要的 NYSE 上市证券；"
+                "目前没有验证通过的免费官方 NYSE 个股历史接口。"
+            ),
+        }
     except Exception as exc:
         return {
             "status": "source_error",
