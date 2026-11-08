@@ -163,8 +163,6 @@ def test_finra_consolidated_short_interest(monkeypatch):
 def test_exchange_aware_routing_without_paid_provider(monkeypatch):
     """Nasdaq 走 Nasdaq；NYSE/AMEX 不跨源；未知代码只查 FINRA OTC。"""
     import watchlist
-
-    monkeypatch.delenv("ORTEX_API_KEY", raising=False)
     monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NASDAQ")
     monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest", lambda code: {
         "status": "ok", "short_interest": 123, "days_to_cover": 2.0,
