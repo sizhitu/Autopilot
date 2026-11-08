@@ -6980,7 +6980,8 @@ async function loadStockAdvice(requestedSymbol) {
     }
     const c = data.current || {};
     let dims = '';
-    if (c.percentile != null) dims += '水平 ' + c.percentile + '%分位';
+    if (c.metric_type === 'short_composite_score' && c.score != null) dims += '复合评分 ' + c.score;
+    else if (c.percentile != null) dims += '水平 ' + c.percentile + '%分位';
     if (c.speed) dims += (dims ? ' · ' : '') + '速度 ' + c.speed;
     if (c.divergence) dims += (dims ? ' · ' : '') + '背离 ' + c.divergence;
     if (c.advice) {
