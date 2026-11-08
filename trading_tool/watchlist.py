@@ -512,22 +512,13 @@ def _get_finra_access_token() -> str:
 def _fetch_finra_short_interest(code: str) -> dict:
     """FINRA consolidated short interest: cross-exchange, bi-monthly official positions."""
     import requests
-    from datetime import date, timedelta
-
     code = str(code or "").strip().upper()
     token = _get_finra_access_token()
-    end_date = date.today()
-    start_date = end_date - timedelta(days=370)
     url = "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest"
     body = {
         "compareFilters": [
             {"compareType": "EQUAL", "fieldName": "symbolCode", "fieldValue": code}
         ],
-        "dateRangeFilters": [{
-            "fieldName": "settlementDate",
-            "startDate": start_date.isoformat(),
-            "endDate": end_date.isoformat(),
-        }],
         "fields": [
             "symbolCode", "issueName", "settlementDate",
             "currentShortPositionQuantity", "previousShortPositionQuantity",
