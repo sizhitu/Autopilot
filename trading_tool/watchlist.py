@@ -1820,11 +1820,65 @@ def _hard_purge_stale_symbols(stocks_or_items) -> list:
             pass
     return stale
 
+
+def _fill_crowding_if_missing(stocks: list) -> list:
+    """对缺少拥挤度的股票单独补算，不触发全量状态重算。"""
+    if not stocks:
+        return stocks
+    out = []
+    for s in stocks:
+        if not isinstance(s, dict):
+            out.append(s)
+            continue
+        if s.get("crowding_level") or s.get("crowding_pct") is not None:
+            out.append(s)
+            continue
+        code = str(s.get("code") or "").strip().upper()
+        if not code:
+            out.append(s)
+            continue
+        try:
+            is_us = not (code.isdigit() or code.startswith(("SH", "SZ", "BJ")))
+            if is_us:
+                si = _get_cached_short(code)
+                if si:
+                    s = dict(s)
+                    s["days_to_cover"] = si.get("days_to_cover")
+                    s["short_pct_float"] = si.get("short_pct_float")
+                    s["crowding_source"] = si.get("source") or ""
+                    comp = si.get("composite")
+                    days = si.get("days_to_cover") or 0
+                    if comp is not None:
+                        s["crowding_pct"] = comp
+                        s["crowding_level"] = "极端" if comp >= 2 else ("高" if comp >= 1 else ("偏高" if comp >= 0.5 else "正常"))
+                    elif days > 0:
+                        s["crowding_pct"] = round(days, 1)
+                        s["crowding_level"] = "高" if days >= 8 else ("偏高" if days >= 5 else "正常")
+                    s["crowding_speed"] = f"空头{si.get('short_pct_float') or '--'}% · 回补{days}天"
+            else:
+                # A股：尝试取成交量
+                vol = _fetch_volume_only(code)
+                if vol is not None and len(vol) >= 20:
+                    recent = vol.tail(20).mean()
+                    hist = vol.tail(min(250, len(vol)))
+                    if hist.sum() > 0 and recent > 0:
+                        pct = float((hist < recent).mean() * 100)
+                        s = dict(s)
+                        s["crowding_pct"] = round(pct, 1)
+                        s["crowding_level"] = "极端" if pct >= 95 else ("高" if pct >= 80 else ("偏高" if pct >= 60 else "正常"))
+                        s["crowding_source"] = "成交量历史分位"
+        except Exception:
+            pass
+        out.append(s)
+    return out
+
+
 def _annotate_and_maybe_refresh_dates(out: dict, key, items: list = None) -> dict:
     """响应前打标；有过旧现价日期则后台更新缓存。"""
     if not isinstance(out, dict):
         return out
     stocks = out.get("stocks") or []
+    stocks = _fill_crowding_if_missing(stocks)
     tagged, stale = _tag_stocks_date_freshness(stocks)
     out = dict(out)
     out["stocks"] = tagged
