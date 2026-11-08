@@ -133,5 +133,6 @@ def test_ortex_official_short_interest_parsing(monkeypatch):
     assert result["status"] == "ok"
     assert result["short_interest"] == 1320000
     assert result["days_to_cover"] == 4.0
+    assert result["composite"] is None  # 没有流通股比例时不伪造复合评分
     assert len(result["history"]) == 2
     assert result["history"][-1]["published_date"] == "2026-11-06"
