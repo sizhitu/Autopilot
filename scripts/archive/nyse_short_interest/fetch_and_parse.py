@@ -18,9 +18,9 @@ from urllib.request import Request, urlopen
 import pandas as pd
 
 BASE_URL = "https://ftp.nyse.com/NYSEGroupConsolidatedShortInterest/"
-YEAR_RE = re.compile(r"NYSEGroupConsolidatedShortInterest(\\d{4})/?$")
-MONTH_RE = re.compile(r"NYSEGroupConsolidatedShortInterest(\\d{6})/?$")
-FILE_RE = re.compile(r"NYSE_Group_Consolidated_Short_Interest_(\\d{8})\\.xls$", re.I)
+YEAR_RE = re.compile(r"NYSEGroupConsolidatedShortInterest(\d{4})/?$")
+MONTH_RE = re.compile(r"NYSEGroupConsolidatedShortInterest(\d{6})/?$")
+FILE_RE = re.compile(r"NYSE_Group_Consolidated_Short_Interest_(\d{8})\.xls$", re.I)
 EXCHANGE_ALIASES = {
     "NYSE": "NYSE",
     "NYSE ARCA": "NYSE ARCA",
@@ -78,7 +78,7 @@ def download(url: str, destination: Path) -> str:
 
 
 def _norm(value: object) -> str:
-    return re.sub(r"\\s+", " ", str(value or "").strip().lower())
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
 
 
 def _as_int(value: object):
