@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install parser dependencies
-        run: pip install pandas xlrd>=2.0.2 xlwt==1.3.0
+        run: pip install pandas 'xlrd>=2.0.2' xlwt==1.3.0
       - name: Compile and test
         run: |
           python -m py_compile scripts/archive/nyse_short_interest/fetch_and_parse.py
