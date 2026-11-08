@@ -218,3 +218,18 @@ def test_nasdaq_short_interest_parser_is_separate():
     assert result["short_interest"] == 1200000
     assert result["days_to_cover"] == 4.0
     assert result["listing_exchange"] == "NASDAQ"
+
+def test_build_volume_crowding_history():
+    """A股拥挤度应返回多日分位序列，供分析页折线图和数据列表使用。"""
+    import pandas as pd
+    from web_app import _build_volume_crowding_history
+    df = pd.DataFrame({
+        "date": pd.date_range("2025-01-01", periods=280, freq="B"),
+        "close": [10 + i * 0.02 for i in range(280)],
+        "volume": [1000000 + (i % 35) * 25000 for i in range(280)],
+    })
+    rows = _build_volume_crowding_history(df, limit=60)
+    assert len(rows) == 60
+    assert rows[0]["date"] < rows[-1]["date"]
+    assert all(0 <= row["percentile"] <= 100 for row in rows)
+    assert all(row["avg_volume_20"] > 0 and row["close"] > 0 for row in rows)
