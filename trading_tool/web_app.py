@@ -3268,6 +3268,8 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "short_pct_float": si.get("short_pct_float"),
                         "days_to_cover": days,
                         "source": si.get("source") or "Nasdaq/ORTEX",
+                        "provider": si.get("provider") or ("nasdaq" if "Nasdaq" in str(si.get("source") or "") else None),
+                        "listing_exchange": si.get("listing_exchange"),
                         "as_of": si.get("settlement_date") or None,
                         "published_date": si.get("published_date"),
                     }
@@ -3361,6 +3363,8 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                 "advice": metrics.get("advice") or "",
                 "reason": metrics.get("reason") or "",
                 "source": metrics.get("source") or "",
+                "provider": metrics.get("provider"),
+                "listing_exchange": metrics.get("listing_exchange"),
                 "as_of": metrics.get("as_of") or snapshot_date,
             }
             try:
