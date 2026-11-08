@@ -423,6 +423,22 @@ def _fetch_us_short_interest(code: str) -> dict:
         composite = None
         if short_pct is not None and days > 0:
             composite = (short_pct / 15.0) * (days / 5.0)
+        history = []
+        for row in rows:
+            try:
+                h_interest = _num(row.get("interest"))
+                h_days = float(row.get("daysToCover") or 0)
+                h_date = str(row.get("settlementDate") or "")
+                if h_interest <= 0 or not h_date:
+                    continue
+                history.append({
+                    "date": h_date,
+                    "short_interest": h_interest,
+                    "days_to_cover": round(h_days, 2) if h_days > 0 else None,
+                })
+            except Exception:
+                continue
+        history.sort(key=lambda x: x["date"], reverse=True)
         return {
             "short_interest": interest,
             "avg_volume": avg_vol,
@@ -430,7 +446,8 @@ def _fetch_us_short_interest(code: str) -> dict:
             "short_pct_float": round(short_pct, 1) if short_pct else None,
             "composite": round(composite, 2) if composite else None,
             "settlement_date": date,
-            "source": "Nasdaq/FINRA（半月报，约滞后7个工作日）",
+            "history": history[:12],
+            "source": "Nasdaq/FINRA",
         }
     except Exception:
         return {}
