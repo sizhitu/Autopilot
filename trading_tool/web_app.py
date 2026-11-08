@@ -3243,10 +3243,13 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
         is_us = not (sym.isdigit() or sym.startswith(("SH", "SZ", "BJ")))
         metrics = {}
         bar_date = ""
+        short_interest_note = None
         if is_us:
             try:
                 from watchlist import _get_cached_short
                 si = _get_cached_short(sym)
+                if si and si.get("status") not in (None, "ok"):
+                    short_interest_note = si.get("message") or "当前没有可用的官方空头持仓数据。"
                 if si and (si.get("composite") is not None or si.get("days_to_cover")):
                     score = si.get("composite")
                     days = si.get("days_to_cover")
@@ -3261,13 +3264,14 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "price_chg": None,
                         "short_behavior": {"state": "insufficient", "label": "历史数据不足", "short_change_pct": None, "price_change_pct": None, "history": []},
                         "advice": "",
-                        "reason": si.get("source") or "Nasdaq/FINRA",
+                        "reason": si.get("source") or "Nasdaq/ORTEX",
                         "short_pct_float": si.get("short_pct_float"),
                         "days_to_cover": days,
-                        "source": si.get("source") or "Nasdaq/FINRA",
+                        "source": si.get("source") or "Nasdaq/ORTEX",
                         "as_of": si.get("settlement_date") or None,
+                        "published_date": si.get("published_date"),
                     }
-                    # 将每期 FINRA 空头报告与相同结算日期附近的收盘价对齐，识别空头变化与价格关系。
+                    # 将每期官方空头报告与相同结算日期附近的收盘价对齐，识别空头变化与价格关系。
                     try:
                         short_history = si.get("history") or []
                         df_hist = await asyncio.to_thread(_fetch_for_advice, sym)
@@ -3338,6 +3342,9 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                     bar_date = ""
             if metrics:
                 metrics.update({"score": None, "metric_type": "volume_percentile", "source": "日线成交量", "as_of": bar_date or None})
+        if short_interest_note:
+            metrics["short_interest_status"] = "unavailable"
+            metrics["short_interest_note"] = short_interest_note
         # 保存有效指标快照；中性状态也记录，不以 advice 是否为空作为门槛。
         if metrics and (metrics.get("percentile") is not None or metrics.get("score") is not None or metrics.get("days_to_cover") is not None):
             from datetime import date

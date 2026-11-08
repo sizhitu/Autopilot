@@ -5562,10 +5562,10 @@ function renderWatchlistSummary(summary) {
     <div class="hp-sec"><b>参考价 / 涨幅</b><p>个股 — 分析师目标价去极值均值；无覆盖可用上市首日价。<br>基金/ETF — 以 NAV（或 IOPV）为基准。<br>涨幅 = (参考价÷现价 − 1)×100%，如 <code>333.18/+8.50%</code>；无数据为 --。</p></div>
     <div class="hp-sec"><b>拥挤度</b><p>个股自身历史分位，不跨股比绝对值。<br>
 · <b>A股</b> — 近20日均成交量 vs 过去1年分位。≥95%极端，≥80%高，≥60%偏高。<br>
-· <b>美股</b> — Nasdaq/FINRA 空头半月报（约滞后7个工作日）。复合拥挤度 = (空头占流通/15%) × (回补天数/5)。≥2极端，≥1高，≥0.5偏高。<br>
+· <b>美股</b> — 优先 Nasdaq 官方空头半月报；无记录时可选用 ORTEX 按 NYSE venue 查询官方半月报（非每日估算）。未配置 Key 或测试 Key 未覆盖时显示缺失，不用日度卖空成交量冒充持仓。<br>
 · <b>三维度</b> — 水平（自身历史分位）、变化速度（近20日 vs 前20日）、价格背离（价涨拥挤降或价跌拥挤升）。<br>
 · 只在高位+快速上升、极端、或明确背离时给出仓位提醒。次新/小流通盘空头占比天然易偏高，需结合锁定期和套利盘理解。<br>
-· 数据源：A股成交量（腾讯/东财），美股空头（Nasdaq/FINRA）。非实时，仅供研究参考。</p></div>
+· 数据源：A股成交量（腾讯/东财），美股空头（Nasdaq/ORTEX）。非实时，仅供研究参考。</p></div>
     <div class="hp-sec"><b>行情数据来源</b><p>日线行情为公开市场收盘数据，经多源聚合与交叉校验后写入看板。<br>
 · <b>美股 / 美股 ETF</b> — Yahoo Finance、Nasdaq 官方历史接口、Stooq 等公开源，取最近可用交易日收盘价<br>
 · <b>A 股 / 场内基金</b> — 腾讯、东方财富、新浪等公开行情接口（前复权口径优先）<br>
@@ -6953,7 +6953,8 @@ async function loadCrowdingForAnalysis(sym) {
     const isShort = c.metric_type === 'short_composite_score' || c.metric_type === 'days_to_cover';
     if (badge) badge.textContent = isShort ? (labels[state] || '历史数据不足') : (c.level || '成交量拥挤度');
     if (detail) detail.textContent = isShort ? (interpretations[state] || interpretations.insufficient) :
-      (c.percentile != null ? '成交量处于自身历史 ' + Number(c.percentile).toFixed(1) + '% 分位。' : '暂无可用的行为分析。');
+      (c.percentile != null ? '成交量处于自身历史 ' + Number(c.percentile).toFixed(1) + '% 分位。' : '暂无可用的行为分析。') +
+      (c.short_interest_note ? ' ' + c.short_interest_note : '');
     if (matrix && isShort) {
       const cells = [
         {id:'A',title:'空头↑ / 股价↓',sub:'卖压强化'},
@@ -6982,7 +6983,7 @@ async function loadCrowdingForAnalysis(sym) {
           '<span>空头 ' + (x.short_interest != null ? (Number(x.short_interest)/1e6).toFixed(1)+'M' : '--') + '</span>' +
           '<span>收盘 $' + (x.close != null ? Number(x.close).toFixed(2) : '--') + '</span></div>').join('');
     }
-    if (meta) meta.textContent = [c.source || c.reason || '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
+    if (meta) meta.textContent = [c.source || c.reason || '', c.published_date ? '发布 ' + c.published_date : '', c.short_interest_status ? '官方空头持仓暂不可用' : '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
     try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (e) {}
   } catch (e) {
     if (badge) badge.textContent = '暂无数据';
