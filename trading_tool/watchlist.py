@@ -482,7 +482,7 @@ def _fetch_finra_consolidated_short_interest(code: str) -> dict:
 
 
 def _fetch_us_short_interest(code: str) -> dict:
-    """先取 Nasdaq 个股报告；无记录时可选用 ORTEX 跨交易所官方报告。"""
+    """先取 Nasdaq 个股报告；无记录时回退 FINRA 跨交易所官方合并报告。"""
     import requests
 
     code = str(code or "").strip().upper()
