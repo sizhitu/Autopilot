@@ -498,7 +498,7 @@ def _fetch_finra_short_interest(code: str) -> dict:
 
 
 def _normalize_short_date(value) -> str:
-    """将 Nasdaq/ORTEX/FINRA 的结算日期统一为 YYYY-MM-DD。"""
+    """将 Nasdaq/FINRA OTC 的结算日期统一为 YYYY-MM-DD。"""
     from datetime import datetime
     raw = str(value or "").strip()
     if not raw:
@@ -661,7 +661,7 @@ def _fetch_nasdaq_short_interest(code: str) -> dict:
 
 
 def _fetch_us_short_interest(code: str) -> dict:
-    """Exchange-aware official short-interest routing; no paid ORTEX dependency.
+    """Exchange-aware official short-interest routing using public exchange and FINRA data.
 
     NASDAQ -> Nasdaq official bi-monthly short-interest report.
     NYSE/AMEX -> no Nasdaq substitution; NYSE Group official file integration
