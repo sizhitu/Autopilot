@@ -424,7 +424,7 @@ def _fetch_ortex_official_short_interest(code: str, api_key: str, namespace: str
         if not isinstance(row, dict):
             continue
         try:
-            settlement = str(row.get("settlementDate") or "")[:10]
+            settlement = _normalize_short_date(row.get("settlementDate"))
             shares_raw = row.get("officialSiShares")
             if not settlement or shares_raw in (None, ""):
                 continue
@@ -434,8 +434,8 @@ def _fetch_ortex_official_short_interest(code: str, api_key: str, namespace: str
             avg_raw = row.get("officialAvgDailyVolume")
             avg_volume = float(avg_raw) if avg_raw not in (None, "") else None
             days_raw = row.get("officialDaysToCover")
-            days = float(days_raw) if days_raw not in (None, "") else (
-                shares / avg_volume if avg_volume and avg_volume > 0 else None
+            days = (shares / avg_volume) if avg_volume and avg_volume > 0 else (
+                float(days_raw) if days_raw not in (None, "") else None
             )
             history.append({
                 "date": settlement,
@@ -544,7 +544,7 @@ def _fetch_finra_short_interest(code: str) -> dict:
         if not isinstance(row, dict):
             continue
         try:
-            settlement = str(row.get("settlementDate") or "")[:10]
+            settlement = _normalize_short_date(row.get("settlementDate"))
             shares_raw = row.get("currentShortPositionQuantity")
             if not settlement or shares_raw in (None, ""):
                 continue
@@ -642,7 +642,8 @@ def _fetch_us_short_interest(code: str) -> dict:
                     report_date = _normalize_short_date(row.get("settlementDate"))
                     shares = _num(row.get("interest"))
                     avg_volume = _num(row.get("avgDailyShareVolume"))
-                    days = _num(row.get("daysToCover"))
+                    reported_days = _num(row.get("daysToCover"))
+                    days = shares / avg_volume if avg_volume > 0 else reported_days
                     if report_date and shares >= 0:
                         history.append({
                             "date": report_date,
