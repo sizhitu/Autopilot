@@ -3243,10 +3243,13 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
         is_us = not (sym.isdigit() or sym.startswith(("SH", "SZ", "BJ")))
         metrics = {}
         bar_date = ""
+        short_interest_note = None
         if is_us:
             try:
                 from watchlist import _get_cached_short
                 si = _get_cached_short(sym)
+                if si and si.get("status") not in (None, "ok"):
+                    short_interest_note = si.get("message") or "当前没有可用的官方空头持仓数据。"
                 if si and (si.get("composite") is not None or si.get("days_to_cover")):
                     score = si.get("composite")
                     days = si.get("days_to_cover")
@@ -3338,6 +3341,9 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                     bar_date = ""
             if metrics:
                 metrics.update({"score": None, "metric_type": "volume_percentile", "source": "日线成交量", "as_of": bar_date or None})
+        if short_interest_note:
+            metrics["short_interest_status"] = "unavailable"
+            metrics["short_interest_note"] = short_interest_note
         # 保存有效指标快照；中性状态也记录，不以 advice 是否为空作为门槛。
         if metrics and (metrics.get("percentile") is not None or metrics.get("score") is not None or metrics.get("days_to_cover") is not None):
             from datetime import date
