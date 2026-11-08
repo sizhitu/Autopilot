@@ -412,7 +412,7 @@ def _pos_advice_from_db(symbol: str) -> list:
             return []
         client = supabase_client.get_service_client()
         rows = (client.table("position_advice_logs")
-                .select("symbol,bar_date,level,percentile,speed,divergence,advice,reason")
+                .select("symbol,bar_date,level,percentile,score,metric_type,speed,divergence,advice,reason,source,as_of")
                 .eq("symbol", str(symbol or "").upper())
                 .order("bar_date", desc=True)
                 .limit(200).execute()).data or []
@@ -438,7 +438,7 @@ def append_position_advice(symbol: str, row: dict) -> None:
     if not symbol or not isinstance(row, dict):
         return
     day = str(row.get("bar_date") or row.get("date") or "")[:10]
-    if not day or not row.get("advice"):
+    if not day:
         return
     sym = str(symbol).upper()
     existing = [r for r in (get_position_advice(sym) or []) if isinstance(r, dict)]
@@ -449,10 +449,14 @@ def append_position_advice(symbol: str, row: dict) -> None:
         "bar_date": day,
         "level": row.get("level") or "",
         "percentile": row.get("percentile"),
+        "score": row.get("score"),
+        "metric_type": row.get("metric_type") or "",
         "speed": row.get("speed") or "",
         "divergence": row.get("divergence") or "",
         "advice": row.get("advice") or "",
         "reason": row.get("reason") or "",
+        "source": row.get("source") or "",
+        "as_of": row.get("as_of") or day,
     }
     existing.insert(0, new_row)
     existing = existing[:200]
