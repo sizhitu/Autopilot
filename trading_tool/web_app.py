@@ -3266,7 +3266,13 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "source": si.get("source") or "Nasdaq/FINRA",
                         "as_of": si.get("settlement_date") or None,
                     }
-                    bar_date = str(si.get("settlement_date") or "")[:10]
+                    raw_settlement = str(si.get("settlement_date") or "").strip()
+                    if raw_settlement:
+                        try:
+                            from datetime import datetime
+                            bar_date = datetime.strptime(raw_settlement, "%m/%d/%Y").date().isoformat()
+                        except ValueError:
+                            bar_date = raw_settlement[:10]
             except Exception:
                 metrics = {}
         if not metrics:
