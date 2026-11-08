@@ -151,10 +151,9 @@ def test_ortex_official_short_interest_parsing(monkeypatch):
 
     captured = {}
     monkeypatch.setenv("ORTEX_API_KEY", "TEST")
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NYSE")
 
     def fake_get(url, **kwargs):
-        if "api.nasdaq.com" in url:
-            return EmptyNasdaqResponse()
         captured.update({"url": url, **kwargs})
         return OrtexResponse()
 
@@ -168,6 +167,7 @@ def test_ortex_official_short_interest_parsing(monkeypatch):
     assert "/stock/NYSE/BE/short/official_short_interest/" in captured["url"]
     assert captured["params"]["from_date"]
     assert captured["headers"]["Ortex-Api-Key"] == "TEST"
+    assert result["listing_exchange"] == "NYSE"
 
 
 def test_finra_consolidated_short_interest(monkeypatch):
@@ -205,3 +205,68 @@ def test_finra_consolidated_short_interest(monkeypatch):
     assert captured["json"]["compareFilters"][0]["fieldValue"] == "BE"
     assert captured["headers"]["Authorization"] == "Bearer test-token"
     assert "consolidatedShortInterest" in captured["url"]
+
+
+def test_exchange_aware_routing(monkeypatch):
+    """交易所识别后只调用对应数据源，不跨交易所误用 Nasdaq/FINRA 数据。"""
+    import watchlist
+
+    monkeypatch.setenv("ORTEX_API_KEY", "TEST")
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NASDAQ")
+    monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest", lambda code: {
+        "status": "ok", "short_interest": 123, "days_to_cover": 2.0,
+        "history": [], "source": "Nasdaq 官方空头报告", "provider": "nasdaq",
+    })
+    monkeypatch.setattr(watchlist, "_fetch_ortex_official_short_interest",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("Nasdaq success must not call ORTEX")))
+    result = watchlist._fetch_us_short_interest("NVDA")
+    assert result["status"] == "ok"
+    assert result["listing_exchange"] == "NASDAQ"
+    assert result["provider"] == "nasdaq"
+
+    calls = []
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "AMEX")
+    monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest",
+                        lambda code: (_ for _ in ()).throw(AssertionError("AMEX must not call Nasdaq")))
+    def fake_ortex(code, api_key, namespace):
+        calls.append(namespace)
+        return {"status": "ok", "history": [], "source": "ORTEX"}
+    monkeypatch.setattr(watchlist, "_fetch_ortex_official_short_interest", fake_ortex)
+    result = watchlist._fetch_us_short_interest("XYZ")
+    assert result["status"] == "ok"
+    assert calls == ["AMEX"]
+    assert result["listing_exchange"] == "AMEX"
+
+    monkeypatch.delenv("ORTEX_API_KEY", raising=False)
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "UNKNOWN")
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
+        "status": "ok", "history": [], "source": "FINRA OTC",
+    })
+    result = watchlist._fetch_us_short_interest("OTCQ")
+    assert result["status"] == "ok"
+    assert result["provider"] == "finra_otc"
+    assert result["listing_exchange"] == "OTC"
+
+
+def test_nasdaq_short_interest_parser_is_separate():
+    """Nasdaq 报告解析独立于交易所识别与其他来源路由。"""
+    import requests
+    import watchlist
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"data": {"shortInterestTable": {"rows": [
+                {"settlementDate": "10/30/2026", "interest": "1,200,000",
+                 "avgDailyShareVolume": "300,000", "daysToCover": "4.0"}
+            ]}}}
+    original = requests.get
+    try:
+        requests.get = lambda *a, **k: Response()
+        result = watchlist._fetch_nasdaq_short_interest("NVDA")
+    finally:
+        requests.get = original
+    assert result["status"] == "ok"
+    assert result["short_interest"] == 1200000
+    assert result["days_to_cover"] == 4.0
+    assert result["listing_exchange"] == "NASDAQ"
