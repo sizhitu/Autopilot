@@ -3282,10 +3282,8 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                             for h in short_history:
                                 try:
                                     raw_d = str(h.get("date") or "")
-                                    try:
-                                        hd = datetime.strptime(raw_d, "%m/%d/%Y").date().isoformat()
-                                    except ValueError:
-                                        hd = raw_d[:10]
+                                    parsed_d = pd.to_datetime(raw_d, errors="coerce")
+                                    hd = parsed_d.strftime("%Y-%m-%d") if pd.notna(parsed_d) else raw_d[:10]
                                     prior = _df[_df["_date"] <= hd]
                                     if prior.empty:
                                         continue
