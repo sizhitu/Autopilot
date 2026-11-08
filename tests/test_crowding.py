@@ -21,7 +21,7 @@ def test_us_short_interest():
 
 
 def test_non_nasdaq_fallback(monkeypatch):
-    """Nasdaq 无记录时，不把 FINRA OTC 数据冒充 NYSE 上市股持仓。"""
+    """Nasdaq 无记录且未配置 ORTEX Key 时，明确提示可用官方 TEST Key 验证。"""
     import requests
     import watchlist
 
@@ -30,11 +30,12 @@ def test_non_nasdaq_fallback(monkeypatch):
         def json(self):
             return {"data": {"shortInterestTable": {"rows": []}}}
 
+    monkeypatch.delenv("ORTEX_API_KEY", raising=False)
     monkeypatch.setattr(requests, "get", lambda *a, **k: EmptyResponse())
     si = watchlist._fetch_us_short_interest("BE")
     assert si["status"] == "provider_required"
-    assert "FINRA" in si["message"]
-    assert "OTC" in si["message"]
+    assert "ORTEX_API_KEY" in si["message"]
+    assert "TEST" in si["message"]
 
 
 def test_compute_crowding_volume():
@@ -118,3 +119,47 @@ def test_watchlist_richness_counts_crowding_data():
     assert _row_richness(rich) > _row_richness(bare)
 
 
+
+
+
+def test_ortex_official_short_interest_parsing(monkeypatch):
+    """验证 NYSE venue、正确日期参数及官方半月度字段解析。"""
+    import requests
+    import watchlist
+
+    class EmptyNasdaqResponse:
+        status_code = 200
+        def json(self):
+            return {"data": {"shortInterestTable": {"rows": []}}
+
+    class OrtexResponse:
+        status_code = 200
+        def json(self):
+            return {"data": [
+                {"settlementDate": "2026-10-15", "publishedDate": "2026-10-22",
+                 "officialSiShares": 1200000, "officialAvgDailyVolume": 300000,
+                 "officialDaysToCover": 4.0},
+                {"settlementDate": "2026-10-30", "publishedDate": "2026-11-06",
+                 "officialSiShares": 1320000, "officialAvgDailyVolume": 330000,
+                 "officialDaysToCover": 4.0},
+            ]}
+
+    captured = {}
+    monkeypatch.setenv("ORTEX_API_KEY", "TEST")
+
+    def fake_get(url, **kwargs):
+        if "api.nasdaq.com" in url:
+            return EmptyNasdaqResponse()
+        captured.update({"url": url, **kwargs})
+        return OrtexResponse()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    result = watchlist._fetch_us_short_interest("BE")
+    assert result["status"] == "ok"
+    assert result["short_interest"] == 1320000
+    assert result["days_to_cover"] == 4.0
+    assert result["composite"] is None
+    assert result["history"][-1]["published_date"] == "2026-11-06"
+    assert "/stock/NYSE/BE/short/official_short_interest/" in captured["url"]
+    assert captured["params"]["from_date"]
+    assert captured["headers"]["Ortex-Api-Key"] == "TEST"
