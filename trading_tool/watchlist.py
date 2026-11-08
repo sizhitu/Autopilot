@@ -369,6 +369,19 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 
 
 
+
+_SHORT_CACHE = {}
+_SHORT_TTL = 3600 * 12  # 12 小时，半月数据不需要频繁拉
+
+def _get_cached_short(code: str) -> dict:
+    import time
+    hit = _SHORT_CACHE.get(code.upper())
+    if hit and (time.time() - hit.get("ts", 0)) < _SHORT_TTL:
+        return hit.get("data") or {}
+    data = _fetch_us_short_interest(code)
+    _SHORT_CACHE[code.upper()] = {"ts": time.time(), "data": data}
+    return data
+
 def _fetch_us_short_interest(code: str) -> dict:
     """从 Nasdaq 取美股空头数据（FINRA 半月报，约滞后一周）。失败返回空。"""
     try:
@@ -491,12 +504,13 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
         try:
             is_us = not (str(code).isdigit() or str(code).upper().startswith(("SH", "SZ", "BJ")))
             if is_us:
-                si = _fetch_us_short_interest(code)
+                si = _get_cached_short(code)
                 if si:
                     status.days_to_cover = si.get("days_to_cover")
                     status.short_pct_float = si.get("short_pct_float")
                     status.crowding_source = si.get("source") or ""
                     comp = si.get("composite")
+                    days = si.get("days_to_cover") or 0
                     if comp is not None:
                         status.crowding_pct = comp
                         if comp >= 2.0:
@@ -507,10 +521,22 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
                             status.crowding_level = "偏高"
                         else:
                             status.crowding_level = "正常"
-                        status.crowding_speed = f"空头{si.get('short_pct_float') or '--'}% · 回补{si.get('days_to_cover')}天"
+                    elif days > 0:
+                        # 没有流通股时只用回补天数
+                        status.crowding_pct = round(days, 1)
+                        if days >= 8:
+                            status.crowding_level = "高"
+                        elif days >= 5:
+                            status.crowding_level = "偏高"
+                        else:
+                            status.crowding_level = "正常"
+                    status.crowding_speed = f"空头{si.get('short_pct_float') or '--'}% · 回补{days}天"
                     if si.get("short_pct_float") and si["short_pct_float"] > 10:
                         status.crowding_speed = (status.crowding_speed or "") + " · 次新/小流通盘需结合锁定期和套利盘理解"
-            else:
+            # 美股空头失败时也回落到成交量分位
+            if is_us and not status.crowding_level:
+                is_us = False
+            if not is_us:
                 vol = None
                 if 'volume' in df.columns:
                     vol = df['volume'].astype(float)
@@ -1405,10 +1431,7 @@ def _status_dict_cached(code: str, name: str, days: int = 1250, force_live: bool
             cached_row["name"] = name
         cached_row["pending"] = False
         # 已是收盘后的最新交易日才直接返回。盘中同日快照在 force 时必须重拉。
-        # 缺少拥挤度字段时强制重算
-        if cached_row.get("crowding_pct") is None and cached_row.get("crowding_level") in (None, ""):
-            cached_row = None  # 强制重算
-        elif _bar_date_str(cached_row) and _row_is_official_close(cached_row, k):
+        if _bar_date_str(cached_row) and _row_is_official_close(cached_row, k):
             cached_row["data_source"] = "status_cache_fresh"
             try:
                 import cache as _cache
