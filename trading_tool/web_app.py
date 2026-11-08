@@ -3272,7 +3272,7 @@ def _build_volume_crowding_history(df, limit: int = 60) -> list:
         work = df.copy()
         vol = pd.to_numeric(work["volume"], errors="coerce")
         close = pd.to_numeric(work["close"], errors="coerce")
-        dates = pd.to_datetime(work["date"], errors="coerce") if "date" in work.columns else pd.to_datetime(work.index, errors="coerce")
+        dates = pd.DatetimeIndex(pd.to_datetime(work["date"], errors="coerce") if "date" in work.columns else pd.to_datetime(work.index, errors="coerce"))
         rows = []
         for i in range(19, len(work)):
             recent = vol.iloc[i-19:i+1].dropna()
@@ -3284,7 +3284,7 @@ def _build_volume_crowding_history(df, limit: int = 60) -> list:
             if not np.isfinite(avg20) or avg20 <= 0:
                 continue
             pct = float((hist < avg20).mean() * 100)
-            d = dates.iloc[i]
+            d = dates[i]
             if pd.isna(d):
                 continue
             rows.append({
