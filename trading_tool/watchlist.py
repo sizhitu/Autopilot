@@ -373,6 +373,47 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 _SHORT_CACHE = {}
 _SHORT_TTL = 3600 * 12  # 12 小时，半月数据不需要频繁拉
 
+_FINRA_TOKEN_CACHE = {"token": None, "expires_at": 0}
+
+
+def _get_finra_access_token() -> str | None:
+    """使用免费 Public Credential 获取 FINRA OAuth access token，进程内缓存。"""
+    import os
+    import time
+    import requests
+
+    cached = _FINRA_TOKEN_CACHE
+    if cached.get("token") and time.time() < cached.get("expires_at", 0):
+        return cached["token"]
+
+    client_id = os.getenv("FINRA_API_CLIENT_ID", "").strip()
+    client_secret = os.getenv("FINRA_API_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        return None
+
+    url = "https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token?grant_type=client_credentials"
+    response = requests.post(url, auth=(client_id, client_secret), timeout=15)
+    if response.status_code != 200:
+        raise RuntimeError(f"FINRA OAuth token endpoint returned HTTP {response.status_code}")
+
+    payload = response.json() or {}
+    token = payload.get("access_token")
+    if not token:
+        raise RuntimeError("FINRA OAuth response did not contain access_token")
+
+    try:
+        expires_in = int(payload.get("expires_in") or 1800)
+    except (TypeError, ValueError):
+        expires_in = 1800
+    cache_seconds = max(60, min(expires_in - 60, 1800))
+    _FINRA_TOKEN_CACHE.update({
+        "token": token,
+        "expires_at": time.time() + cache_seconds,
+    })
+    return token
+
+
+
 
 def _get_cached_short(code: str) -> dict:
     import time
@@ -392,10 +433,19 @@ def _fetch_finra_consolidated_short_interest(code: str) -> dict:
     if not code:
         return {"status": "invalid_symbol", "message": "股票代码为空。"}
 
+    token = _get_finra_access_token()
+    if not token:
+        return {
+            "status": "credential_required",
+            "source": "FINRA Consolidated Short Interest",
+            "message": "FINRA 免费 Public Credential 尚未配置。请在服务端设置 FINRA_API_CLIENT_ID 和 FINRA_API_CLIENT_SECRET。",
+        }
+
     url = "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest"
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
         "User-Agent": "Autopilot research app",
     }
     body = {
