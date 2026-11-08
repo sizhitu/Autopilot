@@ -21,10 +21,9 @@ def test_us_short_interest():
 
 
 def test_nyse_stock_does_not_fall_back_to_nasdaq_or_finra(monkeypatch):
-    """NYSE 股票不调用 Nasdaq 或 FINRA OTC，更不依赖 ORTEX。"""
+    """NYSE 股票不调用 Nasdaq 或 FINRA OTC，更不依赖付费第三方数据源。"""
     import watchlist
 
-    monkeypatch.delenv("ORTEX_API_KEY", raising=False)
     monkeypatch.delenv("FINRA_API_CLIENT_ID", raising=False)
     monkeypatch.delenv("FINRA_API_CLIENT_SECRET", raising=False)
     monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NYSE")
@@ -161,7 +160,7 @@ def test_finra_consolidated_short_interest(monkeypatch):
     assert "consolidatedShortInterest" in captured["url"]
 
 
-def test_exchange_aware_routing_without_ortex(monkeypatch):
+def test_exchange_aware_routing_without_paid_provider(monkeypatch):
     """Nasdaq 走 Nasdaq；NYSE/AMEX 不跨源；未知代码只查 FINRA OTC。"""
     import watchlist
 
