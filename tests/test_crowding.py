@@ -69,3 +69,42 @@ if __name__ == "__main__":
     print("=== test_stock_advice_endpoint_logic ===")
     test_stock_advice_endpoint_logic()
     print("all passed")
+
+
+
+def test_neutral_position_snapshot_is_cached(monkeypatch):
+    """无交易建议的有效拥挤度快照也必须进入历史缓存。"""
+    import cache
+
+    captured = {}
+    monkeypatch.setattr(cache, "get_position_advice", lambda symbol: [])
+    monkeypatch.setattr(cache, "set_json", lambda key, value, ttl: captured.update({key: value}))
+    import supabase_client
+    monkeypatch.setattr(supabase_client, "using_supabase", lambda: False)
+
+    cache.append_position_advice("NVDA", {
+        "bar_date": "2026-11-06",
+        "level": "正常",
+        "percentile": None,
+        "score": 0.42,
+        "metric_type": "short_composite_score",
+        "speed": "空头2.1%",
+        "advice": "",
+        "reason": "Nasdaq/FINRA",
+        "source": "Nasdaq/FINRA",
+        "as_of": "2026-10-31",
+    })
+
+    rows = captured["posadvice:NVDA"]["rows"]
+    assert len(rows) == 1
+    assert rows[0]["score"] == 0.42
+    assert rows[0]["advice"] == ""
+    assert rows[0]["metric_type"] == "short_composite_score"
+
+
+def test_watchlist_richness_counts_crowding_data():
+    from watchlist import _row_richness
+
+    bare = {"price": 100, "bar_date": "2026-11-06"}
+    rich = dict(bare, crowding_pct=1.2, crowding_level="高", crowding_source="Nasdaq/FINRA")
+    assert _row_richness(rich) > _row_richness(bare)

@@ -1121,6 +1121,12 @@ def _row_richness(s: dict) -> int:
         v = s.get(k)
         if v not in (None, "", "-", "—", "…", "计算中"):
             n += 1
+    if s.get("crowding_pct") not in (None, ""):
+        n += 2
+    if s.get("crowding_level") not in (None, ""):
+        n += 1
+    if s.get("crowding_source") not in (None, ""):
+        n += 1
     if s.get("error"):
         n -= 3
     if s.get("pending"):
