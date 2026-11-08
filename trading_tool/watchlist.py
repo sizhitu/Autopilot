@@ -222,9 +222,12 @@ class StockStatus:
     valuation_detail: str = ""    # 估值依据（如 "MA250 -8%" / "分位85%"）
     analyst_target: object = None  # 参考价：个股=去极值分析师均价；基金=NAV float | None
     analyst_upside_pct: object = None  # 相对现价涨幅空间% | None
-    crowding_pct: object = None    # 成交量历史分位 0-100
+    crowding_pct: object = None    # 成交量历史分位 或 复合拥挤度
     crowding_level: str = ""       # 正常/偏高/高/极端
-    crowding_speed: str = ""       # 平稳/上升/快速上升/下降
+    crowding_speed: str = ""       # 平稳/上升/快速上升/下降 或 空头来源说明
+    short_pct_float: object = None # 美股：空头占流通 %
+    days_to_cover: object = None   # 美股：回补天数
+    crowding_source: str = ""      # 数据来源与滞后说明
     error: str = ""
 
 
@@ -366,6 +369,60 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 
 
 
+def _fetch_us_short_interest(code: str) -> dict:
+    """从 Nasdaq 取美股空头数据（FINRA 半月报，约滞后一周）。失败返回空。"""
+    try:
+        import requests
+        url = f"https://api.nasdaq.com/api/quote/{code}/short-interest?assetclass=stocks"
+        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return {}
+        d = r.json()
+        rows = d.get("data", {}).get("shortInterestTable", {}).get("rows", [])
+        if not rows:
+            return {}
+        latest = rows[0]
+        def _num(x):
+            return float(str(x).replace(",", "").replace("$", "").strip() or 0)
+        interest = _num(latest.get("interest"))
+        avg_vol = _num(latest.get("avgDailyShareVolume"))
+        days = float(latest.get("daysToCover") or 0)
+        date = latest.get("settlementDate") or ""
+        # 尝试从 summary 拿流通股近似（用市值/现价）
+        float_shares = None
+        try:
+            s = requests.get(f"https://api.nasdaq.com/api/quote/{code}/summary?assetclass=stocks",
+                             headers=headers, timeout=8).json()
+            mcap = s.get("data", {}).get("summaryData", {}).get("MarketCap", {}).get("value")
+            prev = s.get("data", {}).get("summaryData", {}).get("PreviousClose", {}).get("value")
+            if mcap and prev:
+                mcap_n = _num(mcap)
+                prev_n = _num(prev)
+                if prev_n > 0:
+                    float_shares = mcap_n / prev_n  # 近似总股本，非严格流通股
+        except Exception:
+            pass
+        short_pct = None
+        if float_shares and float_shares > 0 and interest > 0:
+            short_pct = interest / float_shares * 100
+        # 复合拥挤度
+        composite = None
+        if short_pct is not None and days > 0:
+            composite = (short_pct / 15.0) * (days / 5.0)
+        return {
+            "short_interest": interest,
+            "avg_volume": avg_vol,
+            "days_to_cover": round(days, 2),
+            "short_pct_float": round(short_pct, 1) if short_pct else None,
+            "composite": round(composite, 2) if composite else None,
+            "settlement_date": date,
+            "source": "Nasdaq/FINRA（半月报，约滞后7个工作日）",
+        }
+    except Exception:
+        return {}
+
+
 def _fetch_volume_only(code: str) -> "pd.Series | None":
     """专门取成交量。美股走 Stooq，A股走腾讯。失败返回 None。"""
     try:
@@ -430,38 +487,61 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
             prev_5 = float(df['close'].iloc[-1 - lookback_5])
             status.change_5d = round((last_close - prev_5) / prev_5 * 100, 2)
 
-        # 拥挤度：只用真实成交量。主数据缺失时专门再取一次。
+        # 拥挤度：美股优先用空头数据，A股用成交量分位
         try:
-            vol = None
-            if 'volume' in df.columns:
-                vol = df['volume'].astype(float)
-            if vol is None or vol.sum() <= 0 or (vol > 0).sum() < 20:
-                vol = _fetch_volume_only(code)
-            if vol is not None and len(vol) >= 20:
-                recent = vol.tail(20).mean()
-                hist = vol.tail(min(250, len(vol)))
-                if hist.sum() > 0 and recent > 0:
-                    pct = float((hist < recent).mean() * 100)
-                    status.crowding_pct = round(pct, 1)
-                    if pct >= 95:
-                        status.crowding_level = "极端"
-                    elif pct >= 80:
-                        status.crowding_level = "高"
-                    elif pct >= 60:
-                        status.crowding_level = "偏高"
-                    else:
-                        status.crowding_level = "正常"
-                    if len(vol) >= 40:
-                        prev = vol.iloc[-40:-20].mean()
-                        chg = (recent - prev) / prev * 100 if prev > 0 else 0
-                        if chg > 30:
-                            status.crowding_speed = "快速上升"
-                        elif chg > 10:
-                            status.crowding_speed = "上升"
-                        elif chg < -20:
-                            status.crowding_speed = "下降"
+            is_us = not (str(code).isdigit() or str(code).upper().startswith(("SH", "SZ", "BJ")))
+            if is_us:
+                si = _fetch_us_short_interest(code)
+                if si:
+                    status.days_to_cover = si.get("days_to_cover")
+                    status.short_pct_float = si.get("short_pct_float")
+                    status.crowding_source = si.get("source") or ""
+                    comp = si.get("composite")
+                    if comp is not None:
+                        status.crowding_pct = comp
+                        if comp >= 2.0:
+                            status.crowding_level = "极端"
+                        elif comp >= 1.0:
+                            status.crowding_level = "高"
+                        elif comp >= 0.5:
+                            status.crowding_level = "偏高"
                         else:
-                            status.crowding_speed = "平稳"
+                            status.crowding_level = "正常"
+                        status.crowding_speed = f"空头{si.get('short_pct_float') or '--'}% · 回补{si.get('days_to_cover')}天"
+                    if si.get("short_pct_float") and si["short_pct_float"] > 10:
+                        status.crowding_speed = (status.crowding_speed or "") + " · 次新/小流通盘需结合锁定期和套利盘理解"
+            else:
+                vol = None
+                if 'volume' in df.columns:
+                    vol = df['volume'].astype(float)
+                if vol is None or vol.sum() <= 0 or (vol > 0).sum() < 20:
+                    vol = _fetch_volume_only(code)
+                if vol is not None and len(vol) >= 20:
+                    recent = vol.tail(20).mean()
+                    hist = vol.tail(min(250, len(vol)))
+                    if hist.sum() > 0 and recent > 0:
+                        pct = float((hist < recent).mean() * 100)
+                        status.crowding_pct = round(pct, 1)
+                        if pct >= 95:
+                            status.crowding_level = "极端"
+                        elif pct >= 80:
+                            status.crowding_level = "高"
+                        elif pct >= 60:
+                            status.crowding_level = "偏高"
+                        else:
+                            status.crowding_level = "正常"
+                        if len(vol) >= 40:
+                            prev = vol.iloc[-40:-20].mean()
+                            chg = (recent - prev) / prev * 100 if prev > 0 else 0
+                            if chg > 30:
+                                status.crowding_speed = "快速上升"
+                            elif chg > 10:
+                                status.crowding_speed = "上升"
+                            elif chg < -20:
+                                status.crowding_speed = "下降"
+                            else:
+                                status.crowding_speed = "平稳"
+                        status.crowding_source = "成交量历史分位"
         except Exception:
             pass
 
@@ -971,6 +1051,9 @@ def _status_to_dict(st: StockStatus) -> dict:
         'crowding_pct': getattr(st, 'crowding_pct', None),
         'crowding_level': getattr(st, 'crowding_level', '') or '',
         'crowding_speed': getattr(st, 'crowding_speed', '') or '',
+        'short_pct_float': getattr(st, 'short_pct_float', None),
+        'days_to_cover': getattr(st, 'days_to_cover', None),
+        'crowding_source': getattr(st, 'crowding_source', '') or '',
         'error': st.error,
     }
 

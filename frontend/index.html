@@ -5739,12 +5739,14 @@ function renderWatchlist(stocks) {
       <td title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;font-size:11px;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
       <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
-      <td style="padding:5px 4px;font-size:11px;text-align:center;">${(function(){
+      <td style="padding:5px 4px;font-size:11px;text-align:center;" title="${escapeAttr(s.crowding_source || '')}">${(function(){
         const lv = s.crowding_level || '';
         const pct = s.crowding_pct;
+        const src = s.crowding_source || '';
         if (!lv && (pct == null || pct === '')) return '<span style="color:var(--text-dim);font-size:10px;">数据不足</span>';
         const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
-        return '<span style="color:' + c + ';font-weight:600;">' + (lv || '正常') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '%</div>' : '');
+        let tip = src ? '<div style="font-size:9px;color:var(--text-dim);">' + src.split('（')[0] + '</div>' : '';
+        return '<span style="color:' + c + ';font-weight:600;">' + (lv || '正常') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '</div>' : '') + tip;
       })()}</td>
     </tr>`;
   }
