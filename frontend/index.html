@@ -1503,13 +1503,10 @@ body.landing-locked #freeBanner { display: none !important; }
         <span style="font-size:12px;font-weight:700;color:var(--gold);">拥挤度诊断</span>
         <span id="crowdingBadge" style="font-size:11px;color:var(--text-dim);">--</span>
       </div>
-      <div id="crowdingDims" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-top:8px;font-size:11px;line-height:1.45;">
-        <div id="dimA" style="color:var(--text-dim);">空头占比：--</div>
-        <div id="dimB" style="color:var(--text-dim);">回补天数：--</div>
-        <div id="dimC" style="color:var(--text-dim);">变化速度：--</div>
-        <div id="dimD" style="color:var(--text-dim);">价格背离：--</div>
-      </div>
-      <div id="crowdingDetail" style="font-size:11px;color:var(--text);margin-top:8px;line-height:1.45;">等待拥挤度数据</div>
+      <div id="crowdingDims" style="display:none;"></div>
+      <div id="crowdingDetail" style="font-size:12px;color:var(--text);margin-top:8px;line-height:1.45;">等待空头行为数据</div>
+      <div id="shortBehaviorMatrix" style="margin-top:10px;"></div>
+      <div id="shortBehaviorHistory" style="margin-top:8px;"></div>
       <div id="crowdingMeta" style="font-size:10px;color:var(--text-dim);margin-top:5px;line-height:1.4;"></div>
     </div>
     <!-- 三层一致性 -->
@@ -6919,74 +6916,78 @@ async function loadCrowdingForAnalysis(sym) {
   const symbol = String(sym || currentSymbol || '').trim().toUpperCase();
   if (!symbol) return;
   const reqId = ++_crowdingReqSeq;
+  const badge = document.getElementById('crowdingBadge');
+  const detail = document.getElementById('crowdingDetail');
+  const matrix = document.getElementById('shortBehaviorMatrix');
+  const historyBox = document.getElementById('shortBehaviorHistory');
+  const meta = document.getElementById('crowdingMeta');
   try {
-    const badge = document.getElementById('crowdingBadge');
-    const detail = document.getElementById('crowdingDetail');
-    const meta = document.getElementById('crowdingMeta');
-    const dimA = document.getElementById('dimA');
-    const dimB = document.getElementById('dimB');
-    const dimC = document.getElementById('dimC');
-    const dimD = document.getElementById('dimD');
-    if (!badge) return;
-    badge.textContent = '读取中…';
-    if (detail) detail.textContent = '正在读取拥挤度指标…';
-    [dimA, dimB, dimC, dimD].forEach((el) => { if (el) el.style.color = 'var(--text-dim)'; });
+    if (badge) badge.textContent = '读取中…';
+    if (detail) detail.textContent = '';
+    if (matrix) matrix.innerHTML = '';
+    if (historyBox) historyBox.innerHTML = '';
     const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(symbol));
     const data = await res.json();
     const activeSymbol = String(currentSymbol || '').trim().toUpperCase();
     if (reqId !== _crowdingReqSeq || (activeSymbol && activeSymbol !== symbol)) return;
-    if (!data || !data.success) {
-      badge.textContent = '暂无数据';
-      if (detail) detail.textContent = data && data.error ? data.error : '暂时无法获取拥挤度数据';
-      if (meta) meta.textContent = '';
-      return;
-    }
+    if (!data || !data.success) throw new Error(data && data.error || '数据获取失败');
     const c = data.current || {};
-    const hasMetric = !!c.level || c.percentile != null || c.score != null || c.short_pct_float != null || c.days_to_cover != null;
-    if (!hasMetric) {
-      badge.textContent = '暂无数据';
-      if (detail) detail.textContent = '当前标的没有可用的拥挤度指标';
-      if (meta) meta.textContent = '';
-      return;
-    }
-    const level = c.level || '未评级';
-    const scoreLabel = _crowdingScoreLabel(c);
+    const b = c.short_behavior || {};
+    const state = b.state || 'insufficient';
+    const labels = {
+      A: '空头增加 · 股价下跌',
+      B: '空头增加 · 股价上涨',
+      C: '空头减少 · 股价上涨',
+      D: '空头减少 · 股价下跌',
+      mixed: '变化不明显 / 信号混合',
+      insufficient: '历史数据不足'
+    };
+    const interpretations = {
+      A: '空头仓位与下跌同向增加：卖压正在强化。先判断基本面是否恶化，不把下跌本身当作抄底信号。',
+      B: '空头增加但股价仍上涨：多空分歧扩大。若后续价格继续走强，空头可能面临回补压力；目前只是观察信号，不等于已经发生逼空。',
+      C: '空头减少且股价上涨：可能包含空头回补，也可能是看空观点撤退；上涨动能需结合成交量与后续价格确认。',
+      D: '空头减少但股价下跌：空头回补与价格走弱并存，可能是多头抛售主导，不能解读为空头看空增强。',
+      mixed: '两项变化未达到方向阈值，暂不归入明确状态。',
+      insufficient: '至少需要两个不同结算期的空头报告，并匹配对应交易日价格，才能判断变化方向。'
+    };
     const isShort = c.metric_type === 'short_composite_score' || c.metric_type === 'days_to_cover';
-    badge.innerHTML = '<span style="color:' + _crowdingLevelColor(level) + ';font-weight:700;">' +
-      escapeHtml(level) + '</span>' + (scoreLabel !== '--' ? ' · ' + (isShort ? '评分 ' : '分位 ') + scoreLabel : '');
-    if (dimA) dimA.textContent = isShort
-      ? '空头占比：' + (c.short_pct_float != null ? Number(c.short_pct_float).toFixed(1) + '%' : '暂无')
-      : '成交量分位：' + (c.percentile != null ? Number(c.percentile).toFixed(1) + '%' : '暂无');
-    if (dimB) dimB.textContent = '回补天数：' + (c.days_to_cover != null ? Number(c.days_to_cover).toFixed(2) + ' 天' : '暂无');
-    if (dimC) dimC.textContent = '变化速度：' + (c.speed_chg != null
-      ? ((Number(c.speed_chg) > 0 ? '+' : '') + Number(c.speed_chg).toFixed(1) + '%')
-      : (isShort ? '暂无' : (c.speed || '暂无')));
-    if (dimD) dimD.textContent = '价格背离：' + (c.divergence ? c.divergence : '暂无数据');
-    const shortPct = c.short_pct_float != null ? Number(c.short_pct_float).toFixed(1) + '%' : '';
-    const days = c.days_to_cover != null ? Number(c.days_to_cover).toFixed(2) + '天' : '';
-    let diagnosis = '';
-    if (isShort) {
-      diagnosis = '空头复合评分综合反映空头占流通股比例与回补压力；当前' +
-        (shortPct ? '空头占比 ' + shortPct : '空头占比数据缺失') +
-        (days ? '，回补天数 ' + days : '') +
-        '。该评分衡量空头拥挤风险，不代表历史百分位或股价上涨概率。';
-    } else if (c.percentile != null) {
-      diagnosis = '当前成交量处于自身历史 ' + Number(c.percentile).toFixed(1) +
-        '% 分位，反映交易活跃程度；高分位意味着成交活跃，不单独代表方向或顶部。';
-    } else {
-      diagnosis = '拥挤度等级：' + level + '。现有指标不足以进一步拆解风险来源。';
+    if (badge) badge.textContent = isShort ? (labels[state] || '历史数据不足') : (c.level || '成交量拥挤度');
+    if (detail) detail.textContent = isShort ? (interpretations[state] || interpretations.insufficient) :
+      (c.percentile != null ? '成交量处于自身历史 ' + Number(c.percentile).toFixed(1) + '% 分位。' : '暂无可用的行为分析。');
+    if (matrix && isShort) {
+      const cells = [
+        {id:'A',title:'空头↑ / 股价↓',sub:'卖压强化'},
+        {id:'B',title:'空头↑ / 股价↑',sub:'多空分歧扩大'},
+        {id:'C',title:'空头↓ / 股价↑',sub:'可能回补'},
+        {id:'D',title:'空头↓ / 股价↓',sub:'多头抛售主导'}
+      ];
+      matrix.innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">' + cells.map(x =>
+        '<div style="padding:8px;border:1px solid ' + (state === x.id ? 'var(--gold)' : 'var(--border)') +
+        ';border-radius:7px;background:' + (state === x.id ? 'rgba(241,196,15,.09)' : 'transparent') + ';">' +
+        '<div style="font-size:11px;font-weight:700;color:' + (state === x.id ? 'var(--gold)' : 'var(--text)') + ';">' + x.id + ' · ' + x.title + '</div>' +
+        '<div style="font-size:10px;color:var(--text-dim);margin-top:3px;">' + x.sub + '</div></div>'
+      ).join('') + '</div>';
+      if (b.short_change_pct != null && b.price_change_pct != null) {
+        matrix.innerHTML += '<div style="font-size:11px;color:var(--text-dim);margin-top:7px;">观察区间 ' +
+          escapeHtml(String(b.from_date || '')) + ' → ' + escapeHtml(String(b.to_date || '')) +
+          '　空头 ' + (Number(b.short_change_pct) > 0 ? '+' : '') + Number(b.short_change_pct).toFixed(1) +
+          '%　股价 ' + (Number(b.price_change_pct) > 0 ? '+' : '') + Number(b.price_change_pct).toFixed(1) + '%</div>';
+      }
     }
-    if (detail) detail.textContent = diagnosis;
+    const hist = Array.isArray(b.history) ? b.history.slice(-8).reverse() : [];
+    if (historyBox && hist.length) {
+      historyBox.innerHTML = '<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">空头报告与同期价格</div>' +
+        hist.map(x => '<div style="display:grid;grid-template-columns:82px 1fr 1fr;gap:6px;padding:4px 1px;border-bottom:1px solid var(--border);font-size:10px;">' +
+          '<span style="color:var(--text-dim);">' + escapeHtml(String(x.date || '').slice(0,10)) + '</span>' +
+          '<span>空头 ' + (x.short_interest != null ? (Number(x.short_interest)/1e6).toFixed(1)+'M' : '--') + '</span>' +
+          '<span>收盘 $' + (x.close != null ? Number(x.close).toFixed(2) : '--') + '</span></div>').join('');
+    }
     if (meta) meta.textContent = [c.source || c.reason || '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
-    // 同步刷新仓位页数据，但两个模块各自使用不同的展示口径。
-    try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (eL) {}
+    try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (e) {}
   } catch (e) {
-    try {
-      const badge = document.getElementById('crowdingBadge');
-      const detail = document.getElementById('crowdingDetail');
-      if (badge) badge.textContent = '读取失败';
-      if (detail) detail.textContent = '暂时无法读取拥挤度数据';
-    } catch (e2) {}
+    if (badge) badge.textContent = '暂无数据';
+    if (detail) detail.textContent = String(e && e.message || '暂时无法读取空头行为数据');
+    if (meta) meta.textContent = '';
   }
 }
 
