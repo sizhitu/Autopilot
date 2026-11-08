@@ -3128,11 +3128,8 @@ def _compute_crowding_from_df(df) -> dict:
         vol = None
         if "volume" in df.columns:
             vol = df["volume"].astype(float)
-        # 成交量缺失时用价格波动做近似
-        if vol is None or vol.sum() <= 0:
-            vol = close.pct_change().abs().fillna(0) * 1e6
-        if vol.sum() <= 0:
-            return {}
+        if vol is None or vol.sum() <= 0 or (vol > 0).sum() < 20:
+            return {}  # 真实成交量不足
         # 近 20 日均成交量 vs 过去 1 年分位
         win = 20
         recent = vol.tail(win).mean()

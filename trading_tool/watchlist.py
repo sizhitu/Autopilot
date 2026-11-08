@@ -366,6 +366,28 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 
 
 
+def _fetch_volume_only(code: str) -> "pd.Series | None":
+    """专门取成交量。美股走 Stooq，A股走腾讯。失败返回 None。"""
+    try:
+        import data_fetcher
+        f = data_fetcher.DataFetcher()
+        is_cn = str(code).isdigit() or str(code).upper().startswith(("SH", "SZ", "BJ"))
+        if is_cn:
+            df = f.fetch_cn_stock(code, days=250)
+        else:
+            try:
+                df = f._fetch_stooq(code, days=250)
+            except Exception:
+                df = f._fetch_us_stock_nasdaq(code, days=250)
+        if df is not None and "volume" in df.columns and len(df) >= 20:
+            vol = df["volume"].astype(float)
+            if (vol > 0).sum() >= 20:
+                return vol
+    except Exception:
+        pass
+    return None
+
+
 def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
     """从已有 OHLCV DataFrame 计算看板状态（不访问网络）。冷备 parquet 还原 JSON 用。"""
     market = '美股' if not str(code).isdigit() else 'A股'
@@ -408,15 +430,14 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
             prev_5 = float(df['close'].iloc[-1 - lookback_5])
             status.change_5d = round((last_close - prev_5) / prev_5 * 100, 2)
 
-        # 拥挤度：近20日均成交量 vs 过去1年分位；成交量缺失时用价格波动近似
+        # 拥挤度：只用真实成交量。主数据缺失时专门再取一次。
         try:
             vol = None
             if 'volume' in df.columns:
                 vol = df['volume'].astype(float)
-            if vol is None or vol.sum() <= 0:
-                # 用价格绝对涨跌幅近似活跃度
-                vol = df['close'].astype(float).pct_change().abs().fillna(0) * 1e6
-            if len(df) >= 20 and vol is not None and vol.sum() > 0:
+            if vol is None or vol.sum() <= 0 or (vol > 0).sum() < 20:
+                vol = _fetch_volume_only(code)
+            if vol is not None and len(vol) >= 20:
                 recent = vol.tail(20).mean()
                 hist = vol.tail(min(250, len(vol)))
                 if hist.sum() > 0 and recent > 0:

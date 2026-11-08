@@ -5740,19 +5740,9 @@ function renderWatchlist(stocks) {
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
       <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
       <td style="padding:5px 4px;font-size:11px;text-align:center;">${(function(){
-        let lv = s.crowding_level || '';
-        let pct = s.crowding_pct;
-        // 后端未返回时用近5日涨幅做简易近似，避免一直「计算中」
-        if (!lv && (pct == null || pct === '')) {
-          const c5 = Number(s.change_5d);
-          if (!isNaN(c5)) {
-            if (Math.abs(c5) >= 15) { lv = '偏高'; pct = 70; }
-            else if (Math.abs(c5) >= 8) { lv = '正常'; pct = 50; }
-            else { lv = '正常'; pct = 30; }
-          } else {
-            return '<span style="color:var(--text-dim);font-size:10px;">--</span>';
-          }
-        }
+        const lv = s.crowding_level || '';
+        const pct = s.crowding_pct;
+        if (!lv && (pct == null || pct === '')) return '<span style="color:var(--text-dim);font-size:10px;">数据不足</span>';
         const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
         return '<span style="color:' + c + ';font-weight:600;">' + (lv || '正常') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '%</div>' : '');
       })()}</td>
