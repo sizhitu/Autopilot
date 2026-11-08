@@ -383,8 +383,101 @@ def _get_cached_short(code: str) -> dict:
     return data
 
 
+def _fetch_ortex_official_short_interest(code: str, api_key: str, namespace: str = "NYSE") -> dict:
+    """读取 ORTEX 单股官方半月度空头报告；不使用日度估算 short interest。"""
+    import requests
+    from datetime import date, timedelta
+
+    code = str(code or "").strip().upper()
+    namespace = str(namespace or "NYSE").strip().upper()
+    end_date = date.today()
+    start_date = end_date - timedelta(days=370)
+    url = f"https://api.ortex.com/api/v11/stock/{namespace}/{code}/short/official_short_interest/"
+    params = {
+        "from_date": start_date.isoformat(),
+        "to_date": end_date.isoformat(),
+        "split_adjusted": "true",
+        "page": 1,
+        "page_size": 50,
+    }
+    headers = {"Ortex-Api-Key": api_key, "Accept": "application/json"}
+    response = requests.get(url, params=params, headers=headers, timeout=20)
+    if response.status_code != 200:
+        return {
+            "status": "provider_error",
+            "source": "ORTEX 官方空头报告",
+            "message": f"ORTEX 官方空头接口返回 HTTP {response.status_code}；请检查 TEST Key 的地区/日期限制或套餐权限。",
+        }
+
+    payload = response.json() or {}
+    rows = payload.get("data") or []
+    if isinstance(rows, dict):
+        rows = rows.get("results") or rows.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        meta = payload.get("meta") or {}
+        return {
+            "status": "no_records",
+            "source": "ORTEX 官方空头报告",
+            "message": str(meta.get("emptyReason") or f"ORTEX 没有返回 {namespace}:{code} 的官方空头报告。"),
+        }
+
+    history = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            settlement = str(row.get("settlementDate") or "")[:10]
+            shares_raw = row.get("officialSiShares")
+            if not settlement or shares_raw in (None, ""):
+                continue
+            shares = float(shares_raw)
+            if shares <= 0:
+                continue
+            avg_raw = row.get("officialAvgDailyVolume")
+            avg_volume = float(avg_raw) if avg_raw not in (None, "") else None
+            days_raw = row.get("officialDaysToCover")
+            days = float(days_raw) if days_raw not in (None, "") else (
+                shares / avg_volume if avg_volume and avg_volume > 0 else None
+            )
+            history.append({
+                "date": settlement,
+                "published_date": str(row.get("publishedDate") or "")[:10] or None,
+                "short_interest": shares,
+                "avg_volume": avg_volume,
+                "days_to_cover": round(days, 2) if days is not None and days > 0 else None,
+            })
+        except (TypeError, ValueError):
+            continue
+
+    history = sorted(
+        {row["date"]: row for row in history}.values(),
+        key=lambda row: row["date"],
+    )
+    if not history:
+        return {
+            "status": "no_records",
+            "source": "ORTEX 官方空头报告",
+            "message": "ORTEX 已响应，但没有可用的官方空头持仓记录。",
+        }
+
+    latest = history[-1]
+    return {
+        "status": "ok",
+        "short_interest": latest["short_interest"],
+        "avg_volume": latest.get("avg_volume"),
+        "days_to_cover": latest.get("days_to_cover"),
+        "short_pct_float": None,
+        "composite": None,
+        "settlement_date": latest["date"],
+        "published_date": latest.get("published_date"),
+        "history": history[-24:],
+        "source": f"ORTEX 官方报告（{namespace}）",
+    }
+
+
 def _fetch_us_short_interest(code: str) -> dict:
-    """读取 Nasdaq 上市证券官方半月度空头报告；不把 OTC 数据冒充 NYSE 数据。"""
+    """先读取 Nasdaq 官方半月度报告；无记录时可选查询 ORTEX NYSE 官方报告。"""
+    import os
     import requests
 
     code = str(code or "").strip().upper()
@@ -457,14 +550,24 @@ def _fetch_us_short_interest(code: str) -> dict:
                     "source": "Nasdaq 官方空头报告",
                 }
 
-        # Nasdaq 无记录时不将 FINRA OTC 数据误当作 NYSE/Nasdaq 上市股持仓。
+        # Nasdaq 无记录时，使用 ORTEX 按 NYSE venue 查询官方半月度报告。
+        api_key = os.getenv("ORTEX_API_KEY", "").strip()
+        if api_key:
+            try:
+                return _fetch_ortex_official_short_interest(code, api_key, namespace="NYSE")
+            except Exception as exc:
+                return {
+                    "status": "provider_error",
+                    "source": "ORTEX 官方空头报告",
+                    "message": f"ORTEX 官方空头数据请求失败：{type(exc).__name__}。",
+                }
+
         return {
             "status": "provider_required",
             "source": "Nasdaq",
             "message": (
-                "Nasdaq 个股接口未返回记录。FINRA 的 consolidatedShortInterest API "
-                "仅提供 OTC 空头持仓，不覆盖此处需要的 NYSE 上市证券；"
-                "目前没有验证通过的免费官方 NYSE 个股历史接口。"
+                "Nasdaq 个股接口未返回记录。NYSE 上市证券需要按 NYSE venue 查询官方空头报告；"
+                "请配置 ORTEX_API_KEY。可先使用官方免费测试 Key TEST 验证，无需立即购买套餐。"
             ),
         }
     except Exception as exc:
