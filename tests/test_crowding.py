@@ -21,14 +21,25 @@ def test_us_short_interest():
 
 
 def test_non_nasdaq_fallback(monkeypatch):
-    """Nasdaq 无记录且未配置 ORTEX 时，明确返回数据源覆盖提示。"""
+    """Nasdaq 无记录时回退到 FINRA 免费跨交易所官方数据。"""
+    import requests
     import watchlist
-    monkeypatch.delenv("ORTEX_API_KEY", raising=False)
-    monkeypatch.setattr(watchlist.requests if hasattr(watchlist, "requests") else __import__("requests"), "get", lambda *a, **k: type("R", (), {"status_code": 200, "json": lambda self: {"data": {"shortInterestTable": {"rows": []}}}})())
+
+    class EmptyResponse:
+        status_code = 200
+        def json(self):
+            return {"data": {"shortInterestTable": {"rows": []}}}
+
+    class FinraEmptyResponse:
+        status_code = 200
+        def json(self):
+            return []
+
+    monkeypatch.setattr(requests, "get", lambda *a, **k: EmptyResponse())
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FinraEmptyResponse())
     si = watchlist._fetch_us_short_interest("BE")
-    assert si["status"] == "provider_required"
-    assert "Nasdaq 上市证券" in si["message"]
-    assert "ORTEX_API_KEY" in si["message"]
+    assert si["status"] == "no_records"
+    assert si["source"] == "FINRA Consolidated Short Interest"
 
 
 def test_compute_crowding_volume():
@@ -112,27 +123,44 @@ def test_watchlist_richness_counts_crowding_data():
     assert _row_richness(rich) > _row_richness(bare)
 
 
-def test_ortex_official_short_interest_parsing(monkeypatch):
-    """ORTEX 官方半月度报告字段映射为拥挤度历史。"""
+def test_finra_consolidated_short_interest_parsing(monkeypatch):
+    """FINRA 合并数据字段正确映射，并保留半月度历史。"""
+    import requests
     import watchlist
 
     class Response:
         status_code = 200
         def json(self):
-            return {"data": [
-                {"settlementDate": "2026-10-15", "publishedDate": "2026-10-22",
-                 "officialSiShares": 1200000, "officialAvgDailyVolume": 300000,
-                 "officialDaysToCover": 4.0},
-                {"settlementDate": "2026-10-30", "publishedDate": "2026-11-06",
-                 "officialSiShares": 1320000, "officialAvgDailyVolume": 330000,
-                 "officialDaysToCover": 4.0},
-            ]}
+            return [
+                {
+                    "symbolCode": "BE", "settlementDate": "2026-10-30",
+                    "currentShortPositionQuantity": 1320000,
+                    "previousShortPositionQuantity": 1200000,
+                    "averageDailyVolumeQuantity": 330000,
+                    "daysToCoverQuantity": 4.0, "changePercent": 10.0,
+                    "marketClassCode": "NYSE",
+                },
+                {
+                    "symbolCode": "BE", "settlementDate": "2026-10-15",
+                    "currentShortPositionQuantity": 1200000,
+                    "previousShortPositionQuantity": 1100000,
+                    "averageDailyVolumeQuantity": 300000,
+                    "daysToCoverQuantity": 4.0, "changePercent": 9.09,
+                    "marketClassCode": "NYSE",
+                },
+            ]
 
-    monkeypatch.setattr("requests.get", lambda *a, **k: Response())
-    result = watchlist._fetch_ortex_official_short_interest("BE", "test-key")
+    captured = {}
+    def fake_post(url, json, headers, timeout):
+        captured.update({"url": url, "body": json, "headers": headers})
+        return Response()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    result = watchlist._fetch_finra_consolidated_short_interest("BE")
     assert result["status"] == "ok"
     assert result["short_interest"] == 1320000
     assert result["days_to_cover"] == 4.0
-    assert result["composite"] is None  # 没有流通股比例时不伪造复合评分
-    assert len(result["history"]) == 2
-    assert result["history"][-1]["published_date"] == "2026-11-06"
+    assert result["composite"] is None
+    assert [row["date"] for row in result["history"]] == ["2026-10-15", "2026-10-30"]
+    assert captured["body"]["compareFilters"][0]["fieldName"] == "symbolCode"
+    assert captured["body"]["compareFilters"][0]["fieldValue"] == "BE"
