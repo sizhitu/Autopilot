@@ -524,6 +524,69 @@ async def global_api_rate_limit(request: Request, call_next):
 # ================================================================
 #  健康检查
 # ================================================================
+# ----------------------------------------------------------------------
+# NYSE Group public short-interest aggregate (cold-backup JSON)
+# ----------------------------------------------------------------------
+_NYSE_AGGREGATE_CACHE = {"at": 0.0, "data": None}
+
+
+def _load_nyse_aggregate_latest() -> dict:
+    """Read aggregate-only latest.json from the private cold-backup repo."""
+    now = time.time()
+    cached = _NYSE_AGGREGATE_CACHE.get("data")
+    if cached and now - float(_NYSE_AGGREGATE_CACHE.get("at") or 0) < 300:
+        return cached
+
+    token = (os.getenv("DATA_REPO_TOKEN") or "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="NYSE aggregate archive is not connected: DATA_REPO_TOKEN is not configured on the API service",
+        )
+
+    import base64
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError, URLError
+
+    url = (
+        "https://api.github.com/repos/sizhitu/Autopilot-data/contents/"
+        "data/nyse_short_interest/latest.json?ref=main"
+    )
+    req = Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Autopilot-API",
+    })
+    try:
+        with urlopen(req, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        decoded = base64.b64decode(payload.get("content") or "").decode("utf-8")
+        data = json.loads(decoded)
+    except HTTPError as exc:
+        if exc.code == 404:
+            raise HTTPException(status_code=404, detail="No NYSE aggregate report has been archived yet")
+        raise HTTPException(status_code=502, detail=f"Cold-backup read failed (GitHub HTTP {exc.code})")
+    except (URLError, TimeoutError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=502, detail=f"Could not read NYSE aggregate archive: {type(exc).__name__}")
+
+    if data.get("scope") != "exchange_aggregate" or not isinstance(data.get("rows"), list):
+        raise HTTPException(status_code=502, detail="NYSE archive schema/scope validation failed")
+    if any("symbol" in row or "ticker" in row for row in data["rows"]):
+        raise HTTPException(status_code=502, detail="Unexpected ticker-level fields in aggregate dataset")
+
+    _NYSE_AGGREGATE_CACHE["at"] = now
+    _NYSE_AGGREGATE_CACHE["data"] = data
+    return data
+
+
+@app.get("/api/short-interest/nyse/aggregate")
+async def nyse_short_interest_aggregate():
+    """NYSE Group exchange-level aggregate only; never a per-symbol SI endpoint."""
+    data = await asyncio.to_thread(_load_nyse_aggregate_latest)
+    return data
+
+
 @app.get("/api/health")
 async def health():
     """必须极快返回：Render 健康检查仅 5s；禁止任何缓存清理/DB/行情。"""
