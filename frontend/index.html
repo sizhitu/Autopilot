@@ -6992,7 +6992,7 @@ async function loadCrowdingForAnalysis(sym) {
         const volumeRows=hist.map(x=>'<div style="display:grid;grid-template-columns:78px 52px 1fr 1fr;gap:5px;padding:5px 1px;border-bottom:1px solid var(--border);font-size:10px;"><span style="color:var(--text-dim);">'+escapeHtml(String(x.date||'').slice(0,10))+'</span><b style="color:'+(Number(x.percentile)>=80?'var(--gold)':'var(--text)')+';">'+Number(x.percentile).toFixed(1)+'%</b><span>20日均量 '+(x.avg_volume_20!=null?Number(x.avg_volume_20).toLocaleString('zh-CN',{maximumFractionDigits:0}):'--')+'</span><span>收盘 '+(x.close!=null?Number(x.close).toFixed(2):'--')+'</span></div>').join('');
         historyBox.innerHTML=chartHtml+(hist.length?'<div style="font-size:10px;color:var(--text-dim);margin:5px 0 3px;">历史数据（最新在前） · 分位 / 20日均量 / 收盘价</div>'+volumeRows:'');
       } else {
-
+      const chartRows = allHistory.slice(-12).filter(x => Number(x.short_interest) > 0 && Number(x.close) > 0);
       const fmtShares = v => (Number(v) / 1e6).toFixed(2) + 'M';
       let chartHtml = '';
       if (chartRows.length >= 2) {
