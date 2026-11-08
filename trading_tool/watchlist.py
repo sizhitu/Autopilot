@@ -384,70 +384,87 @@ def _get_cached_short(code: str) -> dict:
     return data
 
 
-def _fetch_ortex_official_short_interest(code: str, api_key: str) -> dict:
-    """读取 ORTEX 按交易所/监管机构发布的官方半月度空头持仓，不使用日度估算值。"""
+def _fetch_finra_consolidated_short_interest(code: str) -> dict:
+    """读取 FINRA 免费 Consolidated Short Interest：跨交易所、半月度官方申报数据。"""
     import requests
-    from datetime import date, timedelta
 
-    end_date = date.today()
-    start_date = end_date - timedelta(days=370)  # 约覆盖一年、最多 24 个半月报告
-    url = f"https://api.ortex.com/api/v11/stock/US/{code}/short/official_short_interest/"
-    params = {
-        "from_date": start_date.isoformat(),
-        "to_date": end_date.isoformat(),
-        "page": 1,
-        "page_size": 100,
-        "split_adjusted": "true",
+    code = str(code or "").strip().upper()
+    if not code:
+        return {"status": "invalid_symbol", "message": "股票代码为空。"}
+
+    url = "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Autopilot research app",
     }
-    headers = {"Ortex-Api-Key": api_key, "Accept": "application/json"}
-    response = requests.get(url, params=params, headers=headers, timeout=15)
-    if response.status_code != 200:
+    body = {
+        "compareFilters": [{
+            "compareType": "EQUAL",
+            "fieldName": "symbolCode",
+            "fieldValue": code,
+        }],
+        "limit": 5000,
+    }
+    response = requests.post(url, json=body, headers=headers, timeout=20)
+    if response.status_code == 204:
+        rows = []
+    elif response.status_code != 200:
         return {
             "status": "provider_error",
-            "source": "ORTEX Official Short Interest",
-            "message": f"ORTEX 官方空头数据接口返回 HTTP {response.status_code}；请检查 API 权限或额度。",
+            "source": "FINRA Consolidated Short Interest",
+            "message": f"FINRA 空头持仓接口返回 HTTP {response.status_code}。",
         }
-
-    payload = response.json() or {}
-    rows = payload.get("data") or []
-    if isinstance(rows, dict):
-        rows = rows.get("results") or rows.get("rows") or []
-    if not isinstance(rows, list) or not rows:
-        meta = payload.get("meta") or {}
-        return {
-            "status": "no_records",
-            "source": "ORTEX Official Short Interest",
-            "message": str(meta.get("emptyReason") or "ORTEX 未返回该证券的官方空头报告。"),
-        }
+    else:
+        payload = response.json()
+        rows = payload if isinstance(payload, list) else (
+            payload.get("data") or payload.get("results") or []
+            if isinstance(payload, dict) else []
+        )
 
     history = []
     for row in rows:
+        if not isinstance(row, dict):
+            continue
         try:
             settlement = str(row.get("settlementDate") or "")[:10]
-            shares = float(row.get("officialSiShares") or 0)
-            if not settlement or shares <= 0:
+            shares_raw = row.get("currentShortPositionQuantity")
+            if not settlement or shares_raw in (None, ""):
                 continue
-            avg_volume = float(row.get("officialAvgDailyVolume") or 0)
-            days = row.get("officialDaysToCover")
-            days = float(days) if days not in (None, "") else (shares / avg_volume if avg_volume > 0 else 0)
+            shares = float(shares_raw)
+            if shares <= 0:
+                continue
+            avg_volume_raw = row.get("averageDailyVolumeQuantity")
+            avg_volume = float(avg_volume_raw) if avg_volume_raw not in (None, "") else None
+            days_raw = row.get("daysToCoverQuantity")
+            days = float(days_raw) if days_raw not in (None, "") else (
+                shares / avg_volume if avg_volume and avg_volume > 0 else None
+            )
             history.append({
                 "date": settlement,
-                "published_date": str(row.get("publishedDate") or "")[:10] or None,
                 "short_interest": shares,
-                "avg_volume": avg_volume or None,
-                "days_to_cover": round(days, 2) if days > 0 else None,
+                "previous_short_interest": (
+                    float(row["previousShortPositionQuantity"])
+                    if row.get("previousShortPositionQuantity") not in (None, "") else None
+                ),
+                "avg_volume": avg_volume,
+                "days_to_cover": round(days, 2) if days is not None and days > 0 else None,
+                "change_pct": (
+                    float(row["changePercent"])
+                    if row.get("changePercent") not in (None, "") else None
+                ),
+                "market_class": row.get("marketClassCode"),
             })
         except (TypeError, ValueError):
             continue
 
-    # 去重并按结算日升序，供行为矩阵按相邻报告期计算。
     by_date = {row["date"]: row for row in history}
     history = sorted(by_date.values(), key=lambda row: row["date"])
     if not history:
         return {
             "status": "no_records",
-            "source": "ORTEX Official Short Interest",
-            "message": "接口已响应，但没有可用的官方空头持仓记录。",
+            "source": "FINRA Consolidated Short Interest",
+            "message": f"FINRA 合并空头持仓数据中没有找到 {code} 的记录。",
         }
 
     latest = history[-1]
@@ -456,18 +473,16 @@ def _fetch_ortex_official_short_interest(code: str, api_key: str) -> dict:
         "short_interest": latest["short_interest"],
         "avg_volume": latest.get("avg_volume"),
         "days_to_cover": latest.get("days_to_cover"),
-        "short_pct_float": None,  # 官方持仓接口不提供流通股比例时不推算
-        "composite": None,        # 缺少流通股比例，不伪造复合评分
+        "short_pct_float": None,
+        "composite": None,
         "settlement_date": latest["date"],
-        "published_date": latest.get("published_date"),
         "history": history[-24:],
-        "source": "ORTEX 官方交易所空头报告",
+        "source": "FINRA 官方合并空头持仓",
     }
 
 
 def _fetch_us_short_interest(code: str) -> dict:
     """先取 Nasdaq 个股报告；无记录时可选用 ORTEX 跨交易所官方报告。"""
-    import os
     import requests
 
     code = str(code or "").strip().upper()
@@ -540,27 +555,21 @@ def _fetch_us_short_interest(code: str) -> dict:
                     "source": "Nasdaq 官方空头报告",
                 }
 
-        # Nasdaq 个股页面只覆盖 Nasdaq-listed securities；NYSE 等交易所需独立官方数据源。
-        api_key = os.getenv("ORTEX_API_KEY", "").strip()
-        if api_key:
-            try:
-                return _fetch_ortex_official_short_interest(code, api_key)
-            except Exception as exc:
-                return {
-                    "status": "provider_error",
-                    "source": "ORTEX Official Short Interest",
-                    "message": f"ORTEX 官方空头数据请求失败：{type(exc).__name__}。请检查网络、API Key 和权限。",
-                }
-
-        return {
-            "status": "provider_required",
-            "source": "Nasdaq",
-            "message": (
-                "Nasdaq 个股接口没有返回记录，且该接口仅覆盖 Nasdaq 上市证券。"
-                "NYSE 等交易所的官方半月度空头持仓需要 NYSE Group 授权数据，"
-                "或配置 ORTEX_API_KEY 接入跨交易所官方报告；当前未用日度卖空成交量替代。"
-            ),
-        }
+        # Nasdaq 无记录时，回退到 FINRA 免费跨交易所官方合并空头持仓。
+        try:
+            finra = _fetch_finra_consolidated_short_interest(code)
+            if finra.get("status") == "ok":
+                return finra
+            return {
+                **finra,
+                "message": finra.get("message") or "FINRA 暂无该证券的官方空头持仓记录。",
+            }
+        except Exception as exc:
+            return {
+                "status": "provider_error",
+                "source": "FINRA Consolidated Short Interest",
+                "message": f"FINRA 官方空头持仓请求失败：{type(exc).__name__}。",
+            }
     except Exception as exc:
         return {
             "status": "source_error",
