@@ -35,7 +35,7 @@ The response carries `scope=exchange_aggregate`; it is not a ticker lookup endpo
 ## Local run
 
 ```bash
-pip install pandas pyarrow xlrd>=2.0.2
+pip install pandas pyarrow 'xlrd>=2.0.2'
 python scripts/archive/nyse_short_interest/fetch_and_parse.py --out /path/to/Autopilot-data/data
 ```
 
