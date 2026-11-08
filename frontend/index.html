@@ -6989,7 +6989,6 @@ async function loadStockAdvice(requestedSymbol) {
     let dims = '';
     if (c.metric_type === 'short_composite_score' && c.score != null) dims += '空头复合评分 ' + Math.round(Number(c.score) * 100) + '/100';
     else if (c.percentile != null) dims += '水平 ' + c.percentile + '%分位';
-    else if (c.days_to_cover != null) dims += '回补天数 ' + c.days_to_cover;
     if (c.short_pct_float != null) dims += (dims ? ' · ' : '') + '空头占比 ' + c.short_pct_float + '%';
     if (c.days_to_cover != null) dims += (dims ? ' · ' : '') + '回补天数 ' + c.days_to_cover;
     if (c.level) dims += (dims ? ' · ' : '') + '等级 ' + c.level;
