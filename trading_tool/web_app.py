@@ -3270,7 +3270,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "source": si.get("source") or "Nasdaq/FINRA",
                         "as_of": si.get("settlement_date") or None,
                     }
-                    # 将每期 FINRA 空头报告与相同结算日期附近的收盘价对齐，识别空头变化与价格关系。
+                    # 将每期官方空头报告与相同结算日期附近的收盘价对齐，识别空头变化与价格关系。
                     try:
                         short_history = si.get("history") or []
                         df_hist = await asyncio.to_thread(_fetch_for_advice, sym)
