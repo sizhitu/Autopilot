@@ -65,7 +65,7 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 
 - **后端 · Backend**：Python 3.11 · FastAPI · uvicorn · pandas / numpy
 - **前端 · Frontend**：原生 HTML/CSS/JS · Canvas 绘图（无第三方框架）
-- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Yahoo Finance / Nasdaq API（现价与 Nasdaq 上市股票空头报告）· FINRA consolidatedShortInterest（跨交易所官方半月度空头持仓）
+- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（Nasdaq 上市股票官方空头报告）· ORTEX 官方空头报告（NYSE/Nasdaq 上市股，需 ORTEX_API_KEY）· FINRA consolidatedShortInterest（OTC 官方数据，仅显式启用 FINRA_ALLOW_OTC_FALLBACK 时使用）
 - **美股源探测**：`docs/us_market_data.md` · `python3 trading_tool/probe_us_sources.py`
 - **部署 · Deploy**：Docker · docker-compose · 预览看门狗（自愈重启）
 
