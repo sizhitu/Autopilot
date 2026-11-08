@@ -3255,10 +3255,11 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "score": score,
                         "metric_type": "short_composite_score" if score is not None else "days_to_cover",
                         "level": ("极端" if score >= 2 else "高" if score >= 1 else "偏高" if score >= 0.5 else "正常") if score is not None else ("高" if (days or 0) >= 8 else "偏高" if (days or 0) >= 5 else "正常"),
-                        "speed": f"空头{si.get('short_pct_float') if si.get('short_pct_float') is not None else '--'}%",
+                        "speed": "",
                         "speed_chg": None,
                         "divergence": "",
                         "price_chg": None,
+                        "short_behavior": {"state": "insufficient", "label": "历史数据不足", "short_change_pct": None, "price_change_pct": None, "history": []},
                         "advice": "",
                         "reason": si.get("source") or "Nasdaq/FINRA",
                         "short_pct_float": si.get("short_pct_float"),
@@ -3266,6 +3267,59 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "source": si.get("source") or "Nasdaq/FINRA",
                         "as_of": si.get("settlement_date") or None,
                     }
+                    # 将每期 FINRA 空头报告与相同结算日期附近的收盘价对齐，识别空头变化与价格关系。
+                    try:
+                        short_history = si.get("history") or []
+                        df_hist = await asyncio.to_thread(_fetch_for_advice, sym)
+                        aligned = []
+                        if df_hist is not None and len(df_hist) and short_history:
+                            _df = df_hist.copy()
+                            if "date" in _df.columns:
+                                _df["_date"] = pd.to_datetime(_df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+                            else:
+                                _df["_date"] = pd.to_datetime(_df.index, errors="coerce").strftime("%Y-%m-%d")
+                            _df = _df.dropna(subset=["_date"]).sort_values("_date")
+                            for h in short_history:
+                                try:
+                                    raw_d = str(h.get("date") or "")
+                                    try:
+                                        hd = datetime.strptime(raw_d, "%m/%d/%Y").date().isoformat()
+                                    except ValueError:
+                                        hd = raw_d[:10]
+                                    prior = _df[_df["_date"] <= hd]
+                                    if prior.empty:
+                                        continue
+                                    close = float(prior.iloc[-1]["close"])
+                                    aligned.append({"date": hd, "short_interest": h.get("short_interest"),
+                                                    "days_to_cover": h.get("days_to_cover"), "close": close})
+                                except Exception:
+                                    continue
+                        aligned.sort(key=lambda x: x["date"])
+                        behavior = {"state": "insufficient", "label": "历史数据不足",
+                                    "short_change_pct": None, "price_change_pct": None, "history": aligned}
+                        if len(aligned) >= 2:
+                            prev, cur = aligned[-2], aligned[-1]
+                            si0, si1 = float(prev["short_interest"]), float(cur["short_interest"])
+                            p0, p1 = float(prev["close"]), float(cur["close"])
+                            sc = (si1 / si0 - 1) * 100 if si0 > 0 else None
+                            pc = (p1 / p0 - 1) * 100 if p0 > 0 else None
+                            if sc is not None and pc is not None:
+                                if sc >= 5 and pc <= -2:
+                                    state, label = "A", "空头增加 · 股价下跌"
+                                elif sc >= 5 and pc >= 2:
+                                    state, label = "B", "空头增加 · 股价上涨"
+                                elif sc <= -5 and pc >= 2:
+                                    state, label = "C", "空头减少 · 股价上涨"
+                                elif sc <= -5 and pc <= -2:
+                                    state, label = "D", "空头减少 · 股价下跌"
+                                else:
+                                    state, label = "mixed", "变化不明显 / 信号混合"
+                                behavior = {"state": state, "label": label,
+                                            "short_change_pct": round(sc, 2), "price_change_pct": round(pc, 2),
+                                            "from_date": prev["date"], "to_date": cur["date"], "history": aligned}
+                        metrics["short_behavior"] = behavior
+                    except Exception:
+                        pass
                     raw_settlement = str(si.get("settlement_date") or "").strip()
                     if raw_settlement:
                         try:
