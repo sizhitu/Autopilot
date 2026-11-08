@@ -6905,6 +6905,7 @@ function _crowdingLevelColor(level) {
 }
 function _crowdingScoreLabel(c) {
   if (c.metric_type === 'short_composite_score' && c.score != null) return Math.round(Number(c.score) * 100) + '/100';
+  if (c.metric_type === 'days_to_cover' && c.days_to_cover != null) return '回补 ' + Number(c.days_to_cover).toFixed(1) + ' 天';
   if (c.percentile != null) return Number(c.percentile).toFixed(1) + '%';
   return '--';
 }
