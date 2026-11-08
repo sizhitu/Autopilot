@@ -3231,7 +3231,7 @@ def _fetch_for_advice(symbol: str):
 @app.get("/api/position/stock-advice")
 async def stock_position_advice(symbol: str = "", authorization: Optional[str] = Header(None),
                                 request: Request = None):
-    """个股仓位建议。独立模块，任何失败都返回空结果而非报错。"""
+    """个股拥挤度统一接口。看板、分析页、仓位页共用同一口径。"""
     try:
         _rate_check(authorization, request, "stock_advice", 30, 60)
     except Exception:
@@ -3242,58 +3242,61 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
     try:
         is_us = not (sym.isdigit() or sym.startswith(("SH", "SZ", "BJ")))
         metrics = {}
+        bar_date = ""
         if is_us:
-            # 美股优先空头；失败则回落成交量分位
             try:
                 from watchlist import _get_cached_short
                 si = _get_cached_short(sym)
                 if si and (si.get("composite") is not None or si.get("days_to_cover")):
-                    comp = si.get("composite")
+                    score = si.get("composite")
+                    days = si.get("days_to_cover")
                     metrics = {
-                        "percentile": comp,
-                        "level": "极端" if (comp or 0) >= 2 else ("高" if (comp or 0) >= 1 else ("偏高" if (comp or 0) >= 0.5 else "正常")),
-                        "speed": f"空头{si.get('short_pct_float') or '--'}%",
+                        "percentile": None,
+                        "score": score,
+                        "metric_type": "short_composite_score" if score is not None else "days_to_cover",
+                        "level": ("极端" if score >= 2 else "高" if score >= 1 else "偏高" if score >= 0.5 else "正常") if score is not None else ("高" if (days or 0) >= 8 else "偏高" if (days or 0) >= 5 else "正常"),
+                        "speed": f"空头{si.get('short_pct_float') if si.get('short_pct_float') is not None else '--'}%",
                         "speed_chg": None,
                         "divergence": "",
                         "price_chg": None,
                         "advice": "",
                         "reason": si.get("source") or "Nasdaq/FINRA",
                         "short_pct_float": si.get("short_pct_float"),
-                        "days_to_cover": si.get("days_to_cover"),
+                        "days_to_cover": days,
+                        "source": si.get("source") or "Nasdaq/FINRA",
+                        "as_of": si.get("settlement_date") or None,
                     }
+                    bar_date = str(si.get("settlement_date") or "")[:10]
             except Exception:
                 metrics = {}
         if not metrics:
-            # A股或美股空头失败：用成交量分位
-            try:
-                df = await asyncio.to_thread(_fetch_for_advice, sym)
-                metrics = _compute_crowding_from_df(df) if df is not None else {}
-            except Exception:
-                metrics = {}
-        # 只在三个维度出现明确信号时才写入时间轴
-        should_log = False
-        trigger = ""
-        if metrics.get("percentile") is not None and metrics.get("percentile") >= 80:
-            should_log = True
-            trigger = "高分位"
-        if metrics.get("speed") in ("快速上升",) and metrics.get("speed_chg", 0) > 20:
-            should_log = True
-            trigger = trigger or "快速上升"
-        if metrics.get("divergence") in ("价涨拥挤降", "价跌拥挤升"):
-            should_log = True
-            trigger = trigger or "背离"
-        if should_log and metrics.get("advice"):
+            df = await asyncio.to_thread(_fetch_for_advice, sym)
+            metrics = _compute_crowding_from_df(df) if df is not None else {}
+            if df is not None and len(df):
+                try:
+                    raw_date = df["date"].iloc[-1] if "date" in df.columns else df.index[-1]
+                    bar_date = raw_date.strftime("%Y-%m-%d") if hasattr(raw_date, "strftime") else str(raw_date)[:10]
+                except Exception:
+                    bar_date = ""
+            if metrics:
+                metrics.update({"score": None, "metric_type": "volume_percentile", "source": "日线成交量", "as_of": bar_date or None})
+        # 保存有效指标快照；中性状态也记录，不以 advice 是否为空作为门槛。
+        if metrics and (metrics.get("percentile") is not None or metrics.get("score") is not None or metrics.get("days_to_cover") is not None):
             from datetime import date
             import cache as _cache
+            snapshot_date = bar_date or date.today().isoformat()
             row = {
-                "bar_date": date.today().isoformat(),
-                "level": metrics.get("level"),
+                "bar_date": snapshot_date,
+                "level": metrics.get("level") or "",
                 "percentile": metrics.get("percentile"),
-                "speed": metrics.get("speed"),
-                "divergence": metrics.get("divergence"),
-                "advice": metrics.get("advice"),
-                "reason": metrics.get("reason"),
-                "trigger": trigger,
+                "score": metrics.get("score"),
+                "metric_type": metrics.get("metric_type") or "",
+                "speed": metrics.get("speed") or "",
+                "divergence": metrics.get("divergence") or "",
+                "advice": metrics.get("advice") or "",
+                "reason": metrics.get("reason") or "",
+                "source": metrics.get("source") or "",
+                "as_of": metrics.get("as_of") or snapshot_date,
             }
             try:
                 _cache.append_position_advice(sym, row)
@@ -3301,11 +3304,6 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                 pass
         import cache as _cache
         timeline = _cache.get_position_advice(sym) or []
-        return {
-            "success": True,
-            "symbol": sym,
-            "current": metrics,
-            "timeline": timeline[:60],
-        }
+        return {"success": True, "symbol": sym, "current": metrics, "timeline": timeline[:60]}
     except Exception as e:
         return {"success": False, "advice": None, "timeline": [], "error": str(e)[:120]}
