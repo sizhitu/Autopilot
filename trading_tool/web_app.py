@@ -3264,10 +3264,10 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "price_chg": None,
                         "short_behavior": {"state": "insufficient", "label": "历史数据不足", "short_change_pct": None, "price_change_pct": None, "history": []},
                         "advice": "",
-                        "reason": si.get("source") or "Nasdaq/FINRA",
+                        "reason": si.get("source") or "Nasdaq/ORTEX",
                         "short_pct_float": si.get("short_pct_float"),
                         "days_to_cover": days,
-                        "source": si.get("source") or "Nasdaq/FINRA",
+                        "source": si.get("source") or "Nasdaq/ORTEX",
                         "as_of": si.get("settlement_date") or None,
                         "published_date": si.get("published_date"),
                     }
