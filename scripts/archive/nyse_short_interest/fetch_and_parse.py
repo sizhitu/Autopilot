@@ -131,12 +131,17 @@ def parse_workbook(path: Path, publication_date: str, source_url: str, sha256: s
                 continue
             raw_date = row.iloc[colmap["settlement_date"]]
             settlement = pd.to_datetime(raw_date, errors="coerce")
-            if pd.isna(settlement):
-                # Some legacy workbooks place the date in a merged title cell.
-                date_cells = [pd.to_datetime(v, errors="coerce") for v in row.tolist()]
-                settlement = next((v for v in date_cells if not pd.isna(v)), pd.NaT)
             if pd.isna(settlement) and last_settlement is not None:
                 settlement = last_settlement
+            if pd.isna(settlement):
+                # Search textual/date cells only; numeric SI totals must not be
+                # interpreted by pandas as nanoseconds since the Unix epoch.
+                date_cells = [
+                    pd.to_datetime(v, errors="coerce")
+                    for v in row.tolist()
+                    if isinstance(v, (str, datetime, pd.Timestamp))
+                ]
+                settlement = next((v for v in date_cells if not pd.isna(v)), pd.NaT)
             if pd.isna(settlement):
                 continue
             last_settlement = settlement
