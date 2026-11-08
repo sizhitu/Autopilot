@@ -477,8 +477,11 @@ def _fetch_us_short_interest(code: str) -> dict:
     try:
         url = f"https://api.nasdaq.com/api/quote/{code}/short-interest?assetclass=stocks"
         headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+        except Exception:
+            response = None  # Nasdaq 不可用时仍继续尝试已配置的跨交易所官方源
+        if response is not None and response.status_code == 200:
             payload = response.json() or {}
             rows = payload.get("data", {}).get("shortInterestTable", {}).get("rows", []) or []
             if rows:
