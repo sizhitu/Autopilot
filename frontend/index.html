@@ -6922,9 +6922,13 @@ async function loadCrowdingForAnalysis(sym) {
       return;
     }
     const c = data.current || {};
-    if (!c.level && c.percentile == null && !c.short_pct_float && !c.days_to_cover) {
+    // 美股可能只有复合评分/回补天数，没有 percentile 或 short_pct_float；
+    // 不能因此把有效拥挤度误判为「暂无」。
+    const hasCrowdingMetric = !!c.level || c.percentile != null || c.score != null ||
+      c.short_pct_float != null || c.days_to_cover != null;
+    if (!hasCrowdingMetric) {
       badge.textContent = '暂无';
-      if (detail) detail.textContent = '数据不足，无法计算拥挤度';
+      if (detail) detail.textContent = '接口未返回有效拥挤度指标，请检查该股票的数据接口';
       return;
     }
     const lv = c.level || '正常';
@@ -6942,7 +6946,7 @@ async function loadCrowdingForAnalysis(sym) {
         (c.reason ? c.reason : '');
     }
     // 同时更新仓位页（如果已打开）
-    try { if (typeof loadStockAdvice === 'function') loadStockAdvice(); } catch (eL) {}
+    try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (eL) {}
   } catch (e) {
     try {
       document.getElementById('crowdingBadge').textContent = '暂无';
@@ -6982,6 +6986,8 @@ async function loadStockAdvice(requestedSymbol) {
     let dims = '';
     if (c.metric_type === 'short_composite_score' && c.score != null) dims += '复合评分 ' + c.score;
     else if (c.percentile != null) dims += '水平 ' + c.percentile + '%分位';
+    else if (c.days_to_cover != null) dims += '回补天数 ' + c.days_to_cover;
+    if (c.short_pct_float != null) dims += (dims ? ' · ' : '') + '空头占比 ' + c.short_pct_float + '%';
     if (c.speed) dims += (dims ? ' · ' : '') + '速度 ' + c.speed;
     if (c.divergence) dims += (dims ? ' · ' : '') + '背离 ' + c.divergence;
     if (c.advice) {
