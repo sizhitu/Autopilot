@@ -21,7 +21,7 @@ def test_us_short_interest():
 
 
 def test_non_nasdaq_fallback(monkeypatch):
-    """Nasdaq 无记录且未配置 ORTEX Key 时，明确提示可用官方 TEST Key 验证。"""
+    """Nasdaq 无记录时，明确提示配置免费的 FINRA Public Credential。"""
     import requests
     import watchlist
 
@@ -30,12 +30,14 @@ def test_non_nasdaq_fallback(monkeypatch):
         def json(self):
             return {"data": {"shortInterestTable": {"rows": []}}}
 
+    monkeypatch.delenv("FINRA_API_CLIENT_ID", raising=False)
+    monkeypatch.delenv("FINRA_API_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("ORTEX_API_KEY", raising=False)
     monkeypatch.setattr(requests, "get", lambda *a, **k: EmptyResponse())
     si = watchlist._fetch_us_short_interest("BE")
     assert si["status"] == "provider_required"
-    assert "ORTEX_API_KEY" in si["message"]
-    assert "TEST" in si["message"]
+    assert "FINRA_API_CLIENT_ID" in si["message"]
+    assert "FINRA" in si["source"]
 
 
 def test_compute_crowding_volume():
@@ -163,3 +165,40 @@ def test_ortex_official_short_interest_parsing(monkeypatch):
     assert "/stock/NYSE/BE/short/official_short_interest/" in captured["url"]
     assert captured["params"]["from_date"]
     assert captured["headers"]["Ortex-Api-Key"] == "TEST"
+
+
+def test_finra_consolidated_short_interest(monkeypatch):
+    """FINRA 官方跨交易所持仓接口字段与历史序列解析。"""
+    import time
+    import requests
+    import watchlist
+
+    watchlist._FINRA_TOKEN_CACHE.update({"token": "test-token", "expires_at": time.time() + 3600})
+    captured = {}
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return [
+                {"symbolCode": "BE", "settlementDate": "2026-10-15",
+                 "currentShortPositionQuantity": 1000000, "previousShortPositionQuantity": 900000,
+                 "averageDailyVolumeQuantity": 250000, "daysToCoverQuantity": 4.0},
+                {"symbolCode": "BE", "settlementDate": "2026-10-30",
+                 "currentShortPositionQuantity": 1200000, "previousShortPositionQuantity": 1000000,
+                 "averageDailyVolumeQuantity": 300000, "daysToCoverQuantity": 4.0},
+            ]
+
+    def fake_post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    result = watchlist._fetch_finra_short_interest("BE")
+    assert result["status"] == "ok"
+    assert result["short_interest"] == 1200000
+    assert result["days_to_cover"] == 4.0
+    assert len(result["history"]) == 2
+    assert result["history"][-1]["date"] == "2026-10-30"
+    assert captured["json"]["compareFilters"][0]["fieldValue"] == "BE"
+    assert captured["headers"]["Authorization"] == "Bearer test-token"
+    assert "consolidatedShortInterest" in captured["url"]
