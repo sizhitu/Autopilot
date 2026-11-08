@@ -99,8 +99,8 @@ def test_neutral_position_snapshot_is_cached(monkeypatch):
         "metric_type": "short_composite_score",
         "speed": "空头2.1%",
         "advice": "",
-        "reason": "Nasdaq/FINRA",
-        "source": "Nasdaq/FINRA",
+        "reason": "Nasdaq/ORTEX",
+        "source": "Nasdaq/ORTEX",
         "as_of": "2026-10-31",
     })
 
@@ -115,7 +115,7 @@ def test_watchlist_richness_counts_crowding_data():
     from watchlist import _row_richness
 
     bare = {"price": 100, "bar_date": "2026-11-06"}
-    rich = dict(bare, crowding_pct=1.2, crowding_level="高", crowding_source="Nasdaq/FINRA")
+    rich = dict(bare, crowding_pct=1.2, crowding_level="高", crowding_source="Nasdaq/ORTEX")
     assert _row_richness(rich) > _row_richness(bare)
 
 
