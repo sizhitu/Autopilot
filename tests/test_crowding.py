@@ -146,7 +146,7 @@ def test_ortex_official_short_interest_parsing(monkeypatch):
                  "officialDaysToCover": 4.0},
                 {"settlementDate": "2026-10-30", "publishedDate": "2026-11-06",
                  "officialSiShares": 1320000, "officialAvgDailyVolume": 330000,
-                 "officialDaysToCover": 4.0},
+                 "officialDaysToCover": 6.0},
             ]}
 
     captured = {}
@@ -188,7 +188,7 @@ def test_finra_consolidated_short_interest(monkeypatch):
                  "averageDailyVolumeQuantity": 250000, "daysToCoverQuantity": 4.0},
                 {"symbolCode": "BE", "settlementDate": "2026-10-30",
                  "currentShortPositionQuantity": 1200000, "previousShortPositionQuantity": 1000000,
-                 "averageDailyVolumeQuantity": 300000, "daysToCoverQuantity": 4.0},
+                 "averageDailyVolumeQuantity": 300000, "daysToCoverQuantity": 6.0},
             ]
 
     def fake_post(url, **kwargs):
