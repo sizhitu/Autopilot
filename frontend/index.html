@@ -6983,7 +6983,7 @@ async function loadCrowdingForAnalysis(sym) {
           '<span>空头 ' + (x.short_interest != null ? (Number(x.short_interest)/1e6).toFixed(1)+'M' : '--') + '</span>' +
           '<span>收盘 $' + (x.close != null ? Number(x.close).toFixed(2) : '--') + '</span></div>').join('');
     }
-    if (meta) meta.textContent = [c.source || c.reason || '', c.short_interest_status ? '官方空头持仓暂不可用' : '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
+    if (meta) meta.textContent = [c.source || c.reason || '', c.published_date ? '发布 ' + c.published_date : '', c.short_interest_status ? '官方空头持仓暂不可用' : '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
     try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (e) {}
   } catch (e) {
     if (badge) badge.textContent = '暂无数据';
