@@ -473,9 +473,130 @@ def _fetch_ortex_official_short_interest(code: str, api_key: str, namespace: str
     }
 
 
-def _fetch_us_short_interest(code: str) -> dict:
-    """先读取 Nasdaq 官方半月度报告；无记录时可选查询 ORTEX NYSE 官方报告。"""
+
+_FINRA_TOKEN_CACHE = {"token": None, "expires_at": 0}
+
+
+def _get_finra_access_token() -> str:
+    """Get/cache a FINRA OAuth token using a free Public API Credential."""
     import os
+    import time
+    import requests
+
+    client_id = os.getenv("FINRA_API_CLIENT_ID", "").strip()
+    client_secret = os.getenv("FINRA_API_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError("缺少 FINRA_API_CLIENT_ID / FINRA_API_CLIENT_SECRET（免费 Public Credential）")
+
+    now = time.time()
+    if _FINRA_TOKEN_CACHE.get("token") and now < _FINRA_TOKEN_CACHE.get("expires_at", 0) - 60:
+        return _FINRA_TOKEN_CACHE["token"]
+
+    response = requests.post(
+        "https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token",
+        params={"grant_type": "client_credentials"},
+        auth=(client_id, client_secret),
+        timeout=20,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"FINRA OAuth HTTP {response.status_code}")
+    payload = response.json() or {}
+    token = payload.get("access_token")
+    if not token:
+        raise RuntimeError("FINRA OAuth 响应缺少 access_token")
+    expires_in = int(payload.get("expires_in") or 1800)
+    _FINRA_TOKEN_CACHE.update({"token": token, "expires_at": now + min(expires_in, 1800)})
+    return token
+
+
+def _fetch_finra_short_interest(code: str) -> dict:
+    """FINRA consolidated short interest: cross-exchange, bi-monthly official positions."""
+    import requests
+    from datetime import date, timedelta
+
+    code = str(code or "").strip().upper()
+    token = _get_finra_access_token()
+    end_date = date.today()
+    start_date = end_date - timedelta(days=370)
+    url = "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest"
+    body = {
+        "compareFilters": [
+            {"compareType": "EQUAL", "fieldName": "symbolCode", "fieldValue": code}
+        ],
+        "dateRangeFilters": [{
+            "fieldName": "settlementDate",
+            "startDate": start_date.isoformat(),
+            "endDate": end_date.isoformat(),
+        }],
+        "fields": [
+            "symbolCode", "issueName", "settlementDate",
+            "currentShortPositionQuantity", "previousShortPositionQuantity",
+            "averageDailyVolumeQuantity", "daysToCoverQuantity",
+        ],
+        "limit": 1000,
+    }
+    response = requests.post(
+        url, json=body,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"},
+        timeout=30,
+    )
+    if response.status_code == 204:
+        rows = []
+    elif response.status_code != 200:
+        raise RuntimeError(f"FINRA consolidatedShortInterest HTTP {response.status_code}")
+    else:
+        payload = response.json()
+        rows = payload if isinstance(payload, list) else (payload.get("data") or payload.get("results") or [])
+
+    history = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            settlement = str(row.get("settlementDate") or "")[:10]
+            shares_raw = row.get("currentShortPositionQuantity")
+            if not settlement or shares_raw in (None, ""):
+                continue
+            shares = float(shares_raw)
+            if shares < 0:
+                continue
+            avg_raw = row.get("averageDailyVolumeQuantity")
+            avg_volume = float(avg_raw) if avg_raw not in (None, "") else None
+            days_raw = row.get("daysToCoverQuantity")
+            days = float(days_raw) if days_raw not in (None, "") else (shares / avg_volume if avg_volume and avg_volume > 0 else None)
+            history.append({
+                "date": settlement,
+                "short_interest": shares,
+                "previous_short_interest": float(row.get("previousShortPositionQuantity") or 0),
+                "avg_volume": avg_volume,
+                "days_to_cover": round(days, 2) if days is not None and days >= 0 else None,
+            })
+        except (TypeError, ValueError):
+            continue
+
+    history = sorted({item["date"]: item for item in history}.values(), key=lambda item: item["date"])
+    if not history:
+        return {
+            "status": "no_records", "source": "FINRA 官方合并空头持仓",
+            "message": f"FINRA 没有返回 {code} 最近 12 个月的合并空头持仓记录。",
+            "history": [],
+        }
+    latest = history[-1]
+    return {
+        "status": "ok",
+        "short_interest": latest["short_interest"],
+        "avg_volume": latest.get("avg_volume"),
+        "days_to_cover": latest.get("days_to_cover"),
+        "short_pct_float": None,
+        "composite": None,
+        "settlement_date": latest["date"],
+        "history": history[-24:],
+        "source": "FINRA 官方合并空头持仓",
+    }
+
+
+def _fetch_us_short_interest(code: str) -> dict:
+    """Nasdaq 优先；未覆盖时回退 FINRA 跨交易所官方合并数据。"""
     import requests
 
     code = str(code or "").strip().upper()
@@ -488,91 +609,43 @@ def _fetch_us_short_interest(code: str) -> dict:
         try:
             response = requests.get(url, headers=headers, timeout=10)
         except Exception:
-            response = None  # Nasdaq 不可用时仍继续尝试已配置的跨交易所官方源
+            response = None
         if response is not None and response.status_code == 200:
             payload = response.json() or {}
             rows = payload.get("data", {}).get("shortInterestTable", {}).get("rows", []) or []
             if rows:
                 latest = rows[0]
-
                 def _num(value):
                     return float(str(value).replace(",", "").replace("$", "").strip() or 0)
-
                 interest = _num(latest.get("interest"))
                 avg_volume = _num(latest.get("avgDailyShareVolume"))
                 days = _num(latest.get("daysToCover"))
                 settlement = str(latest.get("settlementDate") or "")[:10]
-
-                # 市值/前收盘价只能近似总股本，保留旧字段但不称为严格流通股。
-                float_shares = None
-                try:
-                    summary = requests.get(
-                        f"https://api.nasdaq.com/api/quote/{code}/summary?assetclass=stocks",
-                        headers=headers, timeout=8
-                    ).json()
-                    summary_data = summary.get("data", {}).get("summaryData", {})
-                    market_cap = summary_data.get("MarketCap", {}).get("value")
-                    previous_close = summary_data.get("PreviousClose", {}).get("value")
-                    if market_cap and previous_close:
-                        cap_value, close_value = _num(market_cap), _num(previous_close)
-                        if close_value > 0:
-                            float_shares = cap_value / close_value
-                except Exception:
-                    pass
-
-                short_pct = interest / float_shares * 100 if float_shares and interest > 0 else None
-                composite = (short_pct / 15.0) * (days / 5.0) if short_pct is not None and days > 0 else None
                 history = []
                 for row in rows:
                     try:
                         shares = _num(row.get("interest"))
                         report_date = str(row.get("settlementDate") or "")[:10]
-                        if shares > 0 and report_date:
-                            history.append({
-                                "date": report_date,
-                                "short_interest": shares,
-                                "days_to_cover": round(_num(row.get("daysToCover")), 2) or None,
-                            })
+                        if shares >= 0 and report_date:
+                            history.append({"date": report_date, "short_interest": shares,
+                                            "days_to_cover": round(_num(row.get("daysToCover")), 2) or None})
                     except (TypeError, ValueError):
                         continue
                 history = sorted({item["date"]: item for item in history}.values(), key=lambda item: item["date"])
                 return {
-                    "status": "ok",
-                    "short_interest": interest,
-                    "avg_volume": avg_volume,
+                    "status": "ok", "short_interest": interest, "avg_volume": avg_volume,
                     "days_to_cover": round(days, 2) if days > 0 else None,
-                    "short_pct_float": round(short_pct, 1) if short_pct else None,
-                    "composite": round(composite, 2) if composite else None,
-                    "settlement_date": settlement,
-                    "history": history[-24:],
+                    "short_pct_float": None, "composite": None,
+                    "settlement_date": settlement, "history": history[-24:],
                     "source": "Nasdaq 官方空头报告",
                 }
 
-        # Nasdaq 无记录时，使用 ORTEX 按 NYSE venue 查询官方半月度报告。
-        api_key = os.getenv("ORTEX_API_KEY", "").strip()
-        if api_key:
-            try:
-                return _fetch_ortex_official_short_interest(code, api_key, namespace="NYSE")
-            except Exception as exc:
-                return {
-                    "status": "provider_error",
-                    "source": "ORTEX 官方空头报告",
-                    "message": f"ORTEX 官方空头数据请求失败：{type(exc).__name__}。",
-                }
-
-        return {
-            "status": "provider_required",
-            "source": "Nasdaq",
-            "message": (
-                "Nasdaq 个股接口未返回记录。NYSE 上市证券需要按 NYSE venue 查询官方空头报告；"
-                "请配置 ORTEX_API_KEY。可先使用官方免费测试 Key TEST 验证，无需立即购买套餐。"
-            ),
-        }
+        return _fetch_finra_short_interest(code)
     except Exception as exc:
         return {
-            "status": "source_error",
-            "source": "Nasdaq",
-            "message": f"空头持仓数据源请求失败：{type(exc).__name__}。",
+            "status": "provider_required" if "FINRA_API_CLIENT_ID" in str(exc) else "source_error",
+            "source": "Nasdaq / FINRA",
+            "message": f"Nasdaq 未返回记录；FINRA 查询失败：{str(exc)[:180]}",
         }
 
 def _fetch_volume_only(code: str) -> "pd.Series | None":
