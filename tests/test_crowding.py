@@ -130,7 +130,7 @@ def test_ortex_official_short_interest_parsing(monkeypatch):
     class EmptyNasdaqResponse:
         status_code = 200
         def json(self):
-            return {"data": {"shortInterestTable": {"rows": []}}
+            return {"data": {"shortInterestTable": {"rows": []}}}
 
     class OrtexResponse:
         status_code = 200
