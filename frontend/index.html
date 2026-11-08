@@ -1258,6 +1258,7 @@ body.landing-locked #freeBanner { display: none !important; }
         <col style="width:84px">
         <col style="width:120px">
         <col style="width:96px">
+        <col style="width:56px">
       </colgroup>
       <thead>
         <tr style="color:var(--text-dim); border-bottom:1px solid var(--border);">
@@ -1270,6 +1271,7 @@ body.landing-locked #freeBanner { display: none !important; }
           <th style="padding:6px 2px;">操盘动作</th>
           <th style="padding:6px 2px;">新高/估值</th>
           <th style="padding:6px 2px;">参考价/涨幅</th>
+          <th style="padding:6px 2px;">拥挤度</th>
         </tr>
       </thead>
       <tbody id="watchlistBody"></tbody>
@@ -1492,6 +1494,14 @@ body.landing-locked #freeBanner { display: none !important; }
       <div id="hlValBody"></div>
     </div>
 
+    <!-- 拥挤度（独立，失败不影响） -->
+    <div class="card" id="crowdingCard" style="margin-bottom:8px;padding:8px 10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:12px;font-weight:700;color:var(--gold);">拥挤度</span>
+        <span id="crowdingBadge" style="font-size:11px;color:var(--text-dim);">--</span>
+      </div>
+      <div id="crowdingDetail" style="font-size:11px;color:var(--text-dim);margin-top:4px;line-height:1.4;">近20日成交量历史分位。高位时避免追涨。</div>
+    </div>
     <!-- 三层一致性 -->
     
     <!-- 成交量收敛三角形 日/周/月 -->
@@ -3699,7 +3709,17 @@ async function sendWatchAi() {
       body: JSON.stringify({ message: msg })
     });
     _appendAiLog('ai', res.reply || '已处理');
-    // 有增删则刷新看板
+    // 删除：先本地乐观移除，再强制刷新
+    if (res.removed && res.removed.length) {
+      const removedCodes = res.removed.map(function (r) { return String(r.symbol || '').toUpperCase(); });
+      const cur = Array.isArray(_lastWatchRows) ? _lastWatchRows.filter(function (s) {
+        return s && removedCodes.indexOf(String(s.code || '').toUpperCase()) < 0;
+      }) : [];
+      _lastWatchRows = cur;
+      _lastWatchSkeleton = cur.map(function (s) { return { code: s.code, name: s.name, market: s.market }; });
+      try { renderWatchlist(cur); renderWatchlistSummary(buildWatchlistSummaryFromStocks(cur)); } catch (eR) {}
+    }
+    // 添加或删除后强制刷新
     if ((res.added && res.added.length) || (res.removed && res.removed.length)) {
       try { loadWatchlist(true); } catch (e) {}
     }
@@ -3906,6 +3926,7 @@ async function fetchQuote(symbol, name, market) {
       lastChartData = json.chart;
       try { renderActionLogList(json.symbol || currentSymbol, json.action_log || []); } catch (eAL) {}
       try { renderActionLogList(json.symbol || currentSymbol, json.action_log || []); } catch (eAL) {}
+      try { loadCrowdingForAnalysis(symbol); } catch (eC) {}
       lastChartSymbol = symbol;
       setChartStale(false);
       drawChart(json.chart);
@@ -5718,6 +5739,13 @@ function renderWatchlist(stocks) {
       <td title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;font-size:11px;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
       <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
+      <td style="padding:5px 4px;font-size:11px;text-align:center;">${(function(){
+        const lv = s.crowding_level || '';
+        const pct = s.crowding_pct;
+        if (!lv && pct == null) return '<span style="color:var(--text-dim);">--</span>';
+        const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
+        return '<span style="color:' + c + ';font-weight:600;">' + (lv || '') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '%</div>' : '');
+      })()}</td>
     </tr>`;
   }
   body.innerHTML = html;
@@ -6857,6 +6885,34 @@ function _pickNewerSpread(a, b) {
   return live ? b : a;
 }
 
+
+async function loadCrowdingForAnalysis(sym) {
+  try {
+    const badge = document.getElementById('crowdingBadge');
+    const detail = document.getElementById('crowdingDetail');
+    if (!badge) return;
+    badge.textContent = '读取中…';
+    const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(sym));
+    const data = await res.json();
+    if (!data || !data.success || !data.current) {
+      badge.textContent = '--';
+      return;
+    }
+    const c = data.current;
+    const lv = c.level || '正常';
+    const col = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
+    badge.innerHTML = '<span style="color:' + col + ';font-weight:700;">' + lv + '</span>' +
+      (c.percentile != null ? ' · ' + c.percentile + '%分位' : '');
+    if (detail) {
+      detail.textContent = (c.speed ? '变化：' + c.speed + '。' : '') +
+        (c.divergence ? c.divergence + '。' : '') +
+        (c.advice ? '建议：' + c.advice + '。' : '当前无特别提醒。');
+    }
+  } catch (e) {
+    try { document.getElementById('crowdingBadge').textContent = '--'; } catch (e2) {}
+  }
+}
+
 async function loadStockAdvice() {
   // 独立模块：任何错误都不抛出
   try {
@@ -6864,13 +6920,9 @@ async function loadStockAdvice() {
     const symEl = document.getElementById('stockAdviceSymbol');
     const tl = document.getElementById('stockAdviceTimeline');
     if (!body) return;
-    const sym = (typeof currentSymbol !== 'undefined' && currentSymbol) ? String(currentSymbol).toUpperCase() : '';
-    if (!sym) {
-      body.textContent = '先在分析页选择一只股票，再回来查看仓位建议。';
-      if (symEl) symEl.textContent = '';
-      if (tl) tl.innerHTML = '';
-      return;
-    }
+    let sym = (typeof currentSymbol !== 'undefined' && currentSymbol) ? String(currentSymbol).toUpperCase() : '';
+    if (!sym) sym = 'NVDA';  // 默认分析英伟达
+    if (symEl) symEl.textContent = sym + (sym === 'NVDA' && !(typeof currentSymbol !== 'undefined' && currentSymbol) ? '（默认）' : '');
     if (symEl) symEl.textContent = sym;
     body.textContent = '读取中…';
     const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(sym));

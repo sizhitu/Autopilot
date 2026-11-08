@@ -1949,12 +1949,23 @@ async def watchlist_ai_chat(req: WatchAiChatRequest, request: Request,
         except Exception:
             pass
     elif intent == "remove":
-        # 先用当前自选做模糊匹配
+        # 先用当前自选做模糊匹配（代码、名称、包含）
         by_code = {str(it.get("symbol") or "").upper(): it for it in items}
-        by_name = {str(it.get("name") or ""): it for it in items if it.get("name")}
+        by_name = {}
+        for it in items:
+            nm = str(it.get("name") or "").strip()
+            if nm:
+                by_name[nm] = it
+                by_name[nm.upper()] = it
         for raw in raw_syms[:10]:
             key = raw.strip()
-            hit = by_code.get(key.upper()) or by_name.get(key)
+            hit = by_code.get(key.upper()) or by_name.get(key) or by_name.get(key.upper())
+            if not hit:
+                # 名称包含匹配
+                for nm, it in by_name.items():
+                    if key and (key in nm or nm in key):
+                        hit = it
+                        break
             if not hit:
                 # 再尝试解析
                 resolved = await asyncio.to_thread(_resolve_symbol_for_watch, key)

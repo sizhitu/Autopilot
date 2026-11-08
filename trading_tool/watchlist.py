@@ -222,6 +222,9 @@ class StockStatus:
     valuation_detail: str = ""    # 估值依据（如 "MA250 -8%" / "分位85%"）
     analyst_target: object = None  # 参考价：个股=去极值分析师均价；基金=NAV float | None
     analyst_upside_pct: object = None  # 相对现价涨幅空间% | None
+    crowding_pct: object = None    # 成交量历史分位 0-100
+    crowding_level: str = ""       # 正常/偏高/高/极端
+    crowding_speed: str = ""       # 平稳/上升/快速上升/下降
     error: str = ""
 
 
@@ -404,6 +407,37 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
         if lookback_5 > 0:
             prev_5 = float(df['close'].iloc[-1 - lookback_5])
             status.change_5d = round((last_close - prev_5) / prev_5 * 100, 2)
+
+        # 拥挤度：近20日均成交量 vs 过去1年分位
+        try:
+            if 'volume' in df.columns and len(df) >= 30:
+                vol = df['volume'].astype(float)
+                recent = vol.tail(20).mean()
+                hist = vol.tail(min(250, len(vol)))
+                if hist.sum() > 0 and recent > 0:
+                    pct = float((hist < recent).mean() * 100)
+                    status.crowding_pct = round(pct, 1)
+                    if pct >= 95:
+                        status.crowding_level = "极端"
+                    elif pct >= 80:
+                        status.crowding_level = "高"
+                    elif pct >= 60:
+                        status.crowding_level = "偏高"
+                    else:
+                        status.crowding_level = "正常"
+                    if len(vol) >= 40:
+                        prev = vol.iloc[-40:-20].mean()
+                        chg = (recent - prev) / prev * 100 if prev > 0 else 0
+                        if chg > 30:
+                            status.crowding_speed = "快速上升"
+                        elif chg > 10:
+                            status.crowding_speed = "上升"
+                        elif chg < -20:
+                            status.crowding_speed = "下降"
+                        else:
+                            status.crowding_speed = "平稳"
+        except Exception:
+            pass
 
         strategy = FujimotoStrategy(total_capital=100000)
         result = strategy.analyze(df)
@@ -908,6 +942,9 @@ def _status_to_dict(st: StockStatus) -> dict:
         'valuation_detail': st.valuation_detail,
         'analyst_target': st.analyst_target,
         'analyst_upside_pct': st.analyst_upside_pct,
+        'crowding_pct': getattr(st, 'crowding_pct', None),
+        'crowding_level': getattr(st, 'crowding_level', '') or '',
+        'crowding_speed': getattr(st, 'crowding_speed', '') or '',
         'error': st.error,
     }
 
