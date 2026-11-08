@@ -20,8 +20,8 @@ def test_us_short_interest():
             print(f"  {code}: {si.get('status')} - {si.get('message', '')}")
 
 
-def test_non_nasdaq_fallback(monkeypatch):
-    """Nasdaq 无记录时，明确提示配置免费的 FINRA Public Credential。"""
+def test_non_nasdaq_fallback_requires_ortex_for_listed_stock(monkeypatch):
+    """NYSE/Nasdaq 上市股没有 Nasdaq 报告时，不自动用 FINRA OTC 数据冒充。"""
     import requests
     import watchlist
 
@@ -33,11 +33,14 @@ def test_non_nasdaq_fallback(monkeypatch):
     monkeypatch.delenv("FINRA_API_CLIENT_ID", raising=False)
     monkeypatch.delenv("FINRA_API_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("ORTEX_API_KEY", raising=False)
+    monkeypatch.delenv("FINRA_ALLOW_OTC_FALLBACK", raising=False)
     monkeypatch.setattr(requests, "get", lambda *a, **k: EmptyResponse())
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
+                        lambda code: (_ for _ in ()).throw(AssertionError("FINRA OTC must not be automatic")))
     si = watchlist._fetch_us_short_interest("BE")
     assert si["status"] == "provider_required"
-    assert "FINRA_API_CLIENT_ID" in si["message"]
-    assert "FINRA" in si["source"]
+    assert "ORTEX_API_KEY" in si["message"]
+    assert "FINRA OTC" in si["message"]
 
 
 def test_compute_crowding_volume():
