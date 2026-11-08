@@ -65,7 +65,7 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 
 - **后端 · Backend**：Python 3.11 · FastAPI · uvicorn · pandas / numpy
 - **前端 · Frontend**：原生 HTML/CSS/JS · Canvas 绘图（无第三方框架）
-- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（Nasdaq 上市股票官方空头报告）· ORTEX 官方空头报告（NYSE/Nasdaq 上市股，需 ORTEX_API_KEY）· FINRA consolidatedShortInterest（OTC 官方数据，仅显式启用 FINRA_ALLOW_OTC_FALLBACK 时使用）
+- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（Nasdaq 上市股票官方空头报告）· FINRA 官方 OTC consolidatedShortInterest（仅用于 OTC，不作为 NYSE/Nasdaq 上市股的替代数据）
 - **美股源探测**：`docs/us_market_data.md` · `python3 trading_tool/probe_us_sources.py`
 - **部署 · Deploy**：Docker · docker-compose · 预览看门狗（自愈重启）
 
@@ -74,10 +74,10 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 
 ### 美股官方空头持仓 · US Official Short Interest
 
-- Nasdaq 个股接口优先用于 Nasdaq 上市证券；无记录时回退 FINRA `consolidatedShortInterest`，覆盖美国各交易所的官方合并空头持仓。
+- Nasdaq 个股接口仅用于 Nasdaq 上市证券。NYSE / NYSE American 使用 NYSE Group 官方报告口径；当前代码尚未接入其文件下载解析，因此明确显示数据源暂不可用，不跨交易所回退。
 - FINRA 数据为半月度结算日持仓，包含当前/上期空头股数、平均日成交量与 Days to Cover；不使用 daily short-sale volume 冒充 short interest。
 - 需要在服务端配置免费的 FINRA Public Credential：`FINRA_API_CLIENT_ID` 和 `FINRA_API_CLIENT_SECRET`。个人用户可申请 Public Credential，公开数据额度为每月 10GB。
-- FINRA `consolidatedShortInterest` 是跨交易所合并数据，可用于 BE、DHR、ICE 等 NYSE 上市股票。生产数据通常覆盖最近 12 个月；历史更早数据需另行接入 HISTORIC 数据集。
+- 当前代码使用的 FINRA `otcMarket/consolidatedShortInterest` 属于 OTC 数据集，仅在无法识别主上市交易所时查询；只有返回匹配记录才标记为 OTC。它不是 NYSE/Nasdaq 全市场合并空头持仓。
 - 不使用 daily short-sale volume（日度卖空成交量）冒充 short interest（空头持仓）。
 
 ## 快速开始 · Quick Start

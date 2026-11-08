@@ -20,27 +20,22 @@ def test_us_short_interest():
             print(f"  {code}: {si.get('status')} - {si.get('message', '')}")
 
 
-def test_non_nasdaq_fallback_requires_ortex_for_listed_stock(monkeypatch):
-    """NYSE/Nasdaq 上市股没有 Nasdaq 报告时，不自动用 FINRA OTC 数据冒充。"""
-    import requests
+def test_nyse_stock_does_not_fall_back_to_nasdaq_or_finra(monkeypatch):
+    """NYSE 股票不调用 Nasdaq 或 FINRA OTC，更不依赖付费第三方数据源。"""
     import watchlist
-
-    class EmptyResponse:
-        status_code = 200
-        def json(self):
-            return {"data": {"shortInterestTable": {"rows": []}}}
 
     monkeypatch.delenv("FINRA_API_CLIENT_ID", raising=False)
     monkeypatch.delenv("FINRA_API_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("ORTEX_API_KEY", raising=False)
-    monkeypatch.delenv("FINRA_ALLOW_OTC_FALLBACK", raising=False)
-    monkeypatch.setattr(requests, "get", lambda *a, **k: EmptyResponse())
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NYSE")
+    monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest",
+                        lambda code: (_ for _ in ()).throw(AssertionError("NYSE must not call Nasdaq")))
     monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
-                        lambda code: (_ for _ in ()).throw(AssertionError("FINRA OTC must not be automatic")))
+                        lambda code: (_ for _ in ()).throw(AssertionError("NYSE must not call FINRA OTC")))
     si = watchlist._fetch_us_short_interest("BE")
-    assert si["status"] == "provider_required"
-    assert "ORTEX_API_KEY" in si["message"]
-    assert "FINRA OTC" in si["message"]
+    assert si["status"] == "source_unavailable"
+    assert si["listing_exchange"] == "NYSE"
+    assert "NYSE Group" in si["source"]
+
 
 
 def test_compute_crowding_volume():
@@ -77,7 +72,7 @@ if __name__ == "__main__":
     print("=== test_us_short_interest ===")
     test_us_short_interest()
     print("=== test_non_nasdaq_fallback ===")
-    test_non_nasdaq_fallback()
+    test_nyse_stock_does_not_fall_back_to_nasdaq_or_finra()
     print("=== test_compute_crowding_volume ===")
     test_compute_crowding_volume()
     print("=== test_stock_advice_endpoint_logic ===")
@@ -104,8 +99,8 @@ def test_neutral_position_snapshot_is_cached(monkeypatch):
         "metric_type": "short_composite_score",
         "speed": "空头2.1%",
         "advice": "",
-        "reason": "Nasdaq/ORTEX",
-        "source": "Nasdaq/ORTEX",
+        "reason": "Nasdaq 官方空头报告",
+        "source": "Nasdaq 官方空头报告",
         "as_of": "2026-10-31",
     })
 
@@ -120,54 +115,12 @@ def test_watchlist_richness_counts_crowding_data():
     from watchlist import _row_richness
 
     bare = {"price": 100, "bar_date": "2026-11-06"}
-    rich = dict(bare, crowding_pct=1.2, crowding_level="高", crowding_source="Nasdaq/ORTEX")
+    rich = dict(bare, crowding_pct=1.2, crowding_level="高", crowding_source="Nasdaq 官方空头报告")
     assert _row_richness(rich) > _row_richness(bare)
 
 
 
 
-
-def test_ortex_official_short_interest_parsing(monkeypatch):
-    """验证 NYSE venue、正确日期参数及官方半月度字段解析。"""
-    import requests
-    import watchlist
-
-    class EmptyNasdaqResponse:
-        status_code = 200
-        def json(self):
-            return {"data": {"shortInterestTable": {"rows": []}}}
-
-    class OrtexResponse:
-        status_code = 200
-        def json(self):
-            return {"data": [
-                {"settlementDate": "2026-10-15", "publishedDate": "2026-10-22",
-                 "officialSiShares": 1200000, "officialAvgDailyVolume": 300000,
-                 "officialDaysToCover": 4.0},
-                {"settlementDate": "2026-10-30", "publishedDate": "2026-11-06",
-                 "officialSiShares": 1320000, "officialAvgDailyVolume": 330000,
-                 "officialDaysToCover": 6.0},
-            ]}
-
-    captured = {}
-    monkeypatch.setenv("ORTEX_API_KEY", "TEST")
-
-    def fake_get(url, **kwargs):
-        if "api.nasdaq.com" in url:
-            return EmptyNasdaqResponse()
-        captured.update({"url": url, **kwargs})
-        return OrtexResponse()
-
-    monkeypatch.setattr(requests, "get", fake_get)
-    result = watchlist._fetch_us_short_interest("BE")
-    assert result["status"] == "ok"
-    assert result["short_interest"] == 1320000
-    assert result["days_to_cover"] == 4.0
-    assert result["composite"] is None
-    assert result["history"][-1]["published_date"] == "2026-11-06"
-    assert "/stock/NYSE/BE/short/official_short_interest/" in captured["url"]
-    assert captured["params"]["from_date"]
-    assert captured["headers"]["Ortex-Api-Key"] == "TEST"
 
 
 def test_finra_consolidated_short_interest(monkeypatch):
@@ -205,3 +158,63 @@ def test_finra_consolidated_short_interest(monkeypatch):
     assert captured["json"]["compareFilters"][0]["fieldValue"] == "BE"
     assert captured["headers"]["Authorization"] == "Bearer test-token"
     assert "consolidatedShortInterest" in captured["url"]
+
+
+def test_exchange_aware_routing_without_paid_provider(monkeypatch):
+    """Nasdaq 走 Nasdaq；NYSE/AMEX 不跨源；未知代码只查 FINRA OTC。"""
+    import watchlist
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NASDAQ")
+    monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest", lambda code: {
+        "status": "ok", "short_interest": 123, "days_to_cover": 2.0,
+        "history": [], "source": "Nasdaq 官方空头报告",
+    })
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
+                        lambda code: (_ for _ in ()).throw(AssertionError("Nasdaq success must not call FINRA")))
+    result = watchlist._fetch_us_short_interest("NVDA")
+    assert result["status"] == "ok"
+    assert result["listing_exchange"] == "NASDAQ"
+    assert result["provider"] == "nasdaq"
+
+    for venue in ("NYSE", "AMEX"):
+        monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code, v=venue: v)
+        monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest",
+                            lambda code: (_ for _ in ()).throw(AssertionError("NYSE/AMEX must not call Nasdaq")))
+        monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
+                            lambda code: (_ for _ in ()).throw(AssertionError("NYSE/AMEX must not call FINRA OTC")))
+        result = watchlist._fetch_us_short_interest("XYZ")
+        assert result["status"] == "source_unavailable"
+        assert result["listing_exchange"] == venue
+
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "UNKNOWN")
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
+        "status": "ok", "history": [], "source": "FINRA OTC 官方空头持仓",
+    })
+    result = watchlist._fetch_us_short_interest("OTCQ")
+    assert result["status"] == "ok"
+    assert result["provider"] == "finra_otc"
+    assert result["listing_exchange"] == "OTC"
+
+
+
+def test_nasdaq_short_interest_parser_is_separate():
+    """Nasdaq 报告解析独立于交易所识别与其他来源路由。"""
+    import requests
+    import watchlist
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"data": {"shortInterestTable": {"rows": [
+                {"settlementDate": "10/30/2026", "interest": "1,200,000",
+                 "avgDailyShareVolume": "300,000", "daysToCover": "4.0"}
+            ]}}}
+    original = requests.get
+    try:
+        requests.get = lambda *a, **k: Response()
+        result = watchlist._fetch_nasdaq_short_interest("NVDA")
+    finally:
+        requests.get = original
+    assert result["status"] == "ok"
+    assert result["short_interest"] == 1200000
+    assert result["days_to_cover"] == 4.0
+    assert result["listing_exchange"] == "NASDAQ"

@@ -383,97 +383,6 @@ def _get_cached_short(code: str) -> dict:
     return data
 
 
-def _fetch_ortex_official_short_interest(code: str, api_key: str, namespace: str = "NYSE") -> dict:
-    """读取 ORTEX 单股官方半月度空头报告；不使用日度估算 short interest。"""
-    import requests
-    from datetime import date, timedelta
-
-    code = str(code or "").strip().upper()
-    namespace = str(namespace or "NYSE").strip().upper()
-    end_date = date.today()
-    start_date = end_date - timedelta(days=370)
-    url = f"https://api.ortex.com/api/v11/stock/{namespace}/{code}/short/official_short_interest/"
-    params = {
-        "from_date": start_date.isoformat(),
-        "to_date": end_date.isoformat(),
-        "split_adjusted": "true",
-    }
-    headers = {"Ortex-Api-Key": api_key, "Accept": "application/json"}
-    response = requests.get(url, params=params, headers=headers, timeout=20)
-    if response.status_code != 200:
-        return {
-            "status": "provider_error",
-            "source": "ORTEX 官方空头报告",
-            "message": f"ORTEX 官方空头接口返回 HTTP {response.status_code}；请检查 TEST Key 的地区/日期限制或套餐权限。",
-        }
-
-    payload = response.json() or {}
-    rows = payload.get("data") or []
-    if isinstance(rows, dict):
-        rows = rows.get("results") or rows.get("rows") or []
-    if not isinstance(rows, list) or not rows:
-        meta = payload.get("meta") or {}
-        return {
-            "status": "no_records",
-            "source": "ORTEX 官方空头报告",
-            "message": str(meta.get("emptyReason") or f"ORTEX 没有返回 {namespace}:{code} 的官方空头报告。"),
-        }
-
-    history = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        try:
-            settlement = _normalize_short_date(row.get("settlementDate"))
-            shares_raw = row.get("officialSiShares")
-            if not settlement or shares_raw in (None, ""):
-                continue
-            shares = float(shares_raw)
-            if shares <= 0:
-                continue
-            avg_raw = row.get("officialAvgDailyVolume")
-            avg_volume = float(avg_raw) if avg_raw not in (None, "") else None
-            days_raw = row.get("officialDaysToCover")
-            days = (shares / avg_volume) if avg_volume and avg_volume > 0 else (
-                float(days_raw) if days_raw not in (None, "") else None
-            )
-            history.append({
-                "date": settlement,
-                "published_date": str(row.get("publishedDate") or "")[:10] or None,
-                "short_interest": shares,
-                "avg_volume": avg_volume,
-                "days_to_cover": round(days, 2) if days is not None and days > 0 else None,
-            })
-        except (TypeError, ValueError):
-            continue
-
-    history = sorted(
-        {row["date"]: row for row in history}.values(),
-        key=lambda row: row["date"],
-    )
-    if not history:
-        return {
-            "status": "no_records",
-            "source": "ORTEX 官方空头报告",
-            "message": "ORTEX 已响应，但没有可用的官方空头持仓记录。",
-        }
-
-    latest = history[-1]
-    return {
-        "status": "ok",
-        "short_interest": latest["short_interest"],
-        "avg_volume": latest.get("avg_volume"),
-        "days_to_cover": latest.get("days_to_cover"),
-        "short_pct_float": None,
-        "composite": None,
-        "settlement_date": latest["date"],
-        "published_date": latest.get("published_date"),
-        "history": history[-24:],
-        "source": f"ORTEX 官方报告（{namespace}）",
-    }
-
-
-
 _FINRA_TOKEN_CACHE = {"token": None, "expires_at": 0}
 
 
@@ -589,7 +498,7 @@ def _fetch_finra_short_interest(code: str) -> dict:
 
 
 def _normalize_short_date(value) -> str:
-    """将 Nasdaq/ORTEX/FINRA 的结算日期统一为 YYYY-MM-DD。"""
+    """将 Nasdaq/FINRA OTC 的结算日期统一为 YYYY-MM-DD。"""
     from datetime import datetime
     raw = str(value or "").strip()
     if not raw:
@@ -605,122 +514,223 @@ def _normalize_short_date(value) -> str:
         return raw[:10]
 
 
-def _fetch_us_short_interest(code: str) -> dict:
+_LISTING_EXCHANGE_CACHE = {"loaded_at": 0, "symbols": {}}
+_LISTING_EXCHANGE_TTL = 60 * 60 * 12
+_LISTING_EXCHANGE_LOCK = threading.Lock()
+
+
+def _symbol_lookup_keys(value: str) -> set:
+    value = str(value or "").strip().upper()
+    if not value:
+        return set()
+    keys = {value}
+    # Nasdaq screener and user-entered tickers sometimes differ in class separators.
+    keys.add(value.replace(".", "-"))
+    keys.add(value.replace("-", "."))
+    return keys
+
+
+def _fetch_listing_exchange(code: str) -> str:
+    """Resolve primary listing venue from Nasdaq's public US stock screener.
+
+    Returns NASDAQ, NYSE, AMEX, or UNKNOWN. The screener is a public operational
+    endpoint (not a formal SLA API), so failures fail closed and are not cached.
     """
-    美股官方空头持仓路由：
-    1) Nasdaq 官方报告（Nasdaq-listed 且 Nasdaq API 有报告时）
-    2) ORTEX 官方半月度报告（NYSE/Nasdaq venue）
-    3) FINRA OTC consolidated 数据仅在显式开启 OTC fallback 时使用。
-    不把 FINRA OTC 数据冒充 NYSE/Nasdaq 上市股数据。
-    """
-    import os
     import requests
+    import time
 
     code = str(code or "").strip().upper()
     if not code:
-        return {"status": "invalid_symbol", "message": "股票代码为空。"}
+        return "UNKNOWN"
+    now = time.time()
+    cached = _LISTING_EXCHANGE_CACHE
+    if now - cached.get("loaded_at", 0) < _LISTING_EXCHANGE_TTL:
+        for key in _symbol_lookup_keys(code):
+            venue = cached.get("symbols", {}).get(key)
+            if venue:
+                return venue
+        return "UNKNOWN"
 
-    nasdaq_error = None
-    try:
-        url = f"https://api.nasdaq.com/api/quote/{code}/short-interest?assetclass=stocks"
-        response = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-            timeout=12,
-        )
-        if response.status_code == 200:
-            payload = response.json() or {}
-            rows = payload.get("data", {}).get("shortInterestTable", {}).get("rows", []) or []
+    with _LISTING_EXCHANGE_LOCK:
+        cached = _LISTING_EXCHANGE_CACHE
+        now = time.time()
+        if now - cached.get("loaded_at", 0) < _LISTING_EXCHANGE_TTL:
+            for key in _symbol_lookup_keys(code):
+                venue = cached.get("symbols", {}).get(key)
+                if venue:
+                    return venue
+            return "UNKNOWN"
 
-            def _num(value):
-                raw = str(value or "").replace(",", "").replace("$", "").strip()
-                return float(raw) if raw else 0.0
+        symbols = {}
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json,text/plain,*/*",
+            "Origin": "https://www.nasdaq.com",
+            "Referer": "https://www.nasdaq.com/market-activity/stocks/screener",
+        }
+        try:
+            for exchange in ("NASDAQ", "NYSE", "AMEX"):
+                offset = 0
+                while True:
+                    response = requests.get(
+                        "https://api.nasdaq.com/api/screener/stocks",
+                        params={"tableonly": "true", "limit": 5000, "offset": offset,
+                                "exchange": exchange, "download": "true"},
+                        headers=headers, timeout=20,
+                    )
+                    response.raise_for_status()
+                    payload = response.json() or {}
+                    data = payload.get("data") or {}
+                    rows = data.get("rows") or []
+                    if not isinstance(rows, list):
+                        raise ValueError("Nasdaq screener rows 格式异常")
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        for key in _symbol_lookup_keys(row.get("symbol")):
+                            symbols[key] = exchange
+                    total = int(data.get("totalrecords") or len(rows))
+                    offset += len(rows)
+                    if not rows or offset >= total or len(rows) < 5000:
+                        break
+            if not symbols:
+                raise ValueError("Nasdaq screener 未返回交易所股票列表")
+            _LISTING_EXCHANGE_CACHE.update({"loaded_at": now, "symbols": symbols})
+        except Exception:
+            # Do not cache a partial/failed universe; next request can retry.
+            return "UNKNOWN"
 
-            history = []
-            for row in rows:
-                try:
-                    report_date = _normalize_short_date(row.get("settlementDate"))
-                    shares = _num(row.get("interest"))
-                    avg_volume = _num(row.get("avgDailyShareVolume"))
-                    reported_days = _num(row.get("daysToCover"))
-                    days = shares / avg_volume if avg_volume > 0 else reported_days
-                    if report_date and shares >= 0:
-                        history.append({
-                            "date": report_date,
-                            "short_interest": shares,
-                            "avg_volume": avg_volume or None,
-                            "days_to_cover": round(days, 2) if days > 0 else (
-                                round(shares / avg_volume, 2) if avg_volume > 0 else None
-                            ),
-                        })
-                except (TypeError, ValueError):
-                    continue
+    for key in _symbol_lookup_keys(code):
+        venue = _LISTING_EXCHANGE_CACHE["symbols"].get(key)
+        if venue:
+            return venue
+    return "UNKNOWN"
 
-            history = sorted(
-                {item["date"]: item for item in history}.values(),
-                key=lambda item: item["date"],
-            )
-            if history:
-                latest = history[-1]
-                return {
-                    "status": "ok",
-                    "short_interest": latest["short_interest"],
-                    "avg_volume": latest.get("avg_volume"),
-                    "days_to_cover": latest.get("days_to_cover"),
-                    "short_pct_float": None,
-                    "composite": None,
-                    "settlement_date": latest["date"],
-                    "history": history[-24:],
-                    "source": "Nasdaq 官方空头报告",
-                    "provider": "nasdaq",
-                    "metric_type": "days_to_cover",
-                }
-        else:
-            nasdaq_error = f"Nasdaq HTTP {response.status_code}"
-    except Exception as exc:
-        nasdaq_error = f"Nasdaq 请求失败：{type(exc).__name__}"
 
-    # ORTEX 才是这里用于 NYSE/Nasdaq listed equities 的跨 venue 官方报告源。
-    api_key = (os.getenv("ORTEX_API_KEY") or "").strip()
-    if api_key:
-        venue_candidates = ["NYSE", "NASDAQ"]
-        for venue in venue_candidates:
-            try:
-                result = _fetch_ortex_official_short_interest(code, api_key, namespace=venue)
-                if result.get("status") == "ok":
-                    result["provider"] = "ortex"
-                    result["metric_type"] = "days_to_cover"
-                    return result
-            except Exception:
-                continue
+def _fetch_nasdaq_short_interest(code: str) -> dict:
+    """Nasdaq 官方半月度空头报告，仅用于 Nasdaq primary-listed securities。"""
+    import requests
 
-    # FINRA consolidatedShortInterest 属于 OTC 数据集，不自动作为上市股 fallback。
-    allow_finra_otc = (os.getenv("FINRA_ALLOW_OTC_FALLBACK") or "").strip().lower() in ("1", "true", "yes")
-    if allow_finra_otc:
+    url = f"https://api.nasdaq.com/api/quote/{code}/short-interest?assetclass=stocks"
+    response = requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+        timeout=12,
+    )
+    if response.status_code != 200:
+        return {"status": "provider_error", "source": "Nasdaq 官方空头报告",
+                "message": f"Nasdaq HTTP {response.status_code}", "history": []}
+    payload = response.json() or {}
+    rows = payload.get("data", {}).get("shortInterestTable", {}).get("rows", []) or []
+
+    def _num(value):
+        raw = str(value or "").replace(",", "").replace("$", "").strip()
+        return float(raw) if raw else 0.0
+
+    history = []
+    for row in rows:
+        try:
+            report_date = _normalize_short_date(row.get("settlementDate"))
+            shares = _num(row.get("interest"))
+            avg_volume = _num(row.get("avgDailyShareVolume"))
+            reported_days = _num(row.get("daysToCover"))
+            days = shares / avg_volume if avg_volume > 0 else reported_days
+            if report_date and shares >= 0:
+                history.append({
+                    "date": report_date, "short_interest": shares,
+                    "avg_volume": avg_volume or None,
+                    "days_to_cover": round(days, 2) if days > 0 else None,
+                })
+        except (TypeError, ValueError):
+            continue
+    history = sorted({item["date"]: item for item in history}.values(),
+                     key=lambda item: item["date"])
+    if not history:
+        return {"status": "no_records", "source": "Nasdaq 官方空头报告",
+                "message": f"Nasdaq 没有返回 {code} 的官方空头报告。", "history": []}
+    latest = history[-1]
+    return {
+        "status": "ok", "short_interest": latest["short_interest"],
+        "avg_volume": latest.get("avg_volume"),
+        "days_to_cover": latest.get("days_to_cover"),
+        "short_pct_float": None, "composite": None,
+        "settlement_date": latest["date"], "history": history[-24:],
+        "source": "Nasdaq 官方空头报告", "provider": "nasdaq",
+        "listing_exchange": "NASDAQ", "metric_type": "days_to_cover",
+    }
+
+
+def _fetch_us_short_interest(code: str) -> dict:
+    """Exchange-aware official short-interest routing using public exchange and FINRA data.
+
+    NASDAQ -> Nasdaq official bi-monthly short-interest report.
+    NYSE/AMEX -> no Nasdaq substitution; NYSE Group official file integration
+    is not available yet, so return an explicit source-unavailable status.
+    UNKNOWN -> FINRA OTC consolidated short-interest only; accept only a
+    matching FINRA record. Daily FINRA short-sale volume is never used here.
+    """
+    code = str(code or "").strip().upper()
+    if not code:
+        return {"status": "invalid_symbol", "message": "股票代码为空。", "history": []}
+
+    venue = _fetch_listing_exchange(code)
+
+    if venue == "NASDAQ":
+        try:
+            result = _fetch_nasdaq_short_interest(code)
+            if result.get("status") == "ok":
+                result["listing_exchange"] = venue
+                result["provider"] = "nasdaq"
+                result["metric_type"] = "days_to_cover"
+                return result
+            nasdaq_error = result.get("message") or "Nasdaq 未返回官方报告"
+        except Exception as exc:
+            nasdaq_error = f"Nasdaq 请求失败：{type(exc).__name__}"
+        return {
+            "status": "no_records", "source": "Nasdaq 官方空头报告",
+            "provider": "nasdaq", "listing_exchange": venue,
+            "message": f"已识别为 Nasdaq 上市股票，但没有取得 {code} 的官方空头持仓报告：{nasdaq_error}",
+            "history": [],
+        }
+
+    if venue in ("NYSE", "AMEX"):
+        return {
+            "status": "source_unavailable",
+            "source": "NYSE Group 官方空头报告",
+            "provider": None,
+            "listing_exchange": venue,
+            "message": f"{code} 已识别为 {venue} 上市股票。Nasdaq 报告不覆盖该交易所；当前版本尚未接入 NYSE Group 官方半月度报告文件，因此暂不提供空头持仓数值，也不会用 FINRA OTC 或日度卖空成交量替代。",
+            "history": [],
+        }
+
+    # FINRA consolidatedShortInterest here is the OTC dataset, not a
+    # consolidated all-exchange dataset. Only unknown symbols are checked.
+    if venue == "UNKNOWN":
         try:
             result = _fetch_finra_short_interest(code)
             if result.get("status") == "ok":
                 result["provider"] = "finra_otc"
+                result["listing_exchange"] = "OTC"
                 result["metric_type"] = "days_to_cover"
-            return result
+                return result
+            return {
+                "status": "no_records", "source": "FINRA OTC 官方空头持仓",
+                "provider": "finra_otc", "listing_exchange": None,
+                "message": f"无法确认 {code} 的主上市交易所，FINRA OTC 数据也没有返回匹配的空头持仓记录。",
+                "history": [],
+            }
         except Exception as exc:
             return {
-                "status": "source_error",
-                "source": "Nasdaq / ORTEX / FINRA OTC",
-                "message": f"{nasdaq_error or 'Nasdaq 无报告'}；FINRA OTC 查询失败：{str(exc)[:160]}",
+                "status": "source_error", "source": "FINRA OTC 官方空头持仓",
+                "provider": "finra_otc", "listing_exchange": None,
+                "message": f"无法识别上市交易所，且 FINRA OTC 查询失败：{str(exc)[:160]}",
+                "history": [],
             }
 
-    if not api_key:
-        return {
-            "status": "provider_required",
-            "source": "Nasdaq / ORTEX",
-            "message": f"{nasdaq_error or 'Nasdaq 没有返回该股票空头报告'}；NYSE/Nasdaq listed equities 需要 ORTEX_API_KEY。FINRA OTC 数据不会自动代替上市股空头持仓。",
-            "history": [],
-        }
     return {
-        "status": "no_records",
-        "source": "Nasdaq / ORTEX 官方空头报告",
-        "message": f"Nasdaq 与 ORTEX 均未返回 {code} 的官方空头报告。{nasdaq_error or ''}".strip(),
+        "status": "unknown_listing", "source": "交易所识别",
+        "listing_exchange": None,
+        "message": f"无法确认 {code} 的上市交易所；为避免混用来源，不生成空头持仓指标。",
         "history": [],
     }
 
