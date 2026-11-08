@@ -6905,6 +6905,7 @@ function _crowdingLevelColor(level) {
 }
 function _crowdingScoreLabel(c) {
   if (c.metric_type === 'short_composite_score' && c.score != null) return Math.round(Number(c.score) * 100) + '/100';
+  if (c.metric_type === 'days_to_cover' && c.days_to_cover != null) return '回补 ' + Number(c.days_to_cover).toFixed(1) + ' 天';
   if (c.percentile != null) return Number(c.percentile).toFixed(1) + '%';
   return '--';
 }
@@ -6977,11 +6978,1036 @@ async function loadCrowdingForAnalysis(sym) {
     }
     const hist = Array.isArray(b.history) ? b.history.slice(-8).reverse() : [];
     if (historyBox && hist.length) {
-      historyBox.innerHTML = '<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">空头报告与同期价格</div>' +
+      const chartRows = (Array.isArray(b.history) ? b.history.slice(-12) : []).filter(x =>
+        Number(x.short_interest) > 0 && Number(x.close) > 0
+      );
+      const fmtShares = v => (Number(v) / 1e6).toFixed(2) + 'M';
+      let chartHtml = '';
+      if (chartRows.length >= 2) {
+        const shortBase = Number(chartRows[0].short_interest);
+        const priceBase = Number(chartRows[0].close);
+        const indexed = chartRows.map(x => ({
+          ...x,
+          shortIndex: Number(x.short_interest) / shortBase * 100,
+          priceIndex: Number(x.close) / priceBase * 100
+        }));
+        const vals = indexed.flatMap(x => [x.shortIndex, x.priceIndex]);
+        let minV = Math.min.apply(null, vals), maxV = Math.max.apply(null, vals);
+        if (maxV - minV < 1) { minV -= 1; maxV += 1; }
+        const pad = (maxV - minV) * 0.12;
+        minV -= pad; maxV += pad;
+        const W = 640, H = 210, L = 42, R = 12, T = 14, B = 30;
+        const px = i => L + i * (W - L - R) / Math.max(1, indexed.length - 1);
+        const py = v => T + (maxV - v) / (maxV - minV) * (H - T - B);
+        const shortPts = indexed.map((x,i) => px(i).toFixed(1)+','+py(x.shortIndex).toFixed(1)).join(' ');
+        const pricePts = indexed.map((x,i) => px(i).toFixed(1)+','+py(x.priceIndex).toFixed(1)).join(' ');
+        const grid = [0,1,2,3].map(i => {
+          const y = T + i * (H-T-B) / 3;
+          const v = maxV - i * (maxV-minV) / 3;
+          return '<line x1="'+L+'" y1="'+y.toFixed(1)+'" x2="'+(W-R)+'" y2="'+y.toFixed(1)+'" stroke="var(--border)" stroke-dasharray="3 4"/>' +
+            '<text x="'+(L-7)+'" y="'+(y+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--text-dim)">'+v.toFixed(0)+'</text>';
+        }).join('');
+        const points = indexed.map((x,i) => {
+          const date = escapeHtml(String(x.date || '').slice(0,10));
+          const tooltip = date + ' · 空头 ' + fmtShares(x.short_interest) + ' · 收盘 
+    if (meta) meta.textContent = [c.source || c.reason || '', c.published_date ? '发布 ' + c.published_date : '', c.short_interest_status ? '官方空头持仓暂不可用' : '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
+    try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (e) {}
+  } catch (e) {
+    if (badge) badge.textContent = '暂无数据';
+    if (detail) detail.textContent = String(e && e.message || '暂时无法读取空头行为数据');
+    if (meta) meta.textContent = '';
+  }
+}
+
+let _stockAdviceReqSeq = 0;
+async function loadStockAdvice(requestedSymbol) {
+  try {
+    const body = document.getElementById('stockAdviceBody');
+    const symEl = document.getElementById('stockAdviceSymbol');
+    const tl = document.getElementById('stockAdviceTimeline');
+    const tlWrap = document.getElementById('stockAdviceTimelineWrap');
+    if (!body) return;
+    const sym = String(requestedSymbol || currentSymbol || '').trim().toUpperCase();
+    const reqId = ++_stockAdviceReqSeq;
+    if (!sym) {
+      if (symEl) symEl.textContent = '未选择股票';
+      body.textContent = '请先从分析页选择一只股票';
+      if (tl) tl.innerHTML = '';
+      if (tlWrap) tlWrap.style.display = 'none';
+      return;
+    }
+    if (symEl) symEl.textContent = sym;
+    body.textContent = '读取中…';
+    if (tl) tl.innerHTML = '';
+    const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(sym));
+    const data = await res.json();
+    const activeSymbol = String(currentSymbol || '').trim().toUpperCase();
+    if (reqId !== _stockAdviceReqSeq || (activeSymbol && activeSymbol !== sym)) return;
+    if (!data || !data.success) {
+      body.textContent = '暂无拥挤度数据';
+      if (tlWrap) tlWrap.style.display = 'none';
+      return;
+    }
+    const c = data.current || {};
+    const level = c.level || '数据不足';
+    const score = _crowdingScoreLabel(c);
+    const color = _crowdingLevelColor(level);
+    let advice = '指标不足，暂不据此调整仓位。';
+    if (level === '极端' || level === '高') {
+      advice = '拥挤风险较高，控制新增仓位，优先检查个股仓位集中度。';
+    } else if (level === '偏高') {
+      advice = '维持观察，谨慎新增仓位；不要仅凭空头拥挤预期加仓。';
+    } else if (level === '正常') {
+      advice = '当前拥挤度未见明显压力，可结合原有投资计划管理仓位。';
+    }
+    const metric = c.metric_type === 'short_composite_score'
+      ? '空头复合评分 ' + score
+      : (c.percentile != null ? '成交量历史分位 ' + score : '拥挤度 ' + level);
+    const date = c.as_of || '';
+    body.innerHTML =
+      '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:5px;">' +
+        '<b style="color:' + color + ';">' + escapeHtml(level) + '</b>' +
+        (score !== '--' ? '<span style="color:var(--text-dim);">' + escapeHtml(metric) + '</span>' : '') +
+      '</div><div style="font-weight:600;color:var(--text);">' + escapeHtml(advice) + '</div>' +
+      (date ? '<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">数据日期 ' + escapeHtml(String(date).slice(0,10)) + '</div>' : '');
+    const rows = Array.isArray(data.timeline) ? data.timeline.slice(0, 20) : [];
+    if (tl) {
+      if (rows.length) {
+        tl.innerHTML = rows.map(function (r) {
+          const d = String(r.bar_date || r.date || r.as_of || '').slice(0, 10);
+          const rowLevel = r.level || '—';
+          const rowScore = r.score != null
+            ? '评分 ' + Math.round(Number(r.score) * 100) + '/100'
+            : (r.percentile != null ? '分位 ' + Number(r.percentile).toFixed(1) + '%' : '指标快照');
+          const rowColor = _crowdingLevelColor(rowLevel);
+          return '<div style="display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center;padding:6px 2px;border-bottom:1px solid var(--border);">' +
+            '<span style="color:var(--text-dim);">' + escapeHtml(d || '日期未知') + '</span>' +
+            '<span style="color:' + rowColor + ';font-weight:600;">' + escapeHtml(rowLevel) + '</span>' +
+            '<span style="color:var(--text-dim);white-space:nowrap;">' + escapeHtml(rowScore) + '</span>' +
+          '</div>';
+        }).join('');
+        if (tlWrap) tlWrap.style.display = '';
+      } else {
+        tl.innerHTML = '<div style="color:var(--text-dim);padding:5px 0;">暂无历史记录</div>';
+        if (tlWrap) tlWrap.style.display = '';
+      }
+    }
+  } catch (e) {
+    try {
+      const body = document.getElementById('stockAdviceBody');
+      if (body) body.textContent = '暂时无法读取仓位提示';
+    } catch (e2) {}
+  }
+}
+
+// Expose the position-module functions to the main analysis script.
+window.loadCrowdingForAnalysis = loadCrowdingForAnalysis;
+window.loadStockAdvice = loadStockAdvice;
+
+async function loadMarketSpread(force) {
+  const el = document.getElementById('cnSpreadBar');
+  if (!el) return;
+  const local = _marketSpreadCache();
+  let best = (local && local.data && local.data.success) ? local.data : _marketSpreadFallback();
+  try { paintMarketSpread(best); } catch (e) {}
+  const localDay = _spreadDay(best);
+  const today = new Date().toISOString().slice(0, 10);
+  if (!force && local && local.ts && (Date.now() - local.ts) < 2 * 3600 * 1000 && localDay && localDay >= today) return;
+  if (_marketSpreadInflight) return _marketSpreadInflight;
+  _marketSpreadInflight = (async function () {
+    const grab = async function (url, ms) {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, ms) : null;
+      try {
+        const res = await fetch(url, { cache: 'no-cache', signal: ctrl ? ctrl.signal : undefined });
+        const j = await res.json();
+        if (timer) clearTimeout(timer);
+        return (j && j.success) ? j : null;
+      } catch (e) {
+        if (timer) clearTimeout(timer);
+        return null;
+      }
+    };
+    try {
+      const staticJ = await grab('/market-spread.json?v=' + Date.now(), 4000);
+      best = _pickNewerSpread(best, staticJ);
+      if (staticJ) { try { paintMarketSpread(best); } catch (e) {} }
+      let apiJ = null;
+      try { apiJ = await apiJSON('/api/market-spread'); } catch (eApi) { apiJ = null; }
+      best = _pickNewerSpread(best, apiJ);
+      if (best && best.success) {
+        _saveMarketSpread(best);
+        try { paintMarketSpread(best); } catch (e) {}
+      }
+    } finally {
+      _marketSpreadInflight = null;
+    }
+  })();
+  return _marketSpreadInflight;
+}
+try {
+  setTimeout(function () { try { loadMarketSpread(false); } catch (e) {} }, 800);
+} catch (eBoot) {}
+} catch (eMod) { console.warn('market module failed', eMod); }
+</script>
+
+<!-- 客服咨询：右侧细条 → 气泡 → 表单抽屉 -->
+<style>
+#contactHandle {
+  position: fixed;
+  right: 0;
+  top: 42%;
+  z-index: 920;
+  width: 14px;
+  height: 72px;
+  padding: 0;
+  border: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--blue);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: -2px 0 10px rgba(0,0,0,.25);
+  opacity: 0.75;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: width .2s ease, opacity .2s ease;
+  touch-action: manipulation;
+}
+#contactHandle:hover, #contactHandle:focus { opacity: 1; width: 18px; }
+#contactHandle .handle-grip {
+  width: 3px; height: 28px; border-radius: 2px;
+  background: rgba(255,255,255,.85);
+  box-shadow: 6px 0 0 rgba(255,255,255,.35);
+}
+@media (max-width: 640px) {
+  #contactHandle { width: 10px; height: 56px; top: 48%; opacity: 0.7; }
+  #contactHandle:hover, #contactHandle:focus { width: 12px; }
+  #contactHandle .handle-grip { height: 22px; box-shadow: 5px 0 0 rgba(255,255,255,.35); }
+}
+/* 气泡：点细条后先出现 */
+#contactBubble {
+  position: fixed;
+  right: 22px;
+  top: 42%;
+  transform: translateY(-50%) translateX(12px);
+  z-index: 930;
+  background: rgba(28, 32, 40, 0.48);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 16px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.22);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(240px, calc(100vw - 40px));
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .22s ease, transform .22s ease, visibility .22s;
+}
+#contactBubble.open {
+  opacity: 0.88;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+#contactBubble .bubble-text { font-size: 13px; font-weight: 600; }
+#contactBubble .bubble-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-weight: 400; }
+#contactBubble .bubble-action {
+  border: none;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#contactBubble .bubble-x {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+#contactBubble::after {
+  content: '';
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 12px; height: 12px;
+  background: rgba(28, 32, 40, 0.48);
+  border-right: 1px solid rgba(255,255,255,0.14);
+  border-top: 1px solid rgba(255,255,255,0.14);
+}
+@media (max-width: 640px) {
+  #contactBubble { top: 48%; right: 18px; }
+}
+#contactMask {
+  position: fixed; inset: 0; z-index: 980;
+  background: rgba(0,0,0,.12);
+  opacity: 0; visibility: hidden;
+  transition: opacity .25s ease, visibility .25s ease;
+  pointer-events: none;
+}
+#contactMask.open { opacity: 1; visibility: visible; pointer-events: auto; }
+#contactDrawer {
+  position: fixed;
+  top: 50%;
+  right: 12px;
+  z-index: 990;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 48px));
+  height: auto;
+  background: rgba(28, 32, 40, 0.42);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 14px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.28);
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  transform: translate(110%, -50%);
+  transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  display: flex; flex-direction: column;
+  padding: 14px 14px 16px; box-sizing: border-box; overflow-y: auto;
+}
+#contactDrawer.open { transform: translate(0, -50%); }
+#contactDrawer .drawer-head {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+}
+#contactDrawer .drawer-head .card-title { margin: 0; }
+#contactDrawer .drawer-close {
+  border: none; background: transparent; color: var(--text-dim);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 4px 8px;
+}
+#contactDrawer input, #contactDrawer textarea {
+  width: 100%; margin-bottom: 8px;
+  background: rgba(0,0,0,0.22);
+  border: 1px solid rgba(255,255,255,0.14); color: var(--text);
+  padding: 7px 8px; border-radius: 6px; box-sizing: border-box; font-size: 13px;
+}
+#contactDrawer textarea { min-height: 96px; max-height: 160px; resize: vertical; }
+</style>
+<button id="contactHandle" type="button" title="客服" aria-label="打开客服入口"
+  onclick="openContact()"></button>
+<div id="contactBubble" aria-hidden="true">
+  <div style="flex:1;min-width:0;">
+    <div class="bubble-text">客服咨询</div>
+    <div class="bubble-sub">点击继续填写表单</div>
+  </div>
+  <button type="button" class="bubble-action" onclick="openContactForm()">咨询</button>
+  <button type="button" class="bubble-x" onclick="closeContact()" aria-label="关闭">×</button>
+</div>
+<script>
+(function () {
+  const h = document.getElementById('contactHandle');
+  if (!h) return;
+  h.innerHTML = '<span class="handle-grip" aria-hidden="true"></span>';
+  let sx = 0, sy = 0, tracking = false;
+  h.addEventListener('touchstart', function (e) {
+    const t = e.changedTouches[0];
+    sx = t.clientX; sy = t.clientY; tracking = true;
+  }, { passive: true });
+  h.addEventListener('touchend', function (e) {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = sx - t.clientX;
+    const dy = Math.abs(t.clientY - sy);
+    if (dx > 28 && dy < 40) openContact();
+  }, { passive: true });
+  // 点页面空白处收起气泡（未打开表单时）
+  document.addEventListener('click', function (e) {
+    const b = document.getElementById('contactBubble');
+    if (!b || !b.classList.contains('open')) return;
+    if (b.contains(e.target)) return;
+    if (h.contains(e.target)) return;
+    const d = document.getElementById('contactDrawer');
+    if (d && d.classList.contains('open')) return;
+    closeContact();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeContact();
+  });
+})();
+</script>
+<div id="contactMask" onclick="closeContact()" aria-hidden="true"></div>
+<div id="contactDrawer" role="dialog" aria-label="客服咨询表单">
+  <div class="drawer-head">
+    <div class="card-title">联系客服 · 提交咨询</div>
+    <button type="button" class="drawer-close" onclick="closeContact()" aria-label="关闭">×</button>
+  </div>
+  <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;line-height:1.5;">官方客服邮箱：<b>support@timebricks.bid</b><br>提交后我们会收到工单并尽快回复</div>
+  <div id="ctMsg2" style="font-size:11px;min-height:14px;margin-bottom:6px;color:var(--orange);"></div>
+  <input id="ctName" type="text" placeholder="姓名（可选）">
+  <input id="ctEmail" type="email" placeholder="邮箱（必填）">
+  <input id="ctCountry" type="text" placeholder="国家/地区（可选）">
+  <textarea id="ctMsg" rows="5" placeholder="咨询内容（必填）"></textarea>
+  <button class="btn" style="width:100%;margin-top:4px;" onclick="submitContact()">发送咨询</button>
+</div>
+
+
+<!-- PWA Install Banner -->
+<div id="pwaInstallBanner">
+  <div class="pwa-icon">A</div>
+  <div class="pwa-text">
+    <strong>安装 Autopilot 到桌面</strong>
+    <span>像 App 一样一键打开，无需每次输入网址</span>
+  </div>
+  <div class="pwa-btns">
+    <button class="pwa-btn pwa-btn-secondary" id="pwaDismissBtn">稍后</button>
+    <button class="pwa-btn pwa-btn-primary" id="pwaInstallBtn">安装</button>
+  </div>
+</div>
+
+
+<script>
+/* ===== PWA: Service Worker + Install Prompt ===== */
+(function() {
+  // Register Service Worker
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('/sw.js')
+        .then(function(reg) { console.log('[PWA] SW registered', reg.scope); })
+        .catch(function(err) { console.warn('[PWA] SW register failed', err); });
+    });
+  }
+
+  // Install prompt
+  let deferredPrompt = null;
+  const banner = document.getElementById('pwaInstallBanner');
+  const installBtn = document.getElementById('pwaInstallBtn');
+  const dismissBtn = document.getElementById('pwaDismissBtn');
+
+  // Don't show if already installed or user dismissed recently
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
+  }
+  function wasDismissed() {
+    try {
+      const t = localStorage.getItem('pwa_dismiss_ts');
+      if (!t) return false;
+      return (Date.now() - parseInt(t, 10)) < 7 * 24 * 3600 * 1000; // 7 days
+    } catch(e) { return false; }
+  }
+
+  window.addEventListener('beforeinstallprompt', function(e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (!isStandalone() && !wasDismissed() && banner) {
+      banner.classList.add('show');
+    }
+  });
+
+  if (installBtn) {
+    installBtn.addEventListener('click', async function() {
+      if (!deferredPrompt) {
+        // Fallback: show manual instructions for iOS / unsupported
+        alert('请使用浏览器菜单「添加到主屏幕」/「安装应用」来安装。\n\n' +
+              'iOS Safari：点击底部分享按钮 → 添加到主屏幕\n' +
+              'Android Chrome：菜单 → 安装应用 / 添加到主屏幕');
+        return;
+      }
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log('[PWA] user choice:', outcome);
+      deferredPrompt = null;
+      if (banner) banner.classList.remove('show');
+    });
+  }
+
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', function() {
+      if (banner) banner.classList.remove('show');
+      try { localStorage.setItem('pwa_dismiss_ts', String(Date.now())); } catch(e) {}
+    });
+  }
+
+  // Hide banner if already running as installed app
+  if (isStandalone() && banner) {
+    banner.classList.remove('show');
+  }
+
+  // iOS: show a soft tip after a delay if not standalone (no beforeinstallprompt on iOS)
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !isStandalone() && !wasDismissed()) {
+    setTimeout(function() {
+      if (banner && !deferredPrompt) {
+        banner.classList.add('show');
+        // Change button text for iOS
+        if (installBtn) installBtn.textContent = '如何安装';
+      }
+    }, 4000);
+  }
+})();
+</script>
+
+
+<script>
+/* 点击空白关闭帮助气泡 */
+function closeAllHelp() {
+  document.querySelectorAll('.help-q.open').forEach(function(el){ el.classList.remove('open'); });
+  var bd = document.getElementById('helpBackdrop');
+  if (bd) bd.classList.remove('show');
+  var dock = document.getElementById('helpDock');
+  if (dock) {
+    dock.classList.remove('show');
+    dock.innerHTML = '';
+    dock.hidden = true;
+  }
+  document.body.classList.remove('help-open');
+}
+function toggleHelp(btn) {
+  var wasOpen = btn.classList.contains('open');
+  closeAllHelp();
+  if (!wasOpen) {
+    btn.classList.add('open');
+    var bd = document.getElementById('helpBackdrop');
+    if (bd) bd.classList.add('show');
+    var src = btn.querySelector('.help-pop');
+    var dock = document.getElementById('helpDock');
+    if (src && dock) {
+      dock.innerHTML = src.innerHTML;
+      dock.classList.add('show');
+      dock.hidden = false;
+      dock.onclick = function(ev){ ev.stopPropagation(); };
+    }
+    document.body.classList.add('help-open');
+  }
+}
+document.addEventListener('click', function(e) {
+  if (e.target.closest && e.target.closest('.help-q')) return;
+  if (e.target.closest && e.target.closest('.help-pop')) return;
+  if (e.target.closest && e.target.closest('.help-dock')) return;
+  closeAllHelp();
+});
+document.addEventListener('DOMContentLoaded', function() {
+  var bd = document.getElementById('helpBackdrop');
+  if (bd) bd.addEventListener('click', closeAllHelp);
+});
+</script>
+
+</body>
+</html>
+ + Number(x.close).toFixed(2) +
+            ' · 空头指数 ' + x.shortIndex.toFixed(1) + ' · 股价指数 ' + x.priceIndex.toFixed(1);
+          return '<circle cx="'+px(i).toFixed(1)+'" cy="'+py(x.shortIndex).toFixed(1)+'" r="3.8" fill="#e6a23c" stroke="var(--card)" stroke-width="1.5"><title>'+escapeHtml(tooltip)+'</title></circle>' +
+            '<circle cx="'+px(i).toFixed(1)+'" cy="'+py(x.priceIndex).toFixed(1)+'" r="3.8" fill="#4f9cf9" stroke="var(--card)" stroke-width="1.5"><title>'+escapeHtml(tooltip)+'</title></circle>';
+        }).join('');
+        const firstDate = escapeHtml(String(indexed[0].date || '').slice(0,10));
+        const lastDate = escapeHtml(String(indexed[indexed.length-1].date || '').slice(0,10));
+        chartHtml = '<div style="font-size:10px;color:var(--text-dim);margin:2px 0 5px;">空头持仓与股价走势（结算报告日；起点=100，悬停数据点查看原始值）</div>' +
+          '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:10px;margin-bottom:4px;">' +
+          '<span style="color:#e6a23c;">● 空头持仓指数</span><span style="color:#4f9cf9;">● 股价指数</span></div>' +
+          '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="空头持仓与同期股价归一化走势" style="display:block;width:100%;height:auto;max-height:260px;overflow:visible;">' +
+          grid +
+          '<polyline points="'+shortPts+'" fill="none" stroke="#e6a23c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>' +
+          '<polyline points="'+pricePts+'" fill="none" stroke="#4f9cf9" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>' +
+          points +
+          '<text x="'+L+'" y="'+(H-8)+'" font-size="9" fill="var(--text-dim)">'+firstDate+'</text>' +
+          '<text x="'+(W-R)+'" y="'+(H-8)+'" text-anchor="end" font-size="9" fill="var(--text-dim)">'+lastDate+'</text>' +
+          '</svg>';
+      } else {
+        chartHtml = '<div style="font-size:10px;color:var(--text-dim);margin:3px 0;">至少需要两个有效报告期，暂时无法绘制趋势图。</div>';
+      }
+      historyBox.innerHTML = chartHtml +
+        '<div style="font-size:10px;color:var(--text-dim);margin:5px 0 3px;">报告日数据点（最新在前）</div>' +
         hist.map(x => '<div style="display:grid;grid-template-columns:82px 1fr 1fr;gap:6px;padding:4px 1px;border-bottom:1px solid var(--border);font-size:10px;">' +
           '<span style="color:var(--text-dim);">' + escapeHtml(String(x.date || '').slice(0,10)) + '</span>' +
-          '<span>空头 ' + (x.short_interest != null ? (Number(x.short_interest)/1e6).toFixed(1)+'M' : '--') + '</span>' +
-          '<span>收盘 $' + (x.close != null ? Number(x.close).toFixed(2) : '--') + '</span></div>').join('');
+          '<span>空头 ' + (x.short_interest != null ? fmtShares(x.short_interest) : '--') + '</span>' +
+          '<span>收盘 
+    if (meta) meta.textContent = [c.source || c.reason || '', c.published_date ? '发布 ' + c.published_date : '', c.short_interest_status ? '官方空头持仓暂不可用' : '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
+    try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (e) {}
+  } catch (e) {
+    if (badge) badge.textContent = '暂无数据';
+    if (detail) detail.textContent = String(e && e.message || '暂时无法读取空头行为数据');
+    if (meta) meta.textContent = '';
+  }
+}
+
+let _stockAdviceReqSeq = 0;
+async function loadStockAdvice(requestedSymbol) {
+  try {
+    const body = document.getElementById('stockAdviceBody');
+    const symEl = document.getElementById('stockAdviceSymbol');
+    const tl = document.getElementById('stockAdviceTimeline');
+    const tlWrap = document.getElementById('stockAdviceTimelineWrap');
+    if (!body) return;
+    const sym = String(requestedSymbol || currentSymbol || '').trim().toUpperCase();
+    const reqId = ++_stockAdviceReqSeq;
+    if (!sym) {
+      if (symEl) symEl.textContent = '未选择股票';
+      body.textContent = '请先从分析页选择一只股票';
+      if (tl) tl.innerHTML = '';
+      if (tlWrap) tlWrap.style.display = 'none';
+      return;
+    }
+    if (symEl) symEl.textContent = sym;
+    body.textContent = '读取中…';
+    if (tl) tl.innerHTML = '';
+    const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(sym));
+    const data = await res.json();
+    const activeSymbol = String(currentSymbol || '').trim().toUpperCase();
+    if (reqId !== _stockAdviceReqSeq || (activeSymbol && activeSymbol !== sym)) return;
+    if (!data || !data.success) {
+      body.textContent = '暂无拥挤度数据';
+      if (tlWrap) tlWrap.style.display = 'none';
+      return;
+    }
+    const c = data.current || {};
+    const level = c.level || '数据不足';
+    const score = _crowdingScoreLabel(c);
+    const color = _crowdingLevelColor(level);
+    let advice = '指标不足，暂不据此调整仓位。';
+    if (level === '极端' || level === '高') {
+      advice = '拥挤风险较高，控制新增仓位，优先检查个股仓位集中度。';
+    } else if (level === '偏高') {
+      advice = '维持观察，谨慎新增仓位；不要仅凭空头拥挤预期加仓。';
+    } else if (level === '正常') {
+      advice = '当前拥挤度未见明显压力，可结合原有投资计划管理仓位。';
+    }
+    const metric = c.metric_type === 'short_composite_score'
+      ? '空头复合评分 ' + score
+      : (c.percentile != null ? '成交量历史分位 ' + score : '拥挤度 ' + level);
+    const date = c.as_of || '';
+    body.innerHTML =
+      '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:5px;">' +
+        '<b style="color:' + color + ';">' + escapeHtml(level) + '</b>' +
+        (score !== '--' ? '<span style="color:var(--text-dim);">' + escapeHtml(metric) + '</span>' : '') +
+      '</div><div style="font-weight:600;color:var(--text);">' + escapeHtml(advice) + '</div>' +
+      (date ? '<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">数据日期 ' + escapeHtml(String(date).slice(0,10)) + '</div>' : '');
+    const rows = Array.isArray(data.timeline) ? data.timeline.slice(0, 20) : [];
+    if (tl) {
+      if (rows.length) {
+        tl.innerHTML = rows.map(function (r) {
+          const d = String(r.bar_date || r.date || r.as_of || '').slice(0, 10);
+          const rowLevel = r.level || '—';
+          const rowScore = r.score != null
+            ? '评分 ' + Math.round(Number(r.score) * 100) + '/100'
+            : (r.percentile != null ? '分位 ' + Number(r.percentile).toFixed(1) + '%' : '指标快照');
+          const rowColor = _crowdingLevelColor(rowLevel);
+          return '<div style="display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center;padding:6px 2px;border-bottom:1px solid var(--border);">' +
+            '<span style="color:var(--text-dim);">' + escapeHtml(d || '日期未知') + '</span>' +
+            '<span style="color:' + rowColor + ';font-weight:600;">' + escapeHtml(rowLevel) + '</span>' +
+            '<span style="color:var(--text-dim);white-space:nowrap;">' + escapeHtml(rowScore) + '</span>' +
+          '</div>';
+        }).join('');
+        if (tlWrap) tlWrap.style.display = '';
+      } else {
+        tl.innerHTML = '<div style="color:var(--text-dim);padding:5px 0;">暂无历史记录</div>';
+        if (tlWrap) tlWrap.style.display = '';
+      }
+    }
+  } catch (e) {
+    try {
+      const body = document.getElementById('stockAdviceBody');
+      if (body) body.textContent = '暂时无法读取仓位提示';
+    } catch (e2) {}
+  }
+}
+
+// Expose the position-module functions to the main analysis script.
+window.loadCrowdingForAnalysis = loadCrowdingForAnalysis;
+window.loadStockAdvice = loadStockAdvice;
+
+async function loadMarketSpread(force) {
+  const el = document.getElementById('cnSpreadBar');
+  if (!el) return;
+  const local = _marketSpreadCache();
+  let best = (local && local.data && local.data.success) ? local.data : _marketSpreadFallback();
+  try { paintMarketSpread(best); } catch (e) {}
+  const localDay = _spreadDay(best);
+  const today = new Date().toISOString().slice(0, 10);
+  if (!force && local && local.ts && (Date.now() - local.ts) < 2 * 3600 * 1000 && localDay && localDay >= today) return;
+  if (_marketSpreadInflight) return _marketSpreadInflight;
+  _marketSpreadInflight = (async function () {
+    const grab = async function (url, ms) {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, ms) : null;
+      try {
+        const res = await fetch(url, { cache: 'no-cache', signal: ctrl ? ctrl.signal : undefined });
+        const j = await res.json();
+        if (timer) clearTimeout(timer);
+        return (j && j.success) ? j : null;
+      } catch (e) {
+        if (timer) clearTimeout(timer);
+        return null;
+      }
+    };
+    try {
+      const staticJ = await grab('/market-spread.json?v=' + Date.now(), 4000);
+      best = _pickNewerSpread(best, staticJ);
+      if (staticJ) { try { paintMarketSpread(best); } catch (e) {} }
+      let apiJ = null;
+      try { apiJ = await apiJSON('/api/market-spread'); } catch (eApi) { apiJ = null; }
+      best = _pickNewerSpread(best, apiJ);
+      if (best && best.success) {
+        _saveMarketSpread(best);
+        try { paintMarketSpread(best); } catch (e) {}
+      }
+    } finally {
+      _marketSpreadInflight = null;
+    }
+  })();
+  return _marketSpreadInflight;
+}
+try {
+  setTimeout(function () { try { loadMarketSpread(false); } catch (e) {} }, 800);
+} catch (eBoot) {}
+} catch (eMod) { console.warn('market module failed', eMod); }
+</script>
+
+<!-- 客服咨询：右侧细条 → 气泡 → 表单抽屉 -->
+<style>
+#contactHandle {
+  position: fixed;
+  right: 0;
+  top: 42%;
+  z-index: 920;
+  width: 14px;
+  height: 72px;
+  padding: 0;
+  border: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--blue);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: -2px 0 10px rgba(0,0,0,.25);
+  opacity: 0.75;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: width .2s ease, opacity .2s ease;
+  touch-action: manipulation;
+}
+#contactHandle:hover, #contactHandle:focus { opacity: 1; width: 18px; }
+#contactHandle .handle-grip {
+  width: 3px; height: 28px; border-radius: 2px;
+  background: rgba(255,255,255,.85);
+  box-shadow: 6px 0 0 rgba(255,255,255,.35);
+}
+@media (max-width: 640px) {
+  #contactHandle { width: 10px; height: 56px; top: 48%; opacity: 0.7; }
+  #contactHandle:hover, #contactHandle:focus { width: 12px; }
+  #contactHandle .handle-grip { height: 22px; box-shadow: 5px 0 0 rgba(255,255,255,.35); }
+}
+/* 气泡：点细条后先出现 */
+#contactBubble {
+  position: fixed;
+  right: 22px;
+  top: 42%;
+  transform: translateY(-50%) translateX(12px);
+  z-index: 930;
+  background: rgba(28, 32, 40, 0.48);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 16px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.22);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(240px, calc(100vw - 40px));
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .22s ease, transform .22s ease, visibility .22s;
+}
+#contactBubble.open {
+  opacity: 0.88;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+#contactBubble .bubble-text { font-size: 13px; font-weight: 600; }
+#contactBubble .bubble-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-weight: 400; }
+#contactBubble .bubble-action {
+  border: none;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#contactBubble .bubble-x {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+#contactBubble::after {
+  content: '';
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 12px; height: 12px;
+  background: rgba(28, 32, 40, 0.48);
+  border-right: 1px solid rgba(255,255,255,0.14);
+  border-top: 1px solid rgba(255,255,255,0.14);
+}
+@media (max-width: 640px) {
+  #contactBubble { top: 48%; right: 18px; }
+}
+#contactMask {
+  position: fixed; inset: 0; z-index: 980;
+  background: rgba(0,0,0,.12);
+  opacity: 0; visibility: hidden;
+  transition: opacity .25s ease, visibility .25s ease;
+  pointer-events: none;
+}
+#contactMask.open { opacity: 1; visibility: visible; pointer-events: auto; }
+#contactDrawer {
+  position: fixed;
+  top: 50%;
+  right: 12px;
+  z-index: 990;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 48px));
+  height: auto;
+  background: rgba(28, 32, 40, 0.42);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 14px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.28);
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  transform: translate(110%, -50%);
+  transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  display: flex; flex-direction: column;
+  padding: 14px 14px 16px; box-sizing: border-box; overflow-y: auto;
+}
+#contactDrawer.open { transform: translate(0, -50%); }
+#contactDrawer .drawer-head {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+}
+#contactDrawer .drawer-head .card-title { margin: 0; }
+#contactDrawer .drawer-close {
+  border: none; background: transparent; color: var(--text-dim);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 4px 8px;
+}
+#contactDrawer input, #contactDrawer textarea {
+  width: 100%; margin-bottom: 8px;
+  background: rgba(0,0,0,0.22);
+  border: 1px solid rgba(255,255,255,0.14); color: var(--text);
+  padding: 7px 8px; border-radius: 6px; box-sizing: border-box; font-size: 13px;
+}
+#contactDrawer textarea { min-height: 96px; max-height: 160px; resize: vertical; }
+</style>
+<button id="contactHandle" type="button" title="客服" aria-label="打开客服入口"
+  onclick="openContact()"></button>
+<div id="contactBubble" aria-hidden="true">
+  <div style="flex:1;min-width:0;">
+    <div class="bubble-text">客服咨询</div>
+    <div class="bubble-sub">点击继续填写表单</div>
+  </div>
+  <button type="button" class="bubble-action" onclick="openContactForm()">咨询</button>
+  <button type="button" class="bubble-x" onclick="closeContact()" aria-label="关闭">×</button>
+</div>
+<script>
+(function () {
+  const h = document.getElementById('contactHandle');
+  if (!h) return;
+  h.innerHTML = '<span class="handle-grip" aria-hidden="true"></span>';
+  let sx = 0, sy = 0, tracking = false;
+  h.addEventListener('touchstart', function (e) {
+    const t = e.changedTouches[0];
+    sx = t.clientX; sy = t.clientY; tracking = true;
+  }, { passive: true });
+  h.addEventListener('touchend', function (e) {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = sx - t.clientX;
+    const dy = Math.abs(t.clientY - sy);
+    if (dx > 28 && dy < 40) openContact();
+  }, { passive: true });
+  // 点页面空白处收起气泡（未打开表单时）
+  document.addEventListener('click', function (e) {
+    const b = document.getElementById('contactBubble');
+    if (!b || !b.classList.contains('open')) return;
+    if (b.contains(e.target)) return;
+    if (h.contains(e.target)) return;
+    const d = document.getElementById('contactDrawer');
+    if (d && d.classList.contains('open')) return;
+    closeContact();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeContact();
+  });
+})();
+</script>
+<div id="contactMask" onclick="closeContact()" aria-hidden="true"></div>
+<div id="contactDrawer" role="dialog" aria-label="客服咨询表单">
+  <div class="drawer-head">
+    <div class="card-title">联系客服 · 提交咨询</div>
+    <button type="button" class="drawer-close" onclick="closeContact()" aria-label="关闭">×</button>
+  </div>
+  <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;line-height:1.5;">官方客服邮箱：<b>support@timebricks.bid</b><br>提交后我们会收到工单并尽快回复</div>
+  <div id="ctMsg2" style="font-size:11px;min-height:14px;margin-bottom:6px;color:var(--orange);"></div>
+  <input id="ctName" type="text" placeholder="姓名（可选）">
+  <input id="ctEmail" type="email" placeholder="邮箱（必填）">
+  <input id="ctCountry" type="text" placeholder="国家/地区（可选）">
+  <textarea id="ctMsg" rows="5" placeholder="咨询内容（必填）"></textarea>
+  <button class="btn" style="width:100%;margin-top:4px;" onclick="submitContact()">发送咨询</button>
+</div>
+
+
+<!-- PWA Install Banner -->
+<div id="pwaInstallBanner">
+  <div class="pwa-icon">A</div>
+  <div class="pwa-text">
+    <strong>安装 Autopilot 到桌面</strong>
+    <span>像 App 一样一键打开，无需每次输入网址</span>
+  </div>
+  <div class="pwa-btns">
+    <button class="pwa-btn pwa-btn-secondary" id="pwaDismissBtn">稍后</button>
+    <button class="pwa-btn pwa-btn-primary" id="pwaInstallBtn">安装</button>
+  </div>
+</div>
+
+
+<script>
+/* ===== PWA: Service Worker + Install Prompt ===== */
+(function() {
+  // Register Service Worker
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('/sw.js')
+        .then(function(reg) { console.log('[PWA] SW registered', reg.scope); })
+        .catch(function(err) { console.warn('[PWA] SW register failed', err); });
+    });
+  }
+
+  // Install prompt
+  let deferredPrompt = null;
+  const banner = document.getElementById('pwaInstallBanner');
+  const installBtn = document.getElementById('pwaInstallBtn');
+  const dismissBtn = document.getElementById('pwaDismissBtn');
+
+  // Don't show if already installed or user dismissed recently
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
+  }
+  function wasDismissed() {
+    try {
+      const t = localStorage.getItem('pwa_dismiss_ts');
+      if (!t) return false;
+      return (Date.now() - parseInt(t, 10)) < 7 * 24 * 3600 * 1000; // 7 days
+    } catch(e) { return false; }
+  }
+
+  window.addEventListener('beforeinstallprompt', function(e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (!isStandalone() && !wasDismissed() && banner) {
+      banner.classList.add('show');
+    }
+  });
+
+  if (installBtn) {
+    installBtn.addEventListener('click', async function() {
+      if (!deferredPrompt) {
+        // Fallback: show manual instructions for iOS / unsupported
+        alert('请使用浏览器菜单「添加到主屏幕」/「安装应用」来安装。\n\n' +
+              'iOS Safari：点击底部分享按钮 → 添加到主屏幕\n' +
+              'Android Chrome：菜单 → 安装应用 / 添加到主屏幕');
+        return;
+      }
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log('[PWA] user choice:', outcome);
+      deferredPrompt = null;
+      if (banner) banner.classList.remove('show');
+    });
+  }
+
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', function() {
+      if (banner) banner.classList.remove('show');
+      try { localStorage.setItem('pwa_dismiss_ts', String(Date.now())); } catch(e) {}
+    });
+  }
+
+  // Hide banner if already running as installed app
+  if (isStandalone() && banner) {
+    banner.classList.remove('show');
+  }
+
+  // iOS: show a soft tip after a delay if not standalone (no beforeinstallprompt on iOS)
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !isStandalone() && !wasDismissed()) {
+    setTimeout(function() {
+      if (banner && !deferredPrompt) {
+        banner.classList.add('show');
+        // Change button text for iOS
+        if (installBtn) installBtn.textContent = '如何安装';
+      }
+    }, 4000);
+  }
+})();
+</script>
+
+
+<script>
+/* 点击空白关闭帮助气泡 */
+function closeAllHelp() {
+  document.querySelectorAll('.help-q.open').forEach(function(el){ el.classList.remove('open'); });
+  var bd = document.getElementById('helpBackdrop');
+  if (bd) bd.classList.remove('show');
+  var dock = document.getElementById('helpDock');
+  if (dock) {
+    dock.classList.remove('show');
+    dock.innerHTML = '';
+    dock.hidden = true;
+  }
+  document.body.classList.remove('help-open');
+}
+function toggleHelp(btn) {
+  var wasOpen = btn.classList.contains('open');
+  closeAllHelp();
+  if (!wasOpen) {
+    btn.classList.add('open');
+    var bd = document.getElementById('helpBackdrop');
+    if (bd) bd.classList.add('show');
+    var src = btn.querySelector('.help-pop');
+    var dock = document.getElementById('helpDock');
+    if (src && dock) {
+      dock.innerHTML = src.innerHTML;
+      dock.classList.add('show');
+      dock.hidden = false;
+      dock.onclick = function(ev){ ev.stopPropagation(); };
+    }
+    document.body.classList.add('help-open');
+  }
+}
+document.addEventListener('click', function(e) {
+  if (e.target.closest && e.target.closest('.help-q')) return;
+  if (e.target.closest && e.target.closest('.help-pop')) return;
+  if (e.target.closest && e.target.closest('.help-dock')) return;
+  closeAllHelp();
+});
+document.addEventListener('DOMContentLoaded', function() {
+  var bd = document.getElementById('helpBackdrop');
+  if (bd) bd.addEventListener('click', closeAllHelp);
+});
+</script>
+
+</body>
+</html>
+ + (x.close != null ? Number(x.close).toFixed(2) : '--') + '</span></div>').join('');
     }
     if (meta) meta.textContent = [c.source || c.reason || '', c.published_date ? '发布 ' + c.published_date : '', c.short_interest_status ? '官方空头持仓暂不可用' : '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
     try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (e) {}
