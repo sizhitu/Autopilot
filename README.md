@@ -78,6 +78,8 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 - Nasdaq 无记录时，系统回退到 FINRA **Consolidated Short Interest** 免费公开接口，覆盖 Nasdaq、NYSE 等美国交易市场，按股票代码查询半月度官方申报持仓，并保留结算日、空头数量、平均日成交量与 Days to Cover。
 - FINRA 数据不提供流通股比例时，不会臆造 short % float 或复合拥挤度分数；历史行为矩阵仍可基于空头持仓与同期股价变化计算。
 - FINRA 数据接口：`POST https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest`。请求使用 `symbolCode` 精确过滤，避免下载全市场数据。
+- 需要申请 FINRA **Public Credential（$0/月）**，不是匿名接口。将 Client ID / Secret 配置为服务端环境变量 `FINRA_API_CLIENT_ID`、`FINRA_API_CLIENT_SECRET`；后端自动换取并缓存 OAuth Token。不要把凭证提交到仓库或放在前端。
+- Public Credential 面向个人研究者访问 FINRA 公开数据；使用范围以 FINRA 条款和凭证权限为准。
 - 不会用 daily short-sale volume（每日卖空成交量）冒充 short interest（空头持仓）。
 
 ## 快速开始 · Quick Start
