@@ -3269,6 +3269,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "days_to_cover": days,
                         "source": si.get("source") or "Nasdaq/FINRA",
                         "as_of": si.get("settlement_date") or None,
+                        "published_date": si.get("published_date"),
                     }
                     # 将每期官方空头报告与相同结算日期附近的收盘价对齐，识别空头变化与价格关系。
                     try:
