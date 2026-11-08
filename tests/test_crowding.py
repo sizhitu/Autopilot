@@ -21,7 +21,7 @@ def test_us_short_interest():
 
 
 def test_non_nasdaq_fallback(monkeypatch):
-    """Nasdaq 无记录时回退到 FINRA 免费跨交易所官方数据。"""
+    """Nasdaq 无记录时，不把 FINRA OTC 数据冒充 NYSE 上市股持仓。"""
     import requests
     import watchlist
 
@@ -30,28 +30,11 @@ def test_non_nasdaq_fallback(monkeypatch):
         def json(self):
             return {"data": {"shortInterestTable": {"rows": []}}}
 
-    class FinraEmptyResponse:
-        status_code = 200
-        def json(self):
-            return []
-
-    monkeypatch.setenv("FINRA_API_CLIENT_ID", "test-client")
-    monkeypatch.setenv("FINRA_API_CLIENT_SECRET", "test-secret")
-    monkeypatch.setattr(watchlist, "_FINRA_TOKEN_CACHE", {"token": None, "expires_at": 0})
     monkeypatch.setattr(requests, "get", lambda *a, **k: EmptyResponse())
-
-    def fake_post(url, **kwargs):
-        if "access_token" in url:
-            return type("TokenResponse", (), {
-                "status_code": 200,
-                "json": lambda self: {"access_token": "test-token", "expires_in": 3600},
-            })()
-        return FinraEmptyResponse()
-
-    monkeypatch.setattr(requests, "post", fake_post)
     si = watchlist._fetch_us_short_interest("BE")
-    assert si["status"] == "no_records"
-    assert si["source"] == "FINRA Consolidated Short Interest"
+    assert si["status"] == "provider_required"
+    assert "FINRA" in si["message"]
+    assert "OTC" in si["message"]
 
 
 def test_compute_crowding_volume():
@@ -135,56 +118,3 @@ def test_watchlist_richness_counts_crowding_data():
     assert _row_richness(rich) > _row_richness(bare)
 
 
-def test_finra_consolidated_short_interest_parsing(monkeypatch):
-    """FINRA 合并数据字段正确映射，并保留半月度历史。"""
-    import requests
-    import watchlist
-
-    class Response:
-        status_code = 200
-        def json(self):
-            return [
-                {
-                    "symbolCode": "BE", "settlementDate": "2026-10-30",
-                    "currentShortPositionQuantity": 1320000,
-                    "previousShortPositionQuantity": 1200000,
-                    "averageDailyVolumeQuantity": 330000,
-                    "daysToCoverQuantity": 4.0, "changePercent": 10.0,
-                    "marketClassCode": "NYSE",
-                },
-                {
-                    "symbolCode": "BE", "settlementDate": "2026-10-15",
-                    "currentShortPositionQuantity": 1200000,
-                    "previousShortPositionQuantity": 1100000,
-                    "averageDailyVolumeQuantity": 300000,
-                    "daysToCoverQuantity": 4.0, "changePercent": 9.09,
-                    "marketClassCode": "NYSE",
-                },
-            ]
-
-    captured = {}
-    monkeypatch.setenv("FINRA_API_CLIENT_ID", "test-client")
-    monkeypatch.setenv("FINRA_API_CLIENT_SECRET", "test-secret")
-    monkeypatch.setattr(watchlist, "_FINRA_TOKEN_CACHE", {"token": None, "expires_at": 0})
-
-    def fake_post(url, **kwargs):
-        if "access_token" in url:
-            captured["auth"] = kwargs.get("auth")
-            return type("TokenResponse", (), {
-                "status_code": 200,
-                "json": lambda self: {"access_token": "test-token", "expires_in": 3600},
-            })()
-        captured.update({"url": url, "body": kwargs.get("json"), "headers": kwargs.get("headers")})
-        return Response()
-
-    monkeypatch.setattr(requests, "post", fake_post)
-    result = watchlist._fetch_finra_consolidated_short_interest("BE")
-    assert result["status"] == "ok"
-    assert result["short_interest"] == 1320000
-    assert result["days_to_cover"] == 4.0
-    assert result["composite"] is None
-    assert [row["date"] for row in result["history"]] == ["2026-10-15", "2026-10-30"]
-    assert captured["auth"] == ("test-client", "test-secret")
-    assert captured["headers"]["Authorization"] == "Bearer test-token"
-    assert captured["body"]["compareFilters"][0]["fieldName"] == "symbolCode"
-    assert captured["body"]["compareFilters"][0]["fieldValue"] == "BE"
