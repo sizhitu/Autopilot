@@ -383,97 +383,6 @@ def _get_cached_short(code: str) -> dict:
     return data
 
 
-def _fetch_ortex_official_short_interest(code: str, api_key: str, namespace: str = "NYSE") -> dict:
-    """读取 ORTEX 单股官方半月度空头报告；不使用日度估算 short interest。"""
-    import requests
-    from datetime import date, timedelta
-
-    code = str(code or "").strip().upper()
-    namespace = str(namespace or "NYSE").strip().upper()
-    end_date = date.today()
-    start_date = end_date - timedelta(days=370)
-    url = f"https://api.ortex.com/api/v11/stock/{namespace}/{code}/short/official_short_interest/"
-    params = {
-        "from_date": start_date.isoformat(),
-        "to_date": end_date.isoformat(),
-        "split_adjusted": "true",
-    }
-    headers = {"Ortex-Api-Key": api_key, "Accept": "application/json"}
-    response = requests.get(url, params=params, headers=headers, timeout=20)
-    if response.status_code != 200:
-        return {
-            "status": "provider_error",
-            "source": "ORTEX 官方空头报告",
-            "message": f"ORTEX 官方空头接口返回 HTTP {response.status_code}；请检查 TEST Key 的地区/日期限制或套餐权限。",
-        }
-
-    payload = response.json() or {}
-    rows = payload.get("data") or []
-    if isinstance(rows, dict):
-        rows = rows.get("results") or rows.get("rows") or []
-    if not isinstance(rows, list) or not rows:
-        meta = payload.get("meta") or {}
-        return {
-            "status": "no_records",
-            "source": "ORTEX 官方空头报告",
-            "message": str(meta.get("emptyReason") or f"ORTEX 没有返回 {namespace}:{code} 的官方空头报告。"),
-        }
-
-    history = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        try:
-            settlement = _normalize_short_date(row.get("settlementDate"))
-            shares_raw = row.get("officialSiShares")
-            if not settlement or shares_raw in (None, ""):
-                continue
-            shares = float(shares_raw)
-            if shares <= 0:
-                continue
-            avg_raw = row.get("officialAvgDailyVolume")
-            avg_volume = float(avg_raw) if avg_raw not in (None, "") else None
-            days_raw = row.get("officialDaysToCover")
-            days = (shares / avg_volume) if avg_volume and avg_volume > 0 else (
-                float(days_raw) if days_raw not in (None, "") else None
-            )
-            history.append({
-                "date": settlement,
-                "published_date": str(row.get("publishedDate") or "")[:10] or None,
-                "short_interest": shares,
-                "avg_volume": avg_volume,
-                "days_to_cover": round(days, 2) if days is not None and days > 0 else None,
-            })
-        except (TypeError, ValueError):
-            continue
-
-    history = sorted(
-        {row["date"]: row for row in history}.values(),
-        key=lambda row: row["date"],
-    )
-    if not history:
-        return {
-            "status": "no_records",
-            "source": "ORTEX 官方空头报告",
-            "message": "ORTEX 已响应，但没有可用的官方空头持仓记录。",
-        }
-
-    latest = history[-1]
-    return {
-        "status": "ok",
-        "short_interest": latest["short_interest"],
-        "avg_volume": latest.get("avg_volume"),
-        "days_to_cover": latest.get("days_to_cover"),
-        "short_pct_float": None,
-        "composite": None,
-        "settlement_date": latest["date"],
-        "published_date": latest.get("published_date"),
-        "history": history[-24:],
-        "source": f"ORTEX 官方报告（{namespace}）",
-    }
-
-
-
 _FINRA_TOKEN_CACHE = {"token": None, "expires_at": 0}
 
 
@@ -752,49 +661,50 @@ def _fetch_nasdaq_short_interest(code: str) -> dict:
 
 
 def _fetch_us_short_interest(code: str) -> dict:
-    """Exchange-aware US short-interest routing; never mix venue datasets.
+    """Exchange-aware official short-interest routing; no paid ORTEX dependency.
 
-    NASDAQ -> Nasdaq official report -> ORTEX NASDAQ (if configured)
-    NYSE/AMEX -> ORTEX matching venue (if configured; NYSE Group file access is
-    a separately licensed/FTP product and is not silently substituted here)
-    OTC/unresolved -> FINRA OTC dataset, but only when it actually returns a row.
+    NASDAQ -> Nasdaq official bi-monthly short-interest report.
+    NYSE/AMEX -> no Nasdaq substitution; NYSE Group official file integration
+    is not available yet, so return an explicit source-unavailable status.
+    UNKNOWN -> FINRA OTC consolidated short-interest only; accept only a
+    matching FINRA record. Daily FINRA short-sale volume is never used here.
     """
-    import os
-
     code = str(code or "").strip().upper()
     if not code:
         return {"status": "invalid_symbol", "message": "股票代码为空。", "history": []}
 
     venue = _fetch_listing_exchange(code)
-    nasdaq_error = None
 
     if venue == "NASDAQ":
         try:
             result = _fetch_nasdaq_short_interest(code)
             if result.get("status") == "ok":
                 result["listing_exchange"] = venue
-                return result
-            nasdaq_error = result.get("message") or "Nasdaq 无报告"
-        except Exception as exc:
-            nasdaq_error = f"Nasdaq 请求失败：{type(exc).__name__}"
-
-    # Do not call Nasdaq's Nasdaq-listed-only report for NYSE/AMEX/OTC securities.
-    api_key = (os.getenv("ORTEX_API_KEY") or "").strip()
-    ortex_namespace = {"NASDAQ": "NASDAQ", "NYSE": "NYSE", "AMEX": "AMEX"}.get(venue)
-    if api_key and ortex_namespace:
-        try:
-            result = _fetch_ortex_official_short_interest(code, api_key, namespace=ortex_namespace)
-            if result.get("status") == "ok":
-                result["provider"] = "ortex"
-                result["listing_exchange"] = venue
+                result["provider"] = "nasdaq"
                 result["metric_type"] = "days_to_cover"
                 return result
-        except Exception:
-            pass
+            nasdaq_error = result.get("message") or "Nasdaq 未返回官方报告"
+        except Exception as exc:
+            nasdaq_error = f"Nasdaq 请求失败：{type(exc).__name__}"
+        return {
+            "status": "no_records", "source": "Nasdaq 官方空头报告",
+            "provider": "nasdaq", "listing_exchange": venue,
+            "message": f"已识别为 Nasdaq 上市股票，但没有取得 {code} 的官方空头持仓报告：{nasdaq_error}",
+            "history": [],
+        }
 
-    # FINRA consolidatedShortInterest is an OTC dataset, not a fallback for
-    # known Nasdaq/NYSE/AMEX listed securities. For unresolved symbols, accept
-    # it only when FINRA itself returns a matching OTC position.
+    if venue in ("NYSE", "AMEX"):
+        return {
+            "status": "source_unavailable",
+            "source": "NYSE Group 官方空头报告",
+            "provider": None,
+            "listing_exchange": venue,
+            "message": f"{code} 已识别为 {venue} 上市股票。Nasdaq 报告不覆盖该交易所；当前版本尚未接入 NYSE Group 官方半月度报告文件，因此暂不提供空头持仓数值，也不会用 FINRA OTC 或日度卖空成交量替代。",
+            "history": [],
+        }
+
+    # FINRA consolidatedShortInterest here is the OTC dataset, not a
+    # consolidated all-exchange dataset. Only unknown symbols are checked.
     if venue == "UNKNOWN":
         try:
             result = _fetch_finra_short_interest(code)
@@ -803,38 +713,24 @@ def _fetch_us_short_interest(code: str) -> dict:
                 result["listing_exchange"] = "OTC"
                 result["metric_type"] = "days_to_cover"
                 return result
+            return {
+                "status": "no_records", "source": "FINRA OTC 官方空头持仓",
+                "provider": "finra_otc", "listing_exchange": None,
+                "message": f"无法确认 {code} 的主上市交易所，FINRA OTC 数据也没有返回匹配的空头持仓记录。",
+                "history": [],
+            }
         except Exception as exc:
             return {
-                "status": "source_error", "source": "FINRA OTC",
+                "status": "source_error", "source": "FINRA OTC 官方空头持仓",
+                "provider": "finra_otc", "listing_exchange": None,
                 "message": f"无法识别上市交易所，且 FINRA OTC 查询失败：{str(exc)[:160]}",
                 "history": [],
             }
 
-    if venue in ("NYSE", "AMEX") and not api_key:
-        return {
-            "status": "provider_required", "source": f"{venue} 官方空头报告",
-            "listing_exchange": venue,
-            "message": f"{venue} 股票已识别。Nasdaq 报告不覆盖该交易所；NYSE Group 官方文件需要单独的数据文件权限/接入，目前可配置 ORTEX_API_KEY 作为官方报告补充。",
-            "history": [],
-        }
-    if venue == "NASDAQ" and not api_key:
-        return {
-            "status": "no_records", "source": "Nasdaq 官方空头报告",
-            "listing_exchange": venue,
-            "message": f"已识别为 Nasdaq 上市股票，但 Nasdaq 未返回 {code} 的报告。{nasdaq_error or ''}".strip(),
-            "history": [],
-        }
-    if venue == "UNKNOWN":
-        return {
-            "status": "unknown_listing", "source": "交易所识别",
-            "listing_exchange": None,
-            "message": f"无法从 Nasdaq 公共股票目录确认 {code} 的上市交易所，FINRA OTC 也没有返回匹配仓位；不将其误判为 Nasdaq/NYSE 上市股。",
-            "history": [],
-        }
     return {
-        "status": "no_records", "source": f"ORTEX 官方报告（{venue}）",
-        "listing_exchange": venue,
-        "message": f"{venue} 上市股票 {code} 暂无可用的官方空头报告。",
+        "status": "unknown_listing", "source": "交易所识别",
+        "listing_exchange": None,
+        "message": f"无法确认 {code} 的上市交易所；为避免混用来源，不生成空头持仓指标。",
         "history": [],
     }
 
