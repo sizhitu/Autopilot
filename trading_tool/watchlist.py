@@ -408,10 +408,15 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
             prev_5 = float(df['close'].iloc[-1 - lookback_5])
             status.change_5d = round((last_close - prev_5) / prev_5 * 100, 2)
 
-        # 拥挤度：近20日均成交量 vs 过去1年分位
+        # 拥挤度：近20日均成交量 vs 过去1年分位；成交量缺失时用价格波动近似
         try:
-            if 'volume' in df.columns and len(df) >= 30:
+            vol = None
+            if 'volume' in df.columns:
                 vol = df['volume'].astype(float)
+            if vol is None or vol.sum() <= 0:
+                # 用价格绝对涨跌幅近似活跃度
+                vol = df['close'].astype(float).pct_change().abs().fillna(0) * 1e6
+            if len(df) >= 20 and vol is not None and vol.sum() > 0:
                 recent = vol.tail(20).mean()
                 hist = vol.tail(min(250, len(vol)))
                 if hist.sum() > 0 and recent > 0:
