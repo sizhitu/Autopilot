@@ -390,7 +390,7 @@ def _fetch_ortex_official_short_interest(code: str, api_key: str) -> dict:
     from datetime import date, timedelta
 
     end_date = date.today()
-    start_date = end_date - timedelta(days=550)  # 约覆盖一年、最多 24 个半月报告
+    start_date = end_date - timedelta(days=370)  # 约覆盖一年、最多 24 个半月报告
     url = f"https://api.ortex.com/api/v11/stock/US/{code}/short/official_short_interest/"
     params = {
         "from_date": start_date.isoformat(),
