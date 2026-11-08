@@ -74,10 +74,10 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 
 ### 美股官方空头持仓 · US Official Short Interest
 
-- Nasdaq 个股接口优先用于 Nasdaq 上市证券；无记录时可选用 ORTEX **Official Short Interest** 单股接口，按交易所和代码查询，例如 `NYSE/BE`。
-- ORTEX 官方接口返回交易所/监管机构公布的半月度空头持仓，不是 ORTEX 每日估算值；包含结算日、发布日期、空头股数、平均日成交量与 Days to Cover。
-- 可先将服务端环境变量 `ORTEX_API_KEY` 设置为官方免费测试 Key `TEST` 验证接口。测试 Key 可能受日期范围和地区限制；验证覆盖与权限前不要购买套餐。
-- FINRA 的 `consolidatedShortInterest` API 是 OTC 场外证券数据，不可作为 BE、DHR、ICE 等 NYSE 上市股票的替代数据源。
+- Nasdaq 个股接口优先用于 Nasdaq 上市证券；无记录时回退 FINRA `consolidatedShortInterest`，覆盖美国各交易所的官方合并空头持仓。
+- FINRA 数据为半月度结算日持仓，包含当前/上期空头股数、平均日成交量与 Days to Cover；不使用 daily short-sale volume 冒充 short interest。
+- 需要在服务端配置免费的 FINRA Public Credential：`FINRA_API_CLIENT_ID` 和 `FINRA_API_CLIENT_SECRET`。个人用户可申请 Public Credential，公开数据额度为每月 10GB。
+- FINRA `consolidatedShortInterest` 是跨交易所合并数据，可用于 BE、DHR、ICE 等 NYSE 上市股票。生产数据通常覆盖最近 12 个月；历史更早数据需另行接入 HISTORIC 数据集。
 - 不使用 daily short-sale volume（日度卖空成交量）冒充 short interest（空头持仓）。
 
 ## 快速开始 · Quick Start
