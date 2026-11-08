@@ -109,7 +109,7 @@ def parse_workbook(path: Path, publication_date: str, source_url: str, sha256: s
             for field, aliases in FIELDS.items():
                 for cidx, cell in enumerate(cells):
                     if field == "securities_5000_plus":
-                        if "number of securities" in cell and "5000" in cell:
+                        if "number of securities" in cell and "5000" in cell.replace(",", "").replace(" ", ""):
                             found[field] = cidx
                             break
                     elif any(alias in cell for alias in aliases):
