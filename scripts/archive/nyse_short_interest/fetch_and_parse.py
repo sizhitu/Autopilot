@@ -123,6 +123,7 @@ def parse_workbook(path: Path, publication_date: str, source_url: str, sha256: s
         if header_idx is None:
             continue
 
+        last_settlement = None
         for _, row in frame.iloc[header_idx + 1:].iterrows():
             exchange_raw = str(row.iloc[colmap["exchange"]]).strip().upper()
             exchange = EXCHANGE_ALIASES.get(exchange_raw)
@@ -134,8 +135,11 @@ def parse_workbook(path: Path, publication_date: str, source_url: str, sha256: s
                 # Some legacy workbooks place the date in a merged title cell.
                 date_cells = [pd.to_datetime(v, errors="coerce") for v in row.tolist()]
                 settlement = next((v for v in date_cells if not pd.isna(v)), pd.NaT)
+            if pd.isna(settlement) and last_settlement is not None:
+                settlement = last_settlement
             if pd.isna(settlement):
                 continue
+            last_settlement = settlement
             output.append({
                 "settlement_date": settlement.date().isoformat(),
                 "publication_date": datetime.strptime(publication_date, "%Y%m%d").date().isoformat(),
