@@ -65,7 +65,7 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 
 - **后端 · Backend**：Python 3.11 · FastAPI · uvicorn · pandas / numpy
 - **前端 · Frontend**：原生 HTML/CSS/JS · Canvas 绘图（无第三方框架）
-- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（现价与 Nasdaq 上市股票空头报告）· FINRA Consolidated Short Interest（免费跨交易所官方空头持仓）
+- **数据源 · Data**：Yahoo Finance v8（美股/指数）· 新浪财经（A股）· Nasdaq API（现价与 Nasdaq 上市股票空头报告）· FINRA OTC Short Interest（仅 OTC 场外证券，不作为 NYSE/Nasdaq 上市股数据源）
 - **美股源探测**：`docs/us_market_data.md` · `python3 trading_tool/probe_us_sources.py`
 - **部署 · Deploy**：Docker · docker-compose · 预览看门狗（自愈重启）
 
@@ -75,12 +75,10 @@ A research web app for a combined US / A-share / ETF watchlist: daily closes, ni
 ### 美股官方空头持仓 · US Official Short Interest
 
 - Nasdaq 个股接口优先提供 Nasdaq 上市证券的半月度官方空头报告。
-- Nasdaq 无记录时，系统回退到 FINRA **Consolidated Short Interest** 免费公开接口，覆盖 Nasdaq、NYSE 等美国交易市场，按股票代码查询半月度官方申报持仓，并保留结算日、空头数量、平均日成交量与 Days to Cover。
-- FINRA 数据不提供流通股比例时，不会臆造 short % float 或复合拥挤度分数；历史行为矩阵仍可基于空头持仓与同期股价变化计算。
-- FINRA 数据接口：`POST https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest`。请求使用 `symbolCode` 精确过滤，避免下载全市场数据。
-- 需要申请 FINRA **Public Credential（$0/月）**，不是匿名接口。将 Client ID / Secret 配置为服务端环境变量 `FINRA_API_CLIENT_ID`、`FINRA_API_CLIENT_SECRET`；后端自动换取并缓存 OAuth Token。不要把凭证提交到仓库或放在前端。
-- Public Credential 面向个人研究者访问 FINRA 公开数据；使用范围以 FINRA 条款和凭证权限为准。
-- 不会用 daily short-sale volume（每日卖空成交量）冒充 short interest（空头持仓）。
+- Nasdaq 个股接口仅用于 Nasdaq 上市证券。
+- FINRA 的 `consolidatedShortInterest` API 虽然名称含 Consolidated，但官方数据集定义为 **OTC 场外证券**空头持仓，不可作为 BE、DHR、ICE 等 NYSE 上市股票的替代数据源。
+- FINRA Public Credential 为免费凭证，可用于其授权的公开数据集；但凭证免费不代表数据集覆盖所有交易所。
+- 目前没有接入未经验证的 NYSE 免费数据源。Nasdaq 无记录时明确提示覆盖不足，不使用 FINRA OTC 数据或 daily short-sale volume（日度卖空成交量）冒充上市股 short interest（空头持仓）。
 
 ## 快速开始 · Quick Start
 
