@@ -23,4 +23,4 @@ jobs:
       - name: Compile and test
         run: |
           python -m py_compile scripts/archive/nyse_short_interest/fetch_and_parse.py
-          python -m unittest tests/test_nyse_short_interest.py -v
+          python tests/test_nyse_short_interest.py -v
