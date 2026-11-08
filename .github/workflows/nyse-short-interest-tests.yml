@@ -1,0 +1,26 @@
+name: NYSE short-interest parser tests
+
+on:
+  pull_request:
+    paths:
+      - "scripts/archive/nyse_short_interest/**"
+      - "tests/test_nyse_short_interest.py"
+      - ".github/workflows/nyse-short-interest-tests.yml"
+  push:
+    branches:
+      - "feat/nyse-consolidated-short-interest"
+
+jobs:
+  parser-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install parser dependencies
+        run: pip install pandas xlrd==2.0.1
+      - name: Compile and test
+        run: |
+          python -m py_compile scripts/archive/nyse_short_interest/fetch_and_parse.py
+          python -m unittest tests/test_nyse_short_interest.py -v
