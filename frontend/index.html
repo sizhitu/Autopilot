@@ -6953,7 +6953,8 @@ async function loadCrowdingForAnalysis(sym) {
     const isShort = c.metric_type === 'short_composite_score' || c.metric_type === 'days_to_cover';
     if (badge) badge.textContent = isShort ? (labels[state] || '历史数据不足') : (c.level || '成交量拥挤度');
     if (detail) detail.textContent = isShort ? (interpretations[state] || interpretations.insufficient) :
-      (c.percentile != null ? '成交量处于自身历史 ' + Number(c.percentile).toFixed(1) + '% 分位。' : '暂无可用的行为分析。');
+      (c.percentile != null ? '成交量处于自身历史 ' + Number(c.percentile).toFixed(1) + '% 分位。' : '暂无可用的行为分析。') +
+      (c.short_interest_note ? ' ' + c.short_interest_note : '');
     if (matrix && isShort) {
       const cells = [
         {id:'A',title:'空头↑ / 股价↓',sub:'卖压强化'},
@@ -6982,7 +6983,7 @@ async function loadCrowdingForAnalysis(sym) {
           '<span>空头 ' + (x.short_interest != null ? (Number(x.short_interest)/1e6).toFixed(1)+'M' : '--') + '</span>' +
           '<span>收盘 $' + (x.close != null ? Number(x.close).toFixed(2) : '--') + '</span></div>').join('');
     }
-    if (meta) meta.textContent = [c.source || c.reason || '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
+    if (meta) meta.textContent = [c.source || c.reason || '', c.short_interest_status ? '官方空头持仓暂不可用' : '', _crowdingDateLabel(c)].filter(Boolean).join(' · ');
     try { if (typeof loadStockAdvice === 'function') loadStockAdvice(symbol); } catch (e) {}
   } catch (e) {
     if (badge) badge.textContent = '暂无数据';
