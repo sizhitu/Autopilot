@@ -20,13 +20,15 @@ def test_us_short_interest():
             print(f"  {code}: 空（非 Nasdaq 或接口无数据）")
 
 
-def test_non_nasdaq_fallback():
-    """非 Nasdaq 股票（如 BE）空头接口返回空，应有兜底路径。"""
-    from watchlist import _fetch_us_short_interest
-    si = _fetch_us_short_interest("BE")
-    # BE 非 Nasdaq，应返回空或无 composite
-    print(f"  BE short: {si}")
-    assert isinstance(si, dict)
+def test_non_nasdaq_fallback(monkeypatch):
+    """Nasdaq 无记录且未配置 ORTEX 时，明确返回数据源覆盖提示。"""
+    import watchlist
+    monkeypatch.delenv("ORTEX_API_KEY", raising=False)
+    monkeypatch.setattr(watchlist.requests if hasattr(watchlist, "requests") else __import__("requests"), "get", lambda *a, **k: type("R", (), {"status_code": 200, "json": lambda self: {"data": {"shortInterestTable": {"rows": []}}}})())
+    si = watchlist._fetch_us_short_interest("BE")
+    assert si["status"] == "provider_required"
+    assert "Nasdaq 上市证券" in si["message"]
+    assert "ORTEX_API_KEY" in si["message"]
 
 
 def test_compute_crowding_volume():
@@ -108,3 +110,28 @@ def test_watchlist_richness_counts_crowding_data():
     bare = {"price": 100, "bar_date": "2026-11-06"}
     rich = dict(bare, crowding_pct=1.2, crowding_level="高", crowding_source="Nasdaq/FINRA")
     assert _row_richness(rich) > _row_richness(bare)
+
+
+def test_ortex_official_short_interest_parsing(monkeypatch):
+    """ORTEX 官方半月度报告字段映射为拥挤度历史。"""
+    import watchlist
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"data": [
+                {"settlementDate": "2026-10-15", "publishedDate": "2026-10-22",
+                 "officialSiShares": 1200000, "officialAvgDailyVolume": 300000,
+                 "officialDaysToCover": 4.0},
+                {"settlementDate": "2026-10-30", "publishedDate": "2026-11-06",
+                 "officialSiShares": 1320000, "officialAvgDailyVolume": 330000,
+                 "officialDaysToCover": 4.0},
+            ]}
+
+    monkeypatch.setattr("requests.get", lambda *a, **k: Response())
+    result = watchlist._fetch_ortex_official_short_interest("BE", "test-key")
+    assert result["status"] == "ok"
+    assert result["short_interest"] == 1320000
+    assert result["days_to_cover"] == 4.0
+    assert len(result["history"]) == 2
+    assert result["history"][-1]["published_date"] == "2026-11-06"
