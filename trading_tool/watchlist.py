@@ -586,58 +586,140 @@ def _fetch_finra_short_interest(code: str) -> dict:
     }
 
 
+def _normalize_short_date(value) -> str:
+    """将 Nasdaq/ORTEX/FINRA 的结算日期统一为 YYYY-MM-DD。"""
+    from datetime import datetime
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(raw[:10], fmt).date().isoformat()
+        except ValueError:
+            continue
+    try:
+        return pd.to_datetime(raw, errors="coerce").strftime("%Y-%m-%d")
+    except Exception:
+        return raw[:10]
+
+
 def _fetch_us_short_interest(code: str) -> dict:
-    """Nasdaq 优先；未覆盖时回退 FINRA 跨交易所官方合并数据。"""
+    """
+    美股官方空头持仓路由：
+    1) Nasdaq 官方报告（Nasdaq-listed 且 Nasdaq API 有报告时）
+    2) ORTEX 官方半月度报告（NYSE/Nasdaq venue）
+    3) FINRA OTC consolidated 数据仅在显式开启 OTC fallback 时使用。
+    不把 FINRA OTC 数据冒充 NYSE/Nasdaq 上市股数据。
+    """
+    import os
     import requests
 
     code = str(code or "").strip().upper()
     if not code:
         return {"status": "invalid_symbol", "message": "股票代码为空。"}
 
+    nasdaq_error = None
     try:
         url = f"https://api.nasdaq.com/api/quote/{code}/short-interest?assetclass=stocks"
-        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-        except Exception:
-            response = None
-        if response is not None and response.status_code == 200:
+        response = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            timeout=12,
+        )
+        if response.status_code == 200:
             payload = response.json() or {}
             rows = payload.get("data", {}).get("shortInterestTable", {}).get("rows", []) or []
-            if rows:
-                latest = rows[0]
-                def _num(value):
-                    return float(str(value).replace(",", "").replace("$", "").strip() or 0)
-                interest = _num(latest.get("interest"))
-                avg_volume = _num(latest.get("avgDailyShareVolume"))
-                days = _num(latest.get("daysToCover"))
-                settlement = str(latest.get("settlementDate") or "")[:10]
-                history = []
-                for row in rows:
-                    try:
-                        shares = _num(row.get("interest"))
-                        report_date = str(row.get("settlementDate") or "")[:10]
-                        if shares >= 0 and report_date:
-                            history.append({"date": report_date, "short_interest": shares,
-                                            "days_to_cover": round(_num(row.get("daysToCover")), 2) or None})
-                    except (TypeError, ValueError):
-                        continue
-                history = sorted({item["date"]: item for item in history}.values(), key=lambda item: item["date"])
-                return {
-                    "status": "ok", "short_interest": interest, "avg_volume": avg_volume,
-                    "days_to_cover": round(days, 2) if days > 0 else None,
-                    "short_pct_float": None, "composite": None,
-                    "settlement_date": settlement, "history": history[-24:],
-                    "source": "Nasdaq 官方空头报告",
-                }
 
-        return _fetch_finra_short_interest(code)
+            def _num(value):
+                raw = str(value or "").replace(",", "").replace("$", "").strip()
+                return float(raw) if raw else 0.0
+
+            history = []
+            for row in rows:
+                try:
+                    report_date = _normalize_short_date(row.get("settlementDate"))
+                    shares = _num(row.get("interest"))
+                    avg_volume = _num(row.get("avgDailyShareVolume"))
+                    days = _num(row.get("daysToCover"))
+                    if report_date and shares >= 0:
+                        history.append({
+                            "date": report_date,
+                            "short_interest": shares,
+                            "avg_volume": avg_volume or None,
+                            "days_to_cover": round(days, 2) if days > 0 else (
+                                round(shares / avg_volume, 2) if avg_volume > 0 else None
+                            ),
+                        })
+                except (TypeError, ValueError):
+                    continue
+
+            history = sorted(
+                {item["date"]: item for item in history}.values(),
+                key=lambda item: item["date"],
+            )
+            if history:
+                latest = history[-1]
+                return {
+                    "status": "ok",
+                    "short_interest": latest["short_interest"],
+                    "avg_volume": latest.get("avg_volume"),
+                    "days_to_cover": latest.get("days_to_cover"),
+                    "short_pct_float": None,
+                    "composite": None,
+                    "settlement_date": latest["date"],
+                    "history": history[-24:],
+                    "source": "Nasdaq 官方空头报告",
+                    "provider": "nasdaq",
+                    "metric_type": "days_to_cover",
+                }
+        else:
+            nasdaq_error = f"Nasdaq HTTP {response.status_code}"
     except Exception as exc:
+        nasdaq_error = f"Nasdaq 请求失败：{type(exc).__name__}"
+
+    # ORTEX 才是这里用于 NYSE/Nasdaq listed equities 的跨 venue 官方报告源。
+    api_key = (os.getenv("ORTEX_API_KEY") or "").strip()
+    if api_key:
+        venue_candidates = ["NYSE", "NASDAQ"]
+        for venue in venue_candidates:
+            try:
+                result = _fetch_ortex_official_short_interest(code, api_key, namespace=venue)
+                if result.get("status") == "ok":
+                    result["provider"] = "ortex"
+                    result["metric_type"] = "days_to_cover"
+                    return result
+            except Exception:
+                continue
+
+    # FINRA consolidatedShortInterest 属于 OTC 数据集，不自动作为上市股 fallback。
+    allow_finra_otc = (os.getenv("FINRA_ALLOW_OTC_FALLBACK") or "").strip().lower() in ("1", "true", "yes")
+    if allow_finra_otc:
+        try:
+            result = _fetch_finra_short_interest(code)
+            if result.get("status") == "ok":
+                result["provider"] = "finra_otc"
+                result["metric_type"] = "days_to_cover"
+            return result
+        except Exception as exc:
+            return {
+                "status": "source_error",
+                "source": "Nasdaq / ORTEX / FINRA OTC",
+                "message": f"{nasdaq_error or 'Nasdaq 无报告'}；FINRA OTC 查询失败：{str(exc)[:160]}",
+            }
+
+    if not api_key:
         return {
-            "status": "provider_required" if "FINRA_API_CLIENT_ID" in str(exc) else "source_error",
-            "source": "Nasdaq / FINRA",
-            "message": f"Nasdaq 未返回记录；FINRA 查询失败：{str(exc)[:180]}",
+            "status": "provider_required",
+            "source": "Nasdaq / ORTEX",
+            "message": f"{nasdaq_error or 'Nasdaq 没有返回该股票空头报告'}；NYSE/Nasdaq listed equities 需要 ORTEX_API_KEY。FINRA OTC 数据不会自动代替上市股空头持仓。",
+            "history": [],
         }
+    return {
+        "status": "no_records",
+        "source": "Nasdaq / ORTEX 官方空头报告",
+        "message": f"Nasdaq 与 ORTEX 均未返回 {code} 的官方空头报告。{nasdaq_error or ''}".strip(),
+        "history": [],
+    }
 
 def _fetch_volume_only(code: str) -> "pd.Series | None":
     """专门取成交量。美股走 Stooq，A股走腾讯。失败返回 None。"""
