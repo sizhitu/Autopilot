@@ -441,6 +441,7 @@ def build_market_spread_fast():
         "fast": True,
         "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "cn": cn, "us": us, "smh": smh, "congestion": crowd,
+        "congestion_history": congestion_history,
         "hint_history": [], "us_hint_history": [],
         "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
     }
