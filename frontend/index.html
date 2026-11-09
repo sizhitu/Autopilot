@@ -1317,6 +1317,13 @@ body.landing-locked #freeBanner { display: none !important; }
     <div id="usHintHistory" style="display:none;margin-top:8px;font-size:11px;line-height:1.5;color:var(--text-dim);"></div>
   </div>
   <!-- 个股拥挤度仓位提示：只给简短行动提示与历史快照 -->
+  <div class="card" id="marketCrowdingOverview" style="margin-bottom:10px;">
+    <div style="font-weight:700;color:var(--gold);margin-bottom:8px;">市场整体拥挤度</div>
+    <div id="marketCrowdingPanels" style="display:grid;grid-template-columns:1fr;gap:10px;">
+      <div style="font-size:11px;color:var(--text-dim);">正在读取市场数据…</div>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:7px;">A股：全A成交额中成交额前5%个股占比；美股：VIX波动率指数。两者口径不同，分别解读，不作横向数值比较。</div>
+  </div>
   <div class="card" id="stockAdviceCard" style="margin-bottom:10px;">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:8px;">
       <div style="font-weight:700;color:var(--gold);">个股拥挤度 · 仓位提示</div>
@@ -1329,13 +1336,6 @@ body.landing-locked #freeBanner { display: none !important; }
       <div style="font-size:11px;color:var(--text-dim);font-weight:600;margin-bottom:5px;">历史记录</div>
       <div id="stockAdviceTimeline" style="max-height:160px;overflow-y:auto;font-size:11px;line-height:1.5;"></div>
     </div>
-  </div>
-  <div class="card" id="marketCrowdingOverview" style="margin-bottom:10px;">
-    <div style="font-weight:700;color:var(--gold);margin-bottom:8px;">市场整体拥挤度</div>
-    <div id="marketCrowdingPanels" style="display:grid;grid-template-columns:1fr;gap:10px;">
-      <div style="font-size:11px;color:var(--text-dim);">正在读取市场数据…</div>
-    </div>
-    <div style="font-size:10px;color:var(--text-dim);margin-top:7px;">A股：全A成交额中成交额前5%个股占比；美股：VIX波动率指数。两者口径不同，分别解读，不作横向数值比较。</div>
   </div>
   <div class="card" style="margin-bottom:10px;">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
