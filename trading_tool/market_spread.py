@@ -374,6 +374,7 @@ def build_market_spread_fast():
     us = {"ok": False, "name": "标普500"}
     smh = {"ok": False, "name": "SMH半导体"}
     crowd = {"cn": {"ok": False}, "us": {"ok": False}}
+    congestion_history = {"cn": [], "us": []}
     with ThreadPoolExecutor(max_workers=6) as ex:
         futs = {
             "pe": ex.submit(_legu_pe),
@@ -509,6 +510,7 @@ def build_market_spread():
         logger.warning("SMH利差失败: %s", e)
         smh["error"] = str(e)[:80]
     crowd = {"cn": {"ok": False}, "us": {"ok": False}}
+    congestion_history = {"cn": [], "us": []}
     hint_history = []
     us_hint_history = []
     try:
@@ -520,6 +522,7 @@ def build_market_spread():
         crowd["cn"] = {"ok": False, "error": str(e)[:80]}
     try:
         hist = _cn_congestion_history()
+        congestion_history["cn"] = hist
         spread_hist = []
         try:
             pe = _legu_pe()
@@ -532,6 +535,7 @@ def build_market_spread():
         logger.warning("拥挤度历史失败: %s", e)
     try:
         vix_hist = _us_vix_history()
+        congestion_history["us"] = vix_hist
         us_spread = []
         try:
             pe = _spx_pe()
@@ -586,6 +590,7 @@ def build_market_spread():
         "us": us,
         "smh": smh,
         "congestion": crowd,
+        "congestion_history": congestion_history,
         "hint_history": hint_history,
         "us_hint_history": us_hint_history,
         "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
