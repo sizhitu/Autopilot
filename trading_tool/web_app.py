@@ -664,7 +664,9 @@ def _refresh_market_spread():
             if not data.get("us_hint_history") and prev.get("us_hint_history"):
                 data["us_hint_history"] = prev.get("us_hint_history")
             # 快照先落地，历史提示再补，避免页面一直没有历史
-            if not data.get("hint_history") or not data.get("us_hint_history"):
+            if (not data.get("hint_history") or not data.get("us_hint_history")
+                    or not (data.get("congestion_history") or {}).get("cn")
+                    or not (data.get("congestion_history") or {}).get("us")):
                 try:
                     from market_spread import build_market_spread
                     full = build_market_spread()
@@ -672,6 +674,8 @@ def _refresh_market_spread():
                         data["hint_history"] = full.get("hint_history")
                     if full.get("us_hint_history"):
                         data["us_hint_history"] = full.get("us_hint_history")
+                    if full.get("congestion_history"):
+                        data["congestion_history"] = full.get("congestion_history")
                 except Exception as e:
                     print(f"[market-spread] history fill failed: {e}")
             cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)
@@ -735,6 +739,7 @@ async def market_spread():
             "cn": {"ok": True, "date": "2026-10-19", "value": 42.06, "position": "集中升温", "note": "成交向头部集中，留意局部过热"},
             "us": {"ok": True, "value": 18.16, "position": "正常", "note": "波动正常，不构成拥挤或恐慌"},
         },
+        "congestion_history": {"cn": [], "us": []},
         "hint_history": [],
         "us_hint_history": [],
         "disclaimer": "只管总仓位和节奏，不替代个股操盘动作。不是投资建议。",
