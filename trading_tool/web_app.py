@@ -676,6 +676,7 @@ def _refresh_market_spread():
                         data["us_hint_history"] = full.get("us_hint_history")
                     if full.get("congestion_history"):
                         data["congestion_history"] = full.get("congestion_history")
+                    data["congestion_history_checked_at"] = time.time()
                 except Exception as e:
                     print(f"[market-spread] history fill failed: {e}")
             cache.set_json(_MARKET_SPREAD_KEY, data, _MARKET_SPREAD_TTL)
@@ -695,7 +696,8 @@ async def market_spread():
     now = time.time()
     mem = _MARKET_SPREAD_MEM.get("data")
     mem_hist = (mem or {}).get("congestion_history") or {}
-    if isinstance(mem, dict) and mem.get("success") and mem_hist.get("cn") and mem_hist.get("us") and _spread_age(mem) < _MARKET_SPREAD_FRESH and not _spread_behind_session(mem):
+    mem_history_checked = bool((mem or {}).get("congestion_history_checked_at"))
+    if isinstance(mem, dict) and mem.get("success") and ((mem_hist.get("cn") and mem_hist.get("us")) or mem_history_checked) and _spread_age(mem) < _MARKET_SPREAD_FRESH and not _spread_behind_session(mem):
         out = dict(mem)
         out["cached"] = True
         out["cache_layer"] = out.get("cache_layer") or "memory"
@@ -713,7 +715,8 @@ async def market_spread():
         _MARKET_SPREAD_MEM["ts"] = now
         _MARKET_SPREAD_MEM["data"] = hit
         hist = hit.get("congestion_history") or {}
-        if age >= _MARKET_SPREAD_FRESH or _spread_behind_session(hit) or not hist.get("cn") or not hist.get("us"):
+        history_checked = bool(hit.get("congestion_history_checked_at"))
+        if age >= _MARKET_SPREAD_FRESH or _spread_behind_session(hit) or ((not hist.get("cn") or not hist.get("us")) and not history_checked):
             _refresh_market_spread()
         return JSONResponse(content=hit, headers={"Cache-Control": "public, max-age=300"})
     # 没有快照也不在请求里现拉，否则免费实例容易挂住。先回兜底，后台更新。
