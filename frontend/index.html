@@ -1330,6 +1330,13 @@ body.landing-locked #freeBanner { display: none !important; }
       <div id="stockAdviceTimeline" style="max-height:160px;overflow-y:auto;font-size:11px;line-height:1.5;"></div>
     </div>
   </div>
+  <div class="card" id="marketCrowdingOverview" style="margin-bottom:10px;">
+    <div style="font-weight:700;color:var(--gold);margin-bottom:8px;">市场整体拥挤度</div>
+    <div id="marketCrowdingPanels" style="display:grid;grid-template-columns:1fr;gap:10px;">
+      <div style="font-size:11px;color:var(--text-dim);">正在读取市场数据…</div>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:7px;">A股：全A成交额中成交额前5%个股占比；美股：VIX波动率指数。两者口径不同，分别解读，不作横向数值比较。</div>
+  </div>
   <div class="card" style="margin-bottom:10px;">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
       <div style="font-weight:700;color:var(--gold);">藤本茂阶梯参考</div>
@@ -6778,9 +6785,44 @@ function _spreadAgeNote(day) {
   if (days <= 4) return day + ' · ' + days + '天前';
   return day + ' · 偏旧';
 }
+function renderMarketCrowdingOverview(j) {
+  const root = document.getElementById('marketCrowdingPanels');
+  if (!root || !j) return;
+  const crowd = j.congestion || {};
+  const histories = j.congestion_history || {};
+  const specs = [
+    {key:'cn', title:'A股', unit:'%', color:'#e6a23c', metric:'前5%个股成交额 / 全A成交额'},
+    {key:'us', title:'美股', unit:'', color:'#4f9cf9', metric:'VIX · 市场隐含波动率'}
+  ];
+  root.innerHTML = specs.map(spec => {
+    const cur = crowd[spec.key] || {};
+    const rows = (histories[spec.key] || []).filter(x => x && x.date && Number.isFinite(Number(x.value))).slice(-90);
+    const value = cur.ok && cur.value != null ? Number(cur.value) : (rows.length ? Number(rows[rows.length-1].value) : null);
+    const date = cur.date || (rows.length ? rows[rows.length-1].date : '');
+    let chart = '<div style="font-size:11px;color:var(--text-dim);padding:10px 0;">暂无足够历史数据</div>';
+    if (rows.length >= 2) {
+      const W=620,H=112,L=8,R=8,T=8,B=20;
+      const vals=rows.map(x=>Number(x.value));
+      const lo=Math.min(...vals), hi=Math.max(...vals), span=Math.max(1,hi-lo);
+      const x=i=>L+i*(W-L-R)/(rows.length-1), y=v=>T+(hi-v)/span*(H-T-B);
+      const points=rows.map((r,i)=>x(i).toFixed(1)+','+y(Number(r.value)).toFixed(1)).join(' ');
+      const grid=[0,1,2].map(i=>{const yy=T+i*(H-T-B)/2;return '<line x1="'+L+'" y1="'+yy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+yy.toFixed(1)+'" stroke="var(--border)" stroke-dasharray="3 4"/>';}).join('');
+      const dots=rows.map((r,i)=>'<circle cx="'+x(i).toFixed(1)+'" cy="'+y(Number(r.value)).toFixed(1)+'" r="2.3" fill="'+spec.color+'"><title>'+escapeHtml(String(r.date).slice(0,10)+' · '+Number(r.value).toFixed(2)+spec.unit)+'</title></circle>').join('');
+      chart='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+spec.title+'市场拥挤度历史趋势" style="display:block;width:100%;height:auto;max-height:130px;">'+grid+'<polyline points="'+points+'" fill="none" stroke="'+spec.color+'" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'+dots+'</svg><div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-dim);"><span>'+escapeHtml(String(rows[0].date).slice(0,10))+'</span><span>'+escapeHtml(String(rows[rows.length-1].date).slice(0,10))+' · '+rows.length+'期</span></div>';
+    }
+    const latest = value == null ? '--' : value.toFixed(2)+spec.unit;
+    const recent = rows.slice(-5).map(r=>'<span style="white-space:nowrap;">'+escapeHtml(String(r.date).slice(5,10))+' <b>'+Number(r.value).toFixed(1)+spec.unit+'</b></span>').join(' · ');
+    return '<div style="padding:8px 9px;border:1px solid var(--border);border-radius:8px;">'+
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><b style="font-size:12px;">'+spec.title+'</b><span style="font-size:17px;font-weight:700;color:'+spec.color+';">'+latest+'</span></div>'+
+      '<div style="font-size:10px;color:var(--text-dim);margin:2px 0 5px;">'+spec.metric+' · '+escapeHtml(cur.position || '历史值')+' · '+escapeHtml(String(date).slice(0,10))+'</div>'+
+      chart+(recent?'<div style="font-size:9px;color:var(--text-dim);margin-top:4px;">近期：'+recent+'</div>':'')+
+    '</div>';
+  }).join('');
+}
 function paintMarketSpread(j) {
   if (!j) return;
   window._lastMarketSpread = j;
+  renderMarketCrowdingOverview(j);
   const cn = j.cn || {};
   const us = j.us || {};
   const smh = j.smh || {};
@@ -7064,7 +7106,11 @@ async function loadStockAdvice(requestedSymbol) {
       if (tlWrap) tlWrap.style.display = 'none';
       return;
     }
-    if (symEl) symEl.textContent = sym;
+    const isCnSymbol = /^(?:\d{6}(?:\.(?:SS|SZ|BJ))?|(?:SH|SZ|BJ)\d{6})$/i.test(sym) || /^(?:cn|china|a股)$/i.test(String(currentMarket || ''));
+    const displayName = isCnSymbol && String(currentSymbol || '').toUpperCase() === sym && currentName
+      ? String(currentName).replace(/股份有限公司|有限责任公司|股份|集团有限公司|集团$/g, '').trim()
+      : sym;
+    if (symEl) symEl.textContent = displayName || sym;
     body.textContent = '读取中…';
     if (tl) tl.innerHTML = '';
     const res = await api('/api/position/stock-advice?symbol=' + encodeURIComponent(sym));
@@ -7148,9 +7194,9 @@ async function loadStockAdvice(requestedSymbol) {
     } else {
       evidence = c.percentile != null ? '当前成交量历史分位 ' + Number(c.percentile).toFixed(1) + '%。' : '缺少可用的拥挤度指标。';
     }
-    const metric = c.metric_type === 'short_composite_score'
-      ? '空头复合评分 ' + score
-      : (c.percentile != null ? '成交量历史分位 ' + score : '拥挤度 ' + level);
+    const metric = isShort
+      ? (c.score != null ? '空头复合评分 ' + score : (c.days_to_cover != null ? 'DTC ' + score : ''))
+      : (c.percentile != null ? '成交量历史分位 ' + score : '');
     const date = c.as_of || '';
     body.innerHTML =
       '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:5px;">' +
