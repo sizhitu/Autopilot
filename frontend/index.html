@@ -7106,7 +7106,7 @@ async function loadStockAdvice(requestedSymbol) {
       if (tlWrap) tlWrap.style.display = 'none';
       return;
     }
-    const isCnSymbol = /^(?:\\d{6}(?:\\.(?:SS|SZ|BJ))?|(?:SH|SZ|BJ)\\d{6})$/i.test(sym) || /^(?:cn|china|a股)$/i.test(String(currentMarket || ''));
+    const isCnSymbol = /^(?:\d{6}(?:\.(?:SS|SZ|BJ))?|(?:SH|SZ|BJ)\d{6})$/i.test(sym) || /^(?:cn|china|a股)$/i.test(String(currentMarket || ''));
     const displayName = isCnSymbol && String(currentSymbol || '').toUpperCase() === sym && currentName
       ? String(currentName).replace(/股份有限公司|有限责任公司|股份|集团有限公司|集团$/g, '').trim()
       : sym;
