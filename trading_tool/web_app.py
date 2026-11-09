@@ -694,7 +694,8 @@ async def market_spread():
     import cache
     now = time.time()
     mem = _MARKET_SPREAD_MEM.get("data")
-    if isinstance(mem, dict) and mem.get("success") and _spread_age(mem) < _MARKET_SPREAD_FRESH and not _spread_behind_session(mem):
+    mem_hist = (mem or {}).get("congestion_history") or {}
+    if isinstance(mem, dict) and mem.get("success") and mem_hist.get("cn") and mem_hist.get("us") and _spread_age(mem) < _MARKET_SPREAD_FRESH and not _spread_behind_session(mem):
         out = dict(mem)
         out["cached"] = True
         out["cache_layer"] = out.get("cache_layer") or "memory"
@@ -711,7 +712,8 @@ async def market_spread():
         hit["cache_layer"] = "supabase"
         _MARKET_SPREAD_MEM["ts"] = now
         _MARKET_SPREAD_MEM["data"] = hit
-        if age >= _MARKET_SPREAD_FRESH or _spread_behind_session(hit):
+        hist = hit.get("congestion_history") or {}
+        if age >= _MARKET_SPREAD_FRESH or _spread_behind_session(hit) or not hist.get("cn") or not hist.get("us"):
             _refresh_market_spread()
         return JSONResponse(content=hit, headers={"Cache-Control": "public, max-age=300"})
     # 没有快照也不在请求里现拉，否则免费实例容易挂住。先回兜底，后台更新。
