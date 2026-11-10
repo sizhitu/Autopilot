@@ -372,6 +372,56 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 
 _SHORT_CACHE = {}
 _SHORT_TTL = 3600 * 12  # 12 小时，半月数据不需要频繁拉
+_FLOAT_SHARES_CACHE = {}
+_FLOAT_SHARES_TTL = 3600 * 24
+
+
+def _fetch_float_shares(code: str):
+    """从 Yahoo Finance defaultKeyStatistics 读取公开流通股数；失败时不以总股本替代。"""
+    import time
+    code = str(code or "").strip().upper()
+    if not code:
+        return None
+    cached = _FLOAT_SHARES_CACHE.get(code)
+    if cached and time.time() - cached.get("ts", 0) < _FLOAT_SHARES_TTL:
+        return cached.get("value")
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    for domain in ("query2.finance.yahoo.com", "query1.finance.yahoo.com"):
+        try:
+            response = fetcher.session.get(
+                f"https://{domain}/v10/finance/quoteSummary/{code}",
+                params={"modules": "defaultKeyStatistics", "corsDomain": "finance.yahoo.com"},
+                headers=headers, timeout=10,
+            )
+            if response.status_code != 200:
+                continue
+            results = (response.json().get("quoteSummary") or {}).get("result") or []
+            if not results:
+                continue
+            stats = results[0].get("defaultKeyStatistics") or {}
+            raw = stats.get("floatShares")
+            value = raw.get("raw") if isinstance(raw, dict) else raw
+            value = float(value)
+            if value > 0 and np.isfinite(value):
+                _FLOAT_SHARES_CACHE[code] = {"ts": time.time(), "value": value}
+                return value
+        except Exception:
+            continue
+    _FLOAT_SHARES_CACHE[code] = {"ts": time.time(), "value": None}
+    return None
+
+
+def _compute_short_pct_float(short_interest, float_shares):
+    """空头持仓量 / 流通股数 × 100，返回百分数。"""
+    try:
+        short_shares = float(short_interest)
+        float_count = float(float_shares)
+        if not np.isfinite(short_shares) or not np.isfinite(float_count) or short_shares < 0 or float_count <= 0:
+            return None
+        return round(short_shares / float_count * 100.0, 4)
+    except (TypeError, ValueError):
+        return None
+
 
 def _compute_short_composite(short_pct_float, days_to_cover):
     """Short % Float（百分数）转比例后乘以 DTC；缺任一项不生成复合分。"""
@@ -398,9 +448,16 @@ def _short_composite_level(score):
     return "正常"
 
 
-def _enrich_short_crowding(data: dict) -> dict:
+def _enrich_short_crowding(data: dict, code: str = "") -> dict:
     """统一生成美股空头复合拥挤度；缺少任一原始指标时明确留空。"""
     result = dict(data or {})
+    if result.get("short_pct_float") is None and result.get("short_interest") is not None and code:
+        float_shares = _fetch_float_shares(code)
+        pct = _compute_short_pct_float(result.get("short_interest"), float_shares)
+        if pct is not None:
+            result["short_pct_float"] = pct
+            result["float_shares"] = float_shares
+            result["float_source"] = "Yahoo Finance defaultKeyStatistics"
     score = _compute_short_composite(
         result.get("short_pct_float"), result.get("days_to_cover")
     )
@@ -415,7 +472,7 @@ def _get_cached_short(code: str) -> dict:
     hit = _SHORT_CACHE.get(code.upper())
     if hit and (time.time() - hit.get("ts", 0)) < _SHORT_TTL:
         return hit.get("data") or {}
-    data = _enrich_short_crowding(_fetch_us_short_interest(code))
+    data = _enrich_short_crowding(_fetch_us_short_interest(code), code)
     _SHORT_CACHE[code.upper()] = {"ts": time.time(), "data": data}
     return data
 
