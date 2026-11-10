@@ -2201,18 +2201,16 @@ def _fill_crowding_if_missing(stocks: list) -> list:
         if not isinstance(s, dict):
             out.append(s)
             continue
-        # 只要等级和数值存在就视为有效，0 分也是有效的正式复合分。
-        if (s.get("crowding_level") or "") and s.get("crowding_pct") is not None:
-            out.append(s)
-            continue
         code = str(s.get("code") or "").strip().upper()
         if not code:
             out.append(s)
             continue
+        is_us = not (code.isdigit() or code.startswith(("SH", "SZ", "BJ")))
+        # A股已有有效分位可跳过；美股每次都重新校验短仓复合分，清理旧版 DTC 单项缓存。
+        if not is_us and (s.get("crowding_level") or "") and s.get("crowding_pct") is not None:
+            out.append(s)
+            continue
         try:
-            if not is_us and (s.get("crowding_level") or "") and s.get("crowding_pct") is not None:
-                out.append(s)
-                continue
             if is_us:
                 s = dict(s)
                 # 丢弃旧版可能写入的 DTC 单项伪评分，再用正式复合分或明确标注的替代分位重建。
