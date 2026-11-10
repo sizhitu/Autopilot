@@ -6988,9 +6988,14 @@ async function loadCrowdingForAnalysis(sym) {
     };
     const isShort = c.metric_type === 'short_composite_score' || c.metric_type === 'days_to_cover' || c.metric_type === 'short_interest_incomplete';
     if (badge) badge.textContent = isShort ? (labels[state] || '历史数据不足') : (c.level || '成交量拥挤度');
-    if (detail) detail.textContent = isShort ? (interpretations[state] || interpretations.insufficient) :
-      (c.percentile != null ? '成交量处于自身历史 ' + Number(c.percentile).toFixed(1) + '% 分位。' : '暂无可用的行为分析。') +
-      (c.short_interest_note ? ' ' + c.short_interest_note : '');
+    const rawShortMetrics = 'Short % Float ' +
+      (c.short_pct_float != null ? Number(c.short_pct_float).toFixed(1) + '%' : '暂缺') +
+      ' · DTC ' + (c.days_to_cover != null ? Number(c.days_to_cover).toFixed(1) + '天' : '暂缺');
+    if (detail) detail.textContent = isShort
+      ? (interpretations[state] || interpretations.insufficient) +
+        (c.metric_type === 'short_interest_incomplete' ? ' 当前缺少复合评分所需指标；' + rawShortMetrics : '')
+      : (c.percentile != null ? '成交量处于自身历史 ' + Number(c.percentile).toFixed(1) + '% 分位。' : '暂无可用的行为分析。') +
+        (c.short_interest_note ? ' ' + c.short_interest_note : '');
     if (matrix && isShort) {
       const cells = [
         {id:'A',title:'空头↑ / 股价↓',sub:'卖压强化'},
@@ -7193,6 +7198,11 @@ async function loadStockAdvice(requestedSymbol) {
       if (level === '高' || level === '极端') action += ' 当前分位偏高，新增仓位宜控制节奏。';
     } else {
       evidence = c.percentile != null ? '当前成交量历史分位 ' + Number(c.percentile).toFixed(1) + '%。' : '缺少可用的拥挤度指标。';
+    }
+    if (isShort) {
+      const raw = 'Short % Float ' + (c.short_pct_float != null ? Number(c.short_pct_float).toFixed(1) + '%' : '--') +
+        ' · DTC ' + (c.days_to_cover != null ? Number(c.days_to_cover).toFixed(1) + '天' : '--');
+      evidence = [evidence, raw].filter(Boolean).join('；');
     }
     const metric = isShort
       ? (c.score != null ? '空头复合评分 ' + score : (c.days_to_cover != null ? 'DTC ' + score : ''))
