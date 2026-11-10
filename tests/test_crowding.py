@@ -7,7 +7,7 @@ sys.path.insert(0, str(ROOT / "trading_tool"))
 
 
 def test_us_short_interest():
-    """美股空头接口：Nasdaq 上市股应返回复合拥挤度。"""
+    """美股空头接口：优先 FINRA 全市场合并持仓，Nasdaq 个股接口作为补充。"""
     from watchlist import _fetch_us_short_interest
     for code in ["AAPL", "NVDA", "GOOG", "ASTS"]:
         si = _fetch_us_short_interest(code)
@@ -21,19 +21,20 @@ def test_us_short_interest():
 
 
 def test_nyse_and_amex_use_finra_consolidated(monkeypatch):
-    """NYSE/AMEX 也必须先查 FINRA 全市场合并空头持仓。"""
+    """NYSE/AMEX 都必须先查 FINRA 全市场合并空头持仓。"""
     import watchlist
-    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NYSE")
     monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
         "status": "ok", "short_interest": 1000000, "days_to_cover": 2.0,
         "history": [], "source": "FINRA 官方合并空头持仓",
     })
     monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest",
-                        lambda code: (_ for _ in ()).throw(AssertionError("NYSE must not call Nasdaq")))
-    result = watchlist._fetch_us_short_interest("BE")
-    assert result["status"] == "ok"
-    assert result["provider"] == "finra_consolidated"
-    assert result["listing_exchange"] == "NYSE"
+                        lambda code: (_ for _ in ()).throw(AssertionError("NYSE/AMEX must not call Nasdaq")))
+    for venue in ("NYSE", "AMEX"):
+        monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code, v=venue: v)
+        result = watchlist._fetch_us_short_interest("XYZ")
+        assert result["status"] == "ok"
+        assert result["provider"] == "finra_consolidated"
+        assert result["listing_exchange"] == venue
 
 
 def test_compute_crowding_volume():
