@@ -373,12 +373,49 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 _SHORT_CACHE = {}
 _SHORT_TTL = 3600 * 12  # 12 小时，半月数据不需要频繁拉
 
+def _compute_short_composite(short_pct_float, days_to_cover):
+    """Short % Float（百分数）转比例后乘以 DTC；缺任一项不生成复合分。"""
+    try:
+        pct = float(short_pct_float)
+        days = float(days_to_cover)
+        if not np.isfinite(pct) or not np.isfinite(days) or pct < 0 or days <= 0:
+            return None
+        return round((pct / 100.0) * days, 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def _short_composite_level(score):
+    """复合分阈值：沿用既有 0.5 / 1 / 2 分级。"""
+    if score is None:
+        return "数据不足"
+    if score >= 2.0:
+        return "极端"
+    if score >= 1.0:
+        return "高"
+    if score >= 0.5:
+        return "偏高"
+    return "正常"
+
+
+def _enrich_short_crowding(data: dict) -> dict:
+    """统一生成美股空头复合拥挤度；缺少任一原始指标时明确留空。"""
+    result = dict(data or {})
+    score = _compute_short_composite(
+        result.get("short_pct_float"), result.get("days_to_cover")
+    )
+    result["composite"] = score
+    result["metric_type"] = "short_composite_score" if score is not None else "short_interest_incomplete"
+    result["crowding_level"] = _short_composite_level(score)
+    return result
+
+
 def _get_cached_short(code: str) -> dict:
     import time
     hit = _SHORT_CACHE.get(code.upper())
     if hit and (time.time() - hit.get("ts", 0)) < _SHORT_TTL:
         return hit.get("data") or {}
-    data = _fetch_us_short_interest(code)
+    data = _enrich_short_crowding(_fetch_us_short_interest(code))
     _SHORT_CACHE[code.upper()] = {"ts": time.time(), "data": data}
     return data
 
@@ -808,32 +845,19 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
                     status.short_pct_float = si.get("short_pct_float")
                     status.crowding_source = si.get("source") or ""
                     comp = si.get("composite")
-                    days = si.get("days_to_cover") or 0
+                    days = si.get("days_to_cover")
                     if comp is not None:
-                        status.crowding_pct = comp
-                        if comp >= 2.0:
-                            status.crowding_level = "极端"
-                        elif comp >= 1.0:
-                            status.crowding_level = "高"
-                        elif comp >= 0.5:
-                            status.crowding_level = "偏高"
-                        else:
-                            status.crowding_level = "正常"
-                    elif days > 0:
-                        # 没有流通股时只用回补天数
-                        status.crowding_pct = round(days, 1)
-                        if days >= 8:
-                            status.crowding_level = "高"
-                        elif days >= 5:
-                            status.crowding_level = "偏高"
-                        else:
-                            status.crowding_level = "正常"
-                    status.crowding_speed = f"空头{si.get('short_pct_float') or '--'}% · 回补{days}天"
+                        status.crowding_pct = round(float(comp) * 100, 1)
+                        status.crowding_level = _short_composite_level(comp)
+                    # 不允许 DTC 单指标冒充复合拥挤度；原始指标仍单独展示。
+                    pct_label = si.get("short_pct_float")
+                    status.crowding_speed = (
+                        f"空头占流通{pct_label if pct_label is not None else '--'}% · "
+                        f"回补{days if days is not None else '--'}天"
+                    )
                     if si.get("short_pct_float") and si["short_pct_float"] > 10:
                         status.crowding_speed = (status.crowding_speed or "") + " · 次新/小流通盘需结合锁定期和套利盘理解"
-            # 美股空头失败时也回落到成交量分位
-            if is_us and not status.crowding_level:
-                is_us = False
+            # 美股官方空头数据缺失时保持“数据不足”，不拿成交量分位冒充空头拥挤度。
             if not is_us:
                 vol = None
                 if 'volume' in df.columns:
