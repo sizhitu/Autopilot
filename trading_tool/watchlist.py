@@ -897,7 +897,7 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
                     )
                     if si.get("short_pct_float") and si["short_pct_float"] > 10:
                         status.crowding_speed = (status.crowding_speed or "") + " · 次新/小流通盘需结合锁定期和套利盘理解"
-            # 美股官方空头数据缺失时保持“数据不足”，不拿成交量分位冒充空头拥挤度。
+            # 美股复合分缺失时可展示成交量活跃度分位，但必须标注为替代参考。
             if not is_us or status.crowding_pct is None:
                 vol = None
                 if 'volume' in df.columns:
@@ -2210,10 +2210,15 @@ def _fill_crowding_if_missing(stocks: list) -> list:
             out.append(s)
             continue
         try:
-            is_us = not (code.isdigit() or code.startswith(("SH", "SZ", "BJ")))
+            if not is_us and (s.get("crowding_level") or "") and s.get("crowding_pct") is not None:
+                out.append(s)
+                continue
             if is_us:
-                si = _get_cached_short(code)
                 s = dict(s)
+                # 丢弃旧版可能写入的 DTC 单项伪评分，再用正式复合分或明确标注的替代分位重建。
+                s.pop("crowding_pct", None)
+                s.pop("crowding_level", None)
+                si = _get_cached_short(code)
                 if si:
                     s["days_to_cover"] = si.get("days_to_cover")
                     s["short_pct_float"] = si.get("short_pct_float")
