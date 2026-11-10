@@ -2216,6 +2216,7 @@ def _fill_crowding_if_missing(stocks: list) -> list:
                 # 丢弃旧版可能写入的 DTC 单项伪评分，再用正式复合分或明确标注的替代分位重建。
                 s.pop("crowding_pct", None)
                 s.pop("crowding_level", None)
+                s["crowding_source"] = "官方空头复合分暂缺"
                 si = _get_cached_short(code)
                 if si:
                     s["days_to_cover"] = si.get("days_to_cover")
@@ -2226,7 +2227,7 @@ def _fill_crowding_if_missing(stocks: list) -> list:
                         s["crowding_level"] = _short_composite_level(comp)
                         s["crowding_source"] = si.get("source") or "FINRA/Nasdaq 官方空头数据"
                     else:
-                        s["crowding_source"] = "成交量历史分位（替代参考，非空头拥挤度）"
+                        s["crowding_source"] = "官方空头复合分暂缺"
                     days = si.get("days_to_cover")
                     s["crowding_speed"] = (
                         f"空头占流通{si.get('short_pct_float') if si.get('short_pct_float') is not None else '--'}% · "
