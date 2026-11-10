@@ -407,7 +407,7 @@ def _fetch_float_shares(code: str):
                 return value
         except Exception:
             continue
-    _FLOAT_SHARES_CACHE[code] = {"ts": time.time(), "value": None}
+    # 不缓存失败结果，避免 Yahoo 临时限流导致整整一天都拿不到流通股数据。
     return None
 
 
@@ -458,6 +458,8 @@ def _enrich_short_crowding(data: dict, code: str = "") -> dict:
             result["short_pct_float"] = pct
             result["float_shares"] = float_shares
             result["float_source"] = "Yahoo Finance defaultKeyStatistics"
+            base_source = result.get("source") or "官方空头持仓"
+            result["source"] = f"{base_source} · 流通股数：Yahoo Finance"
     score = _compute_short_composite(
         result.get("short_pct_float"), result.get("days_to_cover")
     )
