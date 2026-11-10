@@ -3443,17 +3443,41 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                             bar_date = raw_settlement[:10]
             except Exception:
                 metrics = {}
-        if not metrics and not is_us:
+        # 美股优先官方空头复合指标；缺失或复合分无法计算时，提供成交量历史分位作为“替代参考”，
+        # 并明确标注它不是空头拥挤度。A股继续使用原成交量分位口径。
+        need_volume_reference = (not metrics) if not is_us else (not metrics or metrics.get("score") is None)
+        if need_volume_reference:
             df = await asyncio.to_thread(_fetch_for_advice, sym)
-            metrics = _compute_crowding_from_df(df) if df is not None else {}
+            volume_metrics = _compute_crowding_from_df(df) if df is not None else {}
             if df is not None and len(df):
                 try:
                     raw_date = df["date"].iloc[-1] if "date" in df.columns else df.index[-1]
                     bar_date = raw_date.strftime("%Y-%m-%d") if hasattr(raw_date, "strftime") else str(raw_date)[:10]
                 except Exception:
                     bar_date = ""
-            if metrics:
-                metrics.update({"score": None, "metric_type": "volume_percentile", "source": "日线成交量", "as_of": bar_date or None})
+            if volume_metrics:
+                previous_metrics = metrics or {}
+                metrics = dict(volume_metrics)
+                metrics.update({
+                    "score": None,
+                    "metric_type": "volume_percentile",
+                    "source": (
+                        "日线成交量历史分位（替代参考，非空头拥挤度）" if is_us
+                        else "日线成交量"
+                    ),
+                    "as_of": bar_date or None,
+                })
+                if is_us:
+                    for key in ("short_pct_float", "days_to_cover", "short_behavior",
+                                "short_interest_status", "short_interest_note", "reason",
+                                "provider", "listing_exchange"):
+                        if previous_metrics.get(key) is not None:
+                            metrics[key] = previous_metrics[key]
+                    if previous_metrics.get("metric_type") == "short_interest_incomplete":
+                        metrics["short_interest_note"] = (
+                            metrics.get("short_interest_note") or
+                            "已取得部分官方空头数据，但缺少流通股数或有效 DTC，无法计算复合评分。"
+                        )
                 metrics["volume_history"] = _build_volume_crowding_history(df, limit=60)
         if short_interest_note:
             metrics["short_interest_status"] = "unavailable"
