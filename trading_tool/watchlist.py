@@ -428,7 +428,7 @@ def _compute_short_composite(short_pct_float, days_to_cover):
     try:
         pct = float(short_pct_float)
         days = float(days_to_cover)
-        if not np.isfinite(pct) or not np.isfinite(days) or pct < 0 or days <= 0:
+        if not np.isfinite(pct) or not np.isfinite(days) or pct < 0 or days <= 0 or days >= 999.99:
             return None
         return round((pct / 100.0) * days, 4)
     except (TypeError, ValueError):
@@ -562,6 +562,9 @@ def _fetch_finra_short_interest(code: str) -> dict:
             days = (shares / avg_volume) if avg_volume and avg_volume > 0 else (
                 float(days_raw) if days_raw not in (None, "") else None
             )
+            # FINRA 用 999.99 表示无法可靠计算 DTC（通常是平均成交量为零）。
+            if days is not None and (not np.isfinite(days) or days >= 999.99 or days < 0):
+                days = None
             history.append({
                 "date": settlement,
                 "short_interest": shares,
@@ -757,20 +760,28 @@ def _fetch_nasdaq_short_interest(code: str) -> dict:
 
 
 def _fetch_us_short_interest(code: str) -> dict:
-    """Exchange-aware official short-interest routing using public exchange and FINRA data.
-
-    NASDAQ -> Nasdaq official bi-monthly short-interest report.
-    NYSE/AMEX -> no Nasdaq substitution; NYSE Group official file integration
-    is not available yet, so return an explicit source-unavailable status.
-    UNKNOWN -> FINRA OTC consolidated short-interest only; accept only a
-    matching FINRA record. Daily FINRA short-sale volume is never used here.
-    """
+    """先查 FINRA 全市场合并空头持仓；Nasdaq 公共页面作为 Nasdaq 个股补充来源。"""
     code = str(code or "").strip().upper()
     if not code:
         return {"status": "invalid_symbol", "message": "股票代码为空。", "history": []}
 
     venue = _fetch_listing_exchange(code)
+    finra_error = ""
+    try:
+        # FINRA consolidatedShortInterest 覆盖交易所上市及 OTC 股票，
+        # 不应因 NYSE/AMEX 而跳过。注意这不是 Reg SHO 日度卖空成交量。
+        result = _fetch_finra_short_interest(code)
+        if result.get("status") == "ok":
+            result["provider"] = "finra_consolidated"
+            result["listing_exchange"] = venue if venue != "UNKNOWN" else result.get("listing_exchange")
+            result["metric_type"] = "days_to_cover"
+            result["source"] = "FINRA 官方合并空头持仓"
+            return result
+        finra_error = result.get("message") or "FINRA 未返回匹配记录"
+    except Exception as exc:
+        finra_error = f"FINRA 查询失败：{type(exc).__name__}"
 
+    # Nasdaq 的公开个股页面作为补充，不能把 Nasdaq 数据套到 NYSE/AMEX 股票。
     if venue == "NASDAQ":
         try:
             result = _fetch_nasdaq_short_interest(code)
@@ -778,57 +789,27 @@ def _fetch_us_short_interest(code: str) -> dict:
                 result["listing_exchange"] = venue
                 result["provider"] = "nasdaq"
                 result["metric_type"] = "days_to_cover"
+                result["source"] = "Nasdaq 官方空头报告"
                 return result
             nasdaq_error = result.get("message") or "Nasdaq 未返回官方报告"
         except Exception as exc:
             nasdaq_error = f"Nasdaq 请求失败：{type(exc).__name__}"
         return {
-            "status": "no_records", "source": "Nasdaq 官方空头报告",
-            "provider": "nasdaq", "listing_exchange": venue,
-            "message": f"已识别为 Nasdaq 上市股票，但没有取得 {code} 的官方空头持仓报告：{nasdaq_error}",
+            "status": "no_records", "source": "FINRA / Nasdaq 官方空头报告",
+            "provider": None, "listing_exchange": venue,
+            "message": f"{code} 未取得官方空头持仓记录。{finra_error}；{nasdaq_error}",
             "history": [],
         }
-
-    if venue in ("NYSE", "AMEX"):
-        return {
-            "status": "source_unavailable",
-            "source": "NYSE Group 官方空头报告",
-            "provider": None,
-            "listing_exchange": venue,
-            "message": f"{code} 已识别为 {venue} 上市股票。Nasdaq 报告不覆盖该交易所；当前版本尚未接入 NYSE Group 官方半月度报告文件，因此暂不提供空头持仓数值，也不会用 FINRA OTC 或日度卖空成交量替代。",
-            "history": [],
-        }
-
-    # FINRA consolidatedShortInterest here is the OTC dataset, not a
-    # consolidated all-exchange dataset. Only unknown symbols are checked.
-    if venue == "UNKNOWN":
-        try:
-            result = _fetch_finra_short_interest(code)
-            if result.get("status") == "ok":
-                result["provider"] = "finra_otc"
-                result["listing_exchange"] = "OTC"
-                result["metric_type"] = "days_to_cover"
-                return result
-            return {
-                "status": "no_records", "source": "FINRA OTC 官方空头持仓",
-                "provider": "finra_otc", "listing_exchange": None,
-                "message": f"无法确认 {code} 的主上市交易所，FINRA OTC 数据也没有返回匹配的空头持仓记录。",
-                "history": [],
-            }
-        except Exception as exc:
-            return {
-                "status": "source_error", "source": "FINRA OTC 官方空头持仓",
-                "provider": "finra_otc", "listing_exchange": None,
-                "message": f"无法识别上市交易所，且 FINRA OTC 查询失败：{str(exc)[:160]}",
-                "history": [],
-            }
 
     return {
-        "status": "unknown_listing", "source": "交易所识别",
-        "listing_exchange": None,
-        "message": f"无法确认 {code} 的上市交易所；为避免混用来源，不生成空头持仓指标。",
+        "status": "no_records" if finra_error else "source_error",
+        "source": "FINRA 官方合并空头持仓",
+        "provider": "finra_consolidated",
+        "listing_exchange": venue if venue != "UNKNOWN" else None,
+        "message": f"{code} 未取得 FINRA 官方合并空头持仓记录：{finra_error or '未知原因'}",
         "history": [],
     }
+
 
 def _fetch_volume_only(code: str) -> "pd.Series | None":
     """专门取成交量。美股走 Stooq，A股走腾讯。失败返回 None。"""
@@ -917,7 +898,7 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
                     if si.get("short_pct_float") and si["short_pct_float"] > 10:
                         status.crowding_speed = (status.crowding_speed or "") + " · 次新/小流通盘需结合锁定期和套利盘理解"
             # 美股官方空头数据缺失时保持“数据不足”，不拿成交量分位冒充空头拥挤度。
-            if not is_us:
+            if not is_us or status.crowding_pct is None:
                 vol = None
                 if 'volume' in df.columns:
                     vol = df['volume'].astype(float)
@@ -948,7 +929,10 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
                                 status.crowding_speed = "下降"
                             else:
                                 status.crowding_speed = "平稳"
-                        status.crowding_source = "成交量历史分位"
+                        status.crowding_source = (
+                            "成交量历史分位（替代参考，非空头拥挤度）" if is_us
+                            else "成交量历史分位"
+                        )
         except Exception:
             pass
 
