@@ -222,7 +222,7 @@ class StockStatus:
     valuation_detail: str = ""    # 估值依据（如 "MA250 -8%" / "分位85%"）
     analyst_target: object = None  # 参考价：个股=去极值分析师均价；基金=NAV float | None
     analyst_upside_pct: object = None  # 相对现价涨幅空间% | None
-    crowding_pct: object = None    # 成交量历史分位 或 复合拥挤度
+    crowding_pct: object = None    # A股成交量历史分位；美股复合评分×100（非历史分位）
     crowding_level: str = ""       # 正常/偏高/高/极端
     crowding_speed: str = ""       # 平稳/上升/快速上升/下降 或 空头来源说明
     short_pct_float: object = None # 美股：空头占流通 %
