@@ -2193,7 +2193,7 @@ def _hard_purge_stale_symbols(stocks_or_items) -> list:
 
 
 def _fill_crowding_if_missing(stocks: list) -> list:
-    """对缺少拥挤度的股票单独补算，不触发全量状态重算。"""
+    """对缺少拥挤度的股票补算；美股官方空头复合分缺失时用成交量分位作明确标注的替代参考。"""
     if not stocks:
         return stocks
     out = []
@@ -2201,10 +2201,8 @@ def _fill_crowding_if_missing(stocks: list) -> list:
         if not isinstance(s, dict):
             out.append(s)
             continue
-        # 已有有效拥挤度则跳过；空字符串或 None 才补算
-        lv = s.get("crowding_level") or ""
-        pct = s.get("crowding_pct")
-        if lv and pct is not None and pct != 0:
+        # 只要等级和数值存在就视为有效，0 分也是有效的正式复合分。
+        if (s.get("crowding_level") or "") and s.get("crowding_pct") is not None:
             out.append(s)
             continue
         code = str(s.get("code") or "").strip().upper()
@@ -2215,22 +2213,38 @@ def _fill_crowding_if_missing(stocks: list) -> list:
             is_us = not (code.isdigit() or code.startswith(("SH", "SZ", "BJ")))
             if is_us:
                 si = _get_cached_short(code)
+                s = dict(s)
                 if si:
-                    s = dict(s)
                     s["days_to_cover"] = si.get("days_to_cover")
                     s["short_pct_float"] = si.get("short_pct_float")
-                    s["crowding_source"] = si.get("source") or ""
                     comp = si.get("composite")
-                    days = si.get("days_to_cover") or 0
                     if comp is not None:
-                        s["crowding_pct"] = comp
-                        s["crowding_level"] = "极端" if comp >= 2 else ("高" if comp >= 1 else ("偏高" if comp >= 0.5 else "正常"))
-                    elif days > 0:
-                        s["crowding_pct"] = round(days, 1)
-                        s["crowding_level"] = "高" if days >= 8 else ("偏高" if days >= 5 else "正常")
-                    s["crowding_speed"] = f"空头{si.get('short_pct_float') or '--'}% · 回补{days}天"
+                        s["crowding_pct"] = round(float(comp) * 100, 1)
+                        s["crowding_level"] = _short_composite_level(comp)
+                        s["crowding_source"] = si.get("source") or "FINRA/Nasdaq 官方空头数据"
+                    else:
+                        s["crowding_source"] = "成交量历史分位（替代参考，非空头拥挤度）"
+                    days = si.get("days_to_cover")
+                    s["crowding_speed"] = (
+                        f"空头占流通{si.get('short_pct_float') if si.get('short_pct_float') is not None else '--'}% · "
+                        f"回补{days if days is not None else '--'}天"
+                    )
+                # 缺少复合分时，尽量补充价格成交量活跃度；绝不把 DTC 单项当作拥挤度分数。
+                if s.get("crowding_pct") is None:
+                    vol = _fetch_volume_only(code)
+                    if vol is not None and len(vol) >= 20:
+                        recent = vol.tail(20).mean()
+                        hist = vol.tail(min(250, len(vol)))
+                        if hist.sum() > 0 and recent > 0:
+                            pct = float((hist < recent).mean() * 100)
+                            s["crowding_pct"] = round(pct, 1)
+                            s["crowding_level"] = (
+                                "极端" if pct >= 95 else
+                                ("高" if pct >= 80 else ("偏高" if pct >= 60 else "正常"))
+                            )
+                            s["crowding_source"] = "成交量历史分位（替代参考，非空头拥挤度）"
+                            s["crowding_speed"] = "成交量活跃度参考"
             else:
-                # A股：尝试取成交量
                 vol = _fetch_volume_only(code)
                 if vol is not None and len(vol) >= 20:
                     recent = vol.tail(20).mean()
@@ -2245,7 +2259,6 @@ def _fill_crowding_if_missing(stocks: list) -> list:
             pass
         out.append(s)
     return out
-
 
 def _annotate_and_maybe_refresh_dates(out: dict, key, items: list = None) -> dict:
     """响应前打标；有过旧现价日期则后台更新缓存。"""
