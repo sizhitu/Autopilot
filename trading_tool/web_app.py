@@ -3355,18 +3355,18 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
         short_interest_note = None
         if is_us:
             try:
-                from watchlist import _get_cached_short
+                from watchlist import _get_cached_short, _short_composite_level
                 si = _get_cached_short(sym)
                 if si and si.get("status") not in (None, "ok"):
                     short_interest_note = si.get("message") or "当前没有可用的官方空头持仓数据。"
-                if si and (si.get("composite") is not None or si.get("days_to_cover")):
+                if si and si.get("status") == "ok":
                     score = si.get("composite")
                     days = si.get("days_to_cover")
                     metrics = {
                         "percentile": None,
                         "score": score,
-                        "metric_type": "short_composite_score" if score is not None else "days_to_cover",
-                        "level": ("极端" if score >= 2 else "高" if score >= 1 else "偏高" if score >= 0.5 else "正常") if score is not None else ("高" if (days or 0) >= 8 else "偏高" if (days or 0) >= 5 else "正常"),
+                        "metric_type": "short_composite_score" if score is not None else "short_interest_incomplete",
+                        "level": _short_composite_level(score),
                         "speed": "",
                         "speed_chg": None,
                         "divergence": "",
@@ -3442,7 +3442,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                             bar_date = raw_settlement[:10]
             except Exception:
                 metrics = {}
-        if not metrics:
+        if not metrics and not is_us:
             df = await asyncio.to_thread(_fetch_for_advice, sym)
             metrics = _compute_crowding_from_df(df) if df is not None else {}
             if df is not None and len(df):
