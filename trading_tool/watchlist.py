@@ -222,7 +222,7 @@ class StockStatus:
     valuation_detail: str = ""    # 估值依据（如 "MA250 -8%" / "分位85%"）
     analyst_target: object = None  # 参考价：个股=去极值分析师均价；基金=NAV float | None
     analyst_upside_pct: object = None  # 相对现价涨幅空间% | None
-    crowding_pct: object = None    # 成交量历史分位 或 复合拥挤度
+    crowding_pct: object = None    # A股成交量历史分位；美股复合评分×100（非历史分位）
     crowding_level: str = ""       # 正常/偏高/高/极端
     crowding_speed: str = ""       # 平稳/上升/快速上升/下降 或 空头来源说明
     short_pct_float: object = None # 美股：空头占流通 %
@@ -372,13 +372,109 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 
 _SHORT_CACHE = {}
 _SHORT_TTL = 3600 * 12  # 12 小时，半月数据不需要频繁拉
+_FLOAT_SHARES_CACHE = {}
+_FLOAT_SHARES_TTL = 3600 * 24
+
+
+def _fetch_float_shares(code: str):
+    """从 Yahoo Finance defaultKeyStatistics 读取公开流通股数；失败时不以总股本替代。"""
+    import time
+    code = str(code or "").strip().upper()
+    if not code:
+        return None
+    cached = _FLOAT_SHARES_CACHE.get(code)
+    if cached and time.time() - cached.get("ts", 0) < _FLOAT_SHARES_TTL:
+        return cached.get("value")
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    for domain in ("query2.finance.yahoo.com", "query1.finance.yahoo.com"):
+        try:
+            response = fetcher.session.get(
+                f"https://{domain}/v10/finance/quoteSummary/{code}",
+                params={"modules": "defaultKeyStatistics", "corsDomain": "finance.yahoo.com"},
+                headers=headers, timeout=10,
+            )
+            if response.status_code != 200:
+                continue
+            results = (response.json().get("quoteSummary") or {}).get("result") or []
+            if not results:
+                continue
+            stats = results[0].get("defaultKeyStatistics") or {}
+            raw = stats.get("floatShares")
+            value = raw.get("raw") if isinstance(raw, dict) else raw
+            value = float(value)
+            if value > 0 and np.isfinite(value):
+                _FLOAT_SHARES_CACHE[code] = {"ts": time.time(), "value": value}
+                return value
+        except Exception:
+            continue
+    # 不缓存失败结果，避免 Yahoo 临时限流导致整整一天都拿不到流通股数据。
+    return None
+
+
+def _compute_short_pct_float(short_interest, float_shares):
+    """空头持仓量 / 流通股数 × 100，返回百分数。"""
+    try:
+        short_shares = float(short_interest)
+        float_count = float(float_shares)
+        if not np.isfinite(short_shares) or not np.isfinite(float_count) or short_shares < 0 or float_count <= 0:
+            return None
+        return round(short_shares / float_count * 100.0, 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compute_short_composite(short_pct_float, days_to_cover):
+    """Short % Float（百分数）转比例后乘以 DTC；缺任一项不生成复合分。"""
+    try:
+        pct = float(short_pct_float)
+        days = float(days_to_cover)
+        if not np.isfinite(pct) or not np.isfinite(days) or pct < 0 or days <= 0 or days >= 999.99:
+            return None
+        return round((pct / 100.0) * days, 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def _short_composite_level(score):
+    """复合分阈值：沿用既有 0.5 / 1 / 2 分级。"""
+    if score is None:
+        return "数据不足"
+    if score >= 2.0:
+        return "极端"
+    if score >= 1.0:
+        return "高"
+    if score >= 0.5:
+        return "偏高"
+    return "正常"
+
+
+def _enrich_short_crowding(data: dict, code: str = "") -> dict:
+    """统一生成美股空头复合拥挤度；缺少任一原始指标时明确留空。"""
+    result = dict(data or {})
+    if result.get("short_pct_float") is None and result.get("short_interest") is not None and code:
+        float_shares = _fetch_float_shares(code)
+        pct = _compute_short_pct_float(result.get("short_interest"), float_shares)
+        if pct is not None:
+            result["short_pct_float"] = pct
+            result["float_shares"] = float_shares
+            result["float_source"] = "Yahoo Finance defaultKeyStatistics"
+            base_source = result.get("source") or "官方空头持仓"
+            result["source"] = f"{base_source} · 流通股数：Yahoo Finance"
+    score = _compute_short_composite(
+        result.get("short_pct_float"), result.get("days_to_cover")
+    )
+    result["composite"] = score
+    result["metric_type"] = "short_composite_score" if score is not None else "short_interest_incomplete"
+    result["crowding_level"] = _short_composite_level(score)
+    return result
+
 
 def _get_cached_short(code: str) -> dict:
     import time
     hit = _SHORT_CACHE.get(code.upper())
     if hit and (time.time() - hit.get("ts", 0)) < _SHORT_TTL:
         return hit.get("data") or {}
-    data = _fetch_us_short_interest(code)
+    data = _enrich_short_crowding(_fetch_us_short_interest(code), code)
     _SHORT_CACHE[code.upper()] = {"ts": time.time(), "data": data}
     return data
 
@@ -466,6 +562,9 @@ def _fetch_finra_short_interest(code: str) -> dict:
             days = (shares / avg_volume) if avg_volume and avg_volume > 0 else (
                 float(days_raw) if days_raw not in (None, "") else None
             )
+            # FINRA 用 999.99 表示无法可靠计算 DTC（通常是平均成交量为零）。
+            if days is not None and (not np.isfinite(days) or days >= 999.99 or days < 0):
+                days = None
             history.append({
                 "date": settlement,
                 "short_interest": shares,
@@ -661,20 +760,28 @@ def _fetch_nasdaq_short_interest(code: str) -> dict:
 
 
 def _fetch_us_short_interest(code: str) -> dict:
-    """Exchange-aware official short-interest routing using public exchange and FINRA data.
-
-    NASDAQ -> Nasdaq official bi-monthly short-interest report.
-    NYSE/AMEX -> no Nasdaq substitution; NYSE Group official file integration
-    is not available yet, so return an explicit source-unavailable status.
-    UNKNOWN -> FINRA OTC consolidated short-interest only; accept only a
-    matching FINRA record. Daily FINRA short-sale volume is never used here.
-    """
+    """先查 FINRA 全市场合并空头持仓；Nasdaq 公共页面作为 Nasdaq 个股补充来源。"""
     code = str(code or "").strip().upper()
     if not code:
         return {"status": "invalid_symbol", "message": "股票代码为空。", "history": []}
 
     venue = _fetch_listing_exchange(code)
+    finra_error = ""
+    try:
+        # FINRA consolidatedShortInterest 覆盖交易所上市及 OTC 股票，
+        # 不应因 NYSE/AMEX 而跳过。注意这不是 Reg SHO 日度卖空成交量。
+        result = _fetch_finra_short_interest(code)
+        if result.get("status") == "ok":
+            result["provider"] = "finra_consolidated"
+            result["listing_exchange"] = venue if venue != "UNKNOWN" else result.get("listing_exchange")
+            result["metric_type"] = "days_to_cover"
+            result["source"] = "FINRA 官方合并空头持仓"
+            return result
+        finra_error = result.get("message") or "FINRA 未返回匹配记录"
+    except Exception as exc:
+        finra_error = f"FINRA 查询失败：{type(exc).__name__}"
 
+    # Nasdaq 的公开个股页面作为补充，不能把 Nasdaq 数据套到 NYSE/AMEX 股票。
     if venue == "NASDAQ":
         try:
             result = _fetch_nasdaq_short_interest(code)
@@ -682,57 +789,27 @@ def _fetch_us_short_interest(code: str) -> dict:
                 result["listing_exchange"] = venue
                 result["provider"] = "nasdaq"
                 result["metric_type"] = "days_to_cover"
+                result["source"] = "Nasdaq 官方空头报告"
                 return result
             nasdaq_error = result.get("message") or "Nasdaq 未返回官方报告"
         except Exception as exc:
             nasdaq_error = f"Nasdaq 请求失败：{type(exc).__name__}"
         return {
-            "status": "no_records", "source": "Nasdaq 官方空头报告",
-            "provider": "nasdaq", "listing_exchange": venue,
-            "message": f"已识别为 Nasdaq 上市股票，但没有取得 {code} 的官方空头持仓报告：{nasdaq_error}",
+            "status": "no_records", "source": "FINRA / Nasdaq 官方空头报告",
+            "provider": None, "listing_exchange": venue,
+            "message": f"{code} 未取得官方空头持仓记录。{finra_error}；{nasdaq_error}",
             "history": [],
         }
-
-    if venue in ("NYSE", "AMEX"):
-        return {
-            "status": "source_unavailable",
-            "source": "NYSE Group 官方空头报告",
-            "provider": None,
-            "listing_exchange": venue,
-            "message": f"{code} 已识别为 {venue} 上市股票。Nasdaq 报告不覆盖该交易所；当前版本尚未接入 NYSE Group 官方半月度报告文件，因此暂不提供空头持仓数值，也不会用 FINRA OTC 或日度卖空成交量替代。",
-            "history": [],
-        }
-
-    # FINRA consolidatedShortInterest here is the OTC dataset, not a
-    # consolidated all-exchange dataset. Only unknown symbols are checked.
-    if venue == "UNKNOWN":
-        try:
-            result = _fetch_finra_short_interest(code)
-            if result.get("status") == "ok":
-                result["provider"] = "finra_otc"
-                result["listing_exchange"] = "OTC"
-                result["metric_type"] = "days_to_cover"
-                return result
-            return {
-                "status": "no_records", "source": "FINRA OTC 官方空头持仓",
-                "provider": "finra_otc", "listing_exchange": None,
-                "message": f"无法确认 {code} 的主上市交易所，FINRA OTC 数据也没有返回匹配的空头持仓记录。",
-                "history": [],
-            }
-        except Exception as exc:
-            return {
-                "status": "source_error", "source": "FINRA OTC 官方空头持仓",
-                "provider": "finra_otc", "listing_exchange": None,
-                "message": f"无法识别上市交易所，且 FINRA OTC 查询失败：{str(exc)[:160]}",
-                "history": [],
-            }
 
     return {
-        "status": "unknown_listing", "source": "交易所识别",
-        "listing_exchange": None,
-        "message": f"无法确认 {code} 的上市交易所；为避免混用来源，不生成空头持仓指标。",
+        "status": "no_records" if finra_error else "source_error",
+        "source": "FINRA 官方合并空头持仓",
+        "provider": "finra_consolidated",
+        "listing_exchange": venue if venue != "UNKNOWN" else None,
+        "message": f"{code} 未取得 FINRA 官方合并空头持仓记录：{finra_error or '未知原因'}",
         "history": [],
     }
+
 
 def _fetch_volume_only(code: str) -> "pd.Series | None":
     """专门取成交量。美股走 Stooq，A股走腾讯。失败返回 None。"""
@@ -808,33 +885,20 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
                     status.short_pct_float = si.get("short_pct_float")
                     status.crowding_source = si.get("source") or ""
                     comp = si.get("composite")
-                    days = si.get("days_to_cover") or 0
+                    days = si.get("days_to_cover")
                     if comp is not None:
-                        status.crowding_pct = comp
-                        if comp >= 2.0:
-                            status.crowding_level = "极端"
-                        elif comp >= 1.0:
-                            status.crowding_level = "高"
-                        elif comp >= 0.5:
-                            status.crowding_level = "偏高"
-                        else:
-                            status.crowding_level = "正常"
-                    elif days > 0:
-                        # 没有流通股时只用回补天数
-                        status.crowding_pct = round(days, 1)
-                        if days >= 8:
-                            status.crowding_level = "高"
-                        elif days >= 5:
-                            status.crowding_level = "偏高"
-                        else:
-                            status.crowding_level = "正常"
-                    status.crowding_speed = f"空头{si.get('short_pct_float') or '--'}% · 回补{days}天"
+                        status.crowding_pct = round(float(comp) * 100, 1)
+                        status.crowding_level = _short_composite_level(comp)
+                    # 不允许 DTC 单指标冒充复合拥挤度；原始指标仍单独展示。
+                    pct_label = si.get("short_pct_float")
+                    status.crowding_speed = (
+                        f"空头占流通{pct_label if pct_label is not None else '--'}% · "
+                        f"回补{days if days is not None else '--'}天"
+                    )
                     if si.get("short_pct_float") and si["short_pct_float"] > 10:
                         status.crowding_speed = (status.crowding_speed or "") + " · 次新/小流通盘需结合锁定期和套利盘理解"
-            # 美股空头失败时也回落到成交量分位
-            if is_us and not status.crowding_level:
-                is_us = False
-            if not is_us:
+            # 美股复合分缺失时可展示成交量活跃度分位，但必须标注为替代参考。
+            if not is_us or status.crowding_pct is None:
                 vol = None
                 if 'volume' in df.columns:
                     vol = df['volume'].astype(float)
@@ -865,7 +929,10 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
                                 status.crowding_speed = "下降"
                             else:
                                 status.crowding_speed = "平稳"
-                        status.crowding_source = "成交量历史分位"
+                        status.crowding_source = (
+                            "成交量历史分位（替代参考，非空头拥挤度）" if is_us
+                            else "成交量历史分位"
+                        )
         except Exception:
             pass
 
@@ -2126,7 +2193,7 @@ def _hard_purge_stale_symbols(stocks_or_items) -> list:
 
 
 def _fill_crowding_if_missing(stocks: list) -> list:
-    """对缺少拥挤度的股票单独补算，不触发全量状态重算。"""
+    """对缺少拥挤度的股票补算；美股官方空头复合分缺失时用成交量分位作明确标注的替代参考。"""
     if not stocks:
         return stocks
     out = []
@@ -2134,36 +2201,54 @@ def _fill_crowding_if_missing(stocks: list) -> list:
         if not isinstance(s, dict):
             out.append(s)
             continue
-        # 已有有效拥挤度则跳过；空字符串或 None 才补算
-        lv = s.get("crowding_level") or ""
-        pct = s.get("crowding_pct")
-        if lv and pct is not None and pct != 0:
-            out.append(s)
-            continue
         code = str(s.get("code") or "").strip().upper()
         if not code:
             out.append(s)
             continue
+        is_us = not (code.isdigit() or code.startswith(("SH", "SZ", "BJ")))
+        # A股已有有效分位可跳过；美股每次都重新校验短仓复合分，清理旧版 DTC 单项缓存。
+        if not is_us and (s.get("crowding_level") or "") and s.get("crowding_pct") is not None:
+            out.append(s)
+            continue
         try:
-            is_us = not (code.isdigit() or code.startswith(("SH", "SZ", "BJ")))
             if is_us:
+                s = dict(s)
+                # 丢弃旧版可能写入的 DTC 单项伪评分，再用正式复合分或明确标注的替代分位重建。
+                s.pop("crowding_pct", None)
+                s.pop("crowding_level", None)
+                s["crowding_source"] = "官方空头复合分暂缺"
                 si = _get_cached_short(code)
                 if si:
-                    s = dict(s)
                     s["days_to_cover"] = si.get("days_to_cover")
                     s["short_pct_float"] = si.get("short_pct_float")
-                    s["crowding_source"] = si.get("source") or ""
                     comp = si.get("composite")
-                    days = si.get("days_to_cover") or 0
                     if comp is not None:
-                        s["crowding_pct"] = comp
-                        s["crowding_level"] = "极端" if comp >= 2 else ("高" if comp >= 1 else ("偏高" if comp >= 0.5 else "正常"))
-                    elif days > 0:
-                        s["crowding_pct"] = round(days, 1)
-                        s["crowding_level"] = "高" if days >= 8 else ("偏高" if days >= 5 else "正常")
-                    s["crowding_speed"] = f"空头{si.get('short_pct_float') or '--'}% · 回补{days}天"
+                        s["crowding_pct"] = round(float(comp) * 100, 1)
+                        s["crowding_level"] = _short_composite_level(comp)
+                        s["crowding_source"] = si.get("source") or "FINRA/Nasdaq 官方空头数据"
+                    else:
+                        s["crowding_source"] = "官方空头复合分暂缺"
+                    days = si.get("days_to_cover")
+                    s["crowding_speed"] = (
+                        f"空头占流通{si.get('short_pct_float') if si.get('short_pct_float') is not None else '--'}% · "
+                        f"回补{days if days is not None else '--'}天"
+                    )
+                # 缺少复合分时，尽量补充价格成交量活跃度；绝不把 DTC 单项当作拥挤度分数。
+                if s.get("crowding_pct") is None:
+                    vol = _fetch_volume_only(code)
+                    if vol is not None and len(vol) >= 20:
+                        recent = vol.tail(20).mean()
+                        hist = vol.tail(min(250, len(vol)))
+                        if hist.sum() > 0 and recent > 0:
+                            pct = float((hist < recent).mean() * 100)
+                            s["crowding_pct"] = round(pct, 1)
+                            s["crowding_level"] = (
+                                "极端" if pct >= 95 else
+                                ("高" if pct >= 80 else ("偏高" if pct >= 60 else "正常"))
+                            )
+                            s["crowding_source"] = "成交量历史分位（替代参考，非空头拥挤度）"
+                            s["crowding_speed"] = "成交量活跃度参考"
             else:
-                # A股：尝试取成交量
                 vol = _fetch_volume_only(code)
                 if vol is not None and len(vol) >= 20:
                     recent = vol.tail(20).mean()
@@ -2178,7 +2263,6 @@ def _fill_crowding_if_missing(stocks: list) -> list:
             pass
         out.append(s)
     return out
-
 
 def _annotate_and_maybe_refresh_dates(out: dict, key, items: list = None) -> dict:
     """响应前打标；有过旧现价日期则后台更新缓存。"""

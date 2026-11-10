@@ -7,7 +7,7 @@ sys.path.insert(0, str(ROOT / "trading_tool"))
 
 
 def test_us_short_interest():
-    """美股空头接口：Nasdaq 上市股应返回复合拥挤度。"""
+    """美股空头接口：优先 FINRA 全市场合并持仓，Nasdaq 个股接口作为补充。"""
     from watchlist import _fetch_us_short_interest
     for code in ["AAPL", "NVDA", "GOOG", "ASTS"]:
         si = _fetch_us_short_interest(code)
@@ -20,22 +20,21 @@ def test_us_short_interest():
             print(f"  {code}: {si.get('status')} - {si.get('message', '')}")
 
 
-def test_nyse_stock_does_not_fall_back_to_nasdaq_or_finra(monkeypatch):
-    """NYSE 股票不调用 Nasdaq 或 FINRA OTC，更不依赖付费第三方数据源。"""
+def test_nyse_and_amex_use_finra_consolidated(monkeypatch):
+    """NYSE/AMEX 都必须先查 FINRA 全市场合并空头持仓。"""
     import watchlist
-
-    monkeypatch.delenv("FINRA_API_CLIENT_ID", raising=False)
-    monkeypatch.delenv("FINRA_API_CLIENT_SECRET", raising=False)
-    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NYSE")
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
+        "status": "ok", "short_interest": 1000000, "days_to_cover": 2.0,
+        "history": [], "source": "FINRA 官方合并空头持仓",
+    })
     monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest",
-                        lambda code: (_ for _ in ()).throw(AssertionError("NYSE must not call Nasdaq")))
-    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
-                        lambda code: (_ for _ in ()).throw(AssertionError("NYSE must not call FINRA OTC")))
-    si = watchlist._fetch_us_short_interest("BE")
-    assert si["status"] == "source_unavailable"
-    assert si["listing_exchange"] == "NYSE"
-    assert "NYSE Group" in si["source"]
-
+                        lambda code: (_ for _ in ()).throw(AssertionError("NYSE/AMEX must not call Nasdaq")))
+    for venue in ("NYSE", "AMEX"):
+        monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code, v=venue: v)
+        result = watchlist._fetch_us_short_interest("XYZ")
+        assert result["status"] == "ok"
+        assert result["provider"] == "finra_consolidated"
+        assert result["listing_exchange"] == venue
 
 
 def test_compute_crowding_volume():
@@ -71,8 +70,8 @@ def test_stock_advice_endpoint_logic():
 if __name__ == "__main__":
     print("=== test_us_short_interest ===")
     test_us_short_interest()
-    print("=== test_non_nasdaq_fallback ===")
-    test_nyse_stock_does_not_fall_back_to_nasdaq_or_finra()
+    print("=== test_nyse_and_amex_use_finra_consolidated ===")
+    test_nyse_and_amex_use_finra_consolidated()
     print("=== test_compute_crowding_volume ===")
     test_compute_crowding_volume()
     print("=== test_stock_advice_endpoint_logic ===")
@@ -160,42 +159,27 @@ def test_finra_consolidated_short_interest(monkeypatch):
     assert "consolidatedShortInterest" in captured["url"]
 
 
-def test_exchange_aware_routing_without_paid_provider(monkeypatch):
-    """Nasdaq 走 Nasdaq；NYSE/AMEX 不跨源；未知代码只查 FINRA OTC。"""
+def test_exchange_aware_routing_uses_finra_first(monkeypatch):
+    """所有交易所先查 FINRA 合并数据；Nasdaq 仅在 FINRA 无记录时补充。"""
     import watchlist
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NYSE")
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
+        "status": "ok", "history": [], "source": "FINRA 官方合并空头持仓",
+    })
+    result = watchlist._fetch_us_short_interest("XYZ")
+    assert result["status"] == "ok"
+    assert result["provider"] == "finra_consolidated"
+
     monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NASDAQ")
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
+                        lambda code: {"status": "no_records", "message": "no match"})
     monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest", lambda code: {
         "status": "ok", "short_interest": 123, "days_to_cover": 2.0,
         "history": [], "source": "Nasdaq 官方空头报告",
     })
-    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
-                        lambda code: (_ for _ in ()).throw(AssertionError("Nasdaq success must not call FINRA")))
     result = watchlist._fetch_us_short_interest("NVDA")
     assert result["status"] == "ok"
-    assert result["listing_exchange"] == "NASDAQ"
     assert result["provider"] == "nasdaq"
-
-    for venue in ("NYSE", "AMEX"):
-        monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code, v=venue: v)
-        monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest",
-                            lambda code: (_ for _ in ()).throw(AssertionError("NYSE/AMEX must not call Nasdaq")))
-        monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
-                            lambda code: (_ for _ in ()).throw(AssertionError("NYSE/AMEX must not call FINRA OTC")))
-        result = watchlist._fetch_us_short_interest("XYZ")
-        assert result["status"] == "source_unavailable"
-        assert result["listing_exchange"] == venue
-
-    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "UNKNOWN")
-    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
-        "status": "ok", "history": [], "source": "FINRA OTC 官方空头持仓",
-    })
-    result = watchlist._fetch_us_short_interest("OTCQ")
-    assert result["status"] == "ok"
-    assert result["provider"] == "finra_otc"
-    assert result["listing_exchange"] == "OTC"
-
-
-
 def test_nasdaq_short_interest_parser_is_separate():
     """Nasdaq 报告解析独立于交易所识别与其他来源路由。"""
     import requests
@@ -233,3 +217,50 @@ def test_build_volume_crowding_history():
     assert rows[0]["date"] < rows[-1]["date"]
     assert all(0 <= row["percentile"] <= 100 for row in rows)
     assert all(row["avg_volume_20"] > 0 and row["close"] > 0 for row in rows)
+
+
+
+def test_short_composite_requires_both_metrics():
+    """复合拥挤度 = Short % Float（百分数转比例）× DTC。缺一项不计算。"""
+    from watchlist import _compute_short_pct_float, _compute_short_composite, _short_composite_level, _enrich_short_crowding
+
+    assert _compute_short_pct_float(1580000, 10000000) == 15.8
+    assert _compute_short_pct_float(1580000, None) is None
+    assert _compute_short_composite(15.8, 3.18) == 0.5024
+    assert _compute_short_composite(None, 3.18) is None
+    assert _compute_short_composite(15.8, None) is None
+    assert _compute_short_composite(15.8, 999.99) is None
+    assert _compute_short_composite(0, 3.18) == 0.0
+    assert _short_composite_level(0.5024) == "偏高"
+    assert _short_composite_level(1.0) == "高"
+    assert _short_composite_level(2.0) == "极端"
+
+    incomplete = _enrich_short_crowding({
+        "status": "ok", "short_pct_float": None, "days_to_cover": 3.18,
+    })
+    assert incomplete["composite"] is None
+    assert incomplete["metric_type"] == "short_interest_incomplete"
+
+
+def test_fill_crowding_does_not_use_dtc_as_composite(monkeypatch):
+    """官方空头复合分缺失时回退成交量分位，不能用 DTC 单项填分。"""
+    import pandas as pd
+    import watchlist
+    monkeypatch.setattr(watchlist, "_get_cached_short", lambda code: {
+        "status": "ok", "days_to_cover": 4.0, "short_pct_float": None,
+        "composite": None, "source": "FINRA 官方合并空头持仓",
+    })
+    monkeypatch.setattr(watchlist, "_fetch_volume_only", lambda code: pd.Series([100 + i for i in range(60)]))
+    # 模拟旧缓存中把 DTC=4 错误写成 crowding_pct=4 的情况，补算必须清除旧值。
+    rows = watchlist._fill_crowding_if_missing([{
+        "code": "BE", "name": "Bloom Energy",
+        "crowding_pct": 4.0, "crowding_level": "正常",
+        "crowding_source": "legacy DTC",
+    }])
+    row = rows[0]
+    assert row["crowding_pct"] is not None
+    assert row["crowding_source"] == "成交量历史分位（替代参考，非空头拥挤度）"
+    assert row["days_to_cover"] == 4.0
+    assert row["crowding_pct"] != 4.0
+
+

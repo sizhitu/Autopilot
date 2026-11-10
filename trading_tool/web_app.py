@@ -3355,18 +3355,18 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
         short_interest_note = None
         if is_us:
             try:
-                from watchlist import _get_cached_short
+                from watchlist import _get_cached_short, _short_composite_level
                 si = _get_cached_short(sym)
                 if si and si.get("status") not in (None, "ok"):
                     short_interest_note = si.get("message") or "当前没有可用的官方空头持仓数据。"
-                if si and (si.get("composite") is not None or si.get("days_to_cover")):
+                if si and si.get("status") == "ok":
                     score = si.get("composite")
                     days = si.get("days_to_cover")
                     metrics = {
                         "percentile": None,
                         "score": score,
-                        "metric_type": "short_composite_score" if score is not None else "days_to_cover",
-                        "level": ("极端" if score >= 2 else "高" if score >= 1 else "偏高" if score >= 0.5 else "正常") if score is not None else ("高" if (days or 0) >= 8 else "偏高" if (days or 0) >= 5 else "正常"),
+                        "metric_type": "short_composite_score" if score is not None else "short_interest_incomplete",
+                        "level": _short_composite_level(score),
                         "speed": "",
                         "speed_chg": None,
                         "divergence": "",
@@ -3376,6 +3376,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "reason": si.get("source") or "Nasdaq/FINRA OTC",
                         "short_pct_float": si.get("short_pct_float"),
                         "days_to_cover": days,
+                        "float_source": si.get("float_source"),
                         "source": si.get("source") or "Nasdaq/FINRA OTC",
                         "provider": si.get("provider") or ("nasdaq" if "Nasdaq" in str(si.get("source") or "") else None),
                         "listing_exchange": si.get("listing_exchange"),
@@ -3442,17 +3443,41 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                             bar_date = raw_settlement[:10]
             except Exception:
                 metrics = {}
-        if not metrics:
+        # 美股优先官方空头复合指标；缺失或复合分无法计算时，提供成交量历史分位作为“替代参考”，
+        # 并明确标注它不是空头拥挤度。A股继续使用原成交量分位口径。
+        need_volume_reference = (not metrics) if not is_us else (not metrics or metrics.get("score") is None)
+        if need_volume_reference:
             df = await asyncio.to_thread(_fetch_for_advice, sym)
-            metrics = _compute_crowding_from_df(df) if df is not None else {}
+            volume_metrics = _compute_crowding_from_df(df) if df is not None else {}
             if df is not None and len(df):
                 try:
                     raw_date = df["date"].iloc[-1] if "date" in df.columns else df.index[-1]
                     bar_date = raw_date.strftime("%Y-%m-%d") if hasattr(raw_date, "strftime") else str(raw_date)[:10]
                 except Exception:
                     bar_date = ""
-            if metrics:
-                metrics.update({"score": None, "metric_type": "volume_percentile", "source": "日线成交量", "as_of": bar_date or None})
+            if volume_metrics:
+                previous_metrics = metrics or {}
+                metrics = dict(volume_metrics)
+                metrics.update({
+                    "score": None,
+                    "metric_type": "volume_percentile",
+                    "source": (
+                        "日线成交量历史分位（替代参考，非空头拥挤度）" if is_us
+                        else "日线成交量"
+                    ),
+                    "as_of": bar_date or None,
+                })
+                if is_us:
+                    for key in ("short_pct_float", "days_to_cover", "short_behavior",
+                                "short_interest_status", "short_interest_note", "reason",
+                                "provider", "listing_exchange"):
+                        if previous_metrics.get(key) is not None:
+                            metrics[key] = previous_metrics[key]
+                    if previous_metrics.get("metric_type") == "short_interest_incomplete":
+                        metrics["short_interest_note"] = (
+                            metrics.get("short_interest_note") or
+                            "已取得部分官方空头数据，但缺少流通股数或有效 DTC，无法计算复合评分。"
+                        )
                 metrics["volume_history"] = _build_volume_crowding_history(df, limit=60)
         if short_interest_note:
             metrics["short_interest_status"] = "unavailable"
