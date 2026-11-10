@@ -238,8 +238,10 @@ def test_build_volume_crowding_history():
 
 def test_short_composite_requires_both_metrics():
     """复合拥挤度 = Short % Float（百分数转比例）× DTC。缺一项不计算。"""
-    from watchlist import _compute_short_composite, _short_composite_level, _enrich_short_crowding
+    from watchlist import _compute_short_pct_float, _compute_short_composite, _short_composite_level, _enrich_short_crowding
 
+    assert _compute_short_pct_float(1580000, 10000000) == 15.8
+    assert _compute_short_pct_float(1580000, None) is None
     assert _compute_short_composite(15.8, 3.18) == 0.5024
     assert _compute_short_composite(None, 3.18) is None
     assert _compute_short_composite(15.8, None) is None
