@@ -69,8 +69,8 @@ def test_stock_advice_endpoint_logic():
 if __name__ == "__main__":
     print("=== test_us_short_interest ===")
     test_us_short_interest()
-    print("=== test_non_nasdaq_fallback ===")
-    test_nyse_stock_does_not_fall_back_to_nasdaq_or_finra()
+    print("=== test_nyse_and_amex_use_finra_consolidated ===")
+    test_nyse_and_amex_use_finra_consolidated()
     print("=== test_compute_crowding_volume ===")
     test_compute_crowding_volume()
     print("=== test_stock_advice_endpoint_logic ===")
@@ -239,3 +239,22 @@ def test_short_composite_requires_both_metrics():
     })
     assert incomplete["composite"] is None
     assert incomplete["metric_type"] == "short_interest_incomplete"
+
+
+def test_fill_crowding_does_not_use_dtc_as_composite(monkeypatch):
+    """官方空头复合分缺失时回退成交量分位，不能用 DTC 单项填分。"""
+    import pandas as pd
+    import watchlist
+    monkeypatch.setattr(watchlist, "_get_cached_short", lambda code: {
+        "status": "ok", "days_to_cover": 4.0, "short_pct_float": None,
+        "composite": None, "source": "FINRA 官方合并空头持仓",
+    })
+    monkeypatch.setattr(watchlist, "_fetch_volume_only", lambda code: pd.Series([100 + i for i in range(60)]))
+    rows = watchlist._fill_crowding_if_missing([{"code": "BE", "name": "Bloom Energy"}])
+    row = rows[0]
+    assert row["crowding_pct"] is not None
+    assert row["crowding_source"] == "成交量历史分位（替代参考，非空头拥挤度）"
+    assert row["days_to_cover"] == 4.0
+    assert row["crowding_pct"] != 4.0
+
+
