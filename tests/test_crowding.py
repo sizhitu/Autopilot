@@ -240,11 +240,11 @@ def test_short_composite_requires_both_metrics():
     """复合拥挤度 = Short % Float（百分数转比例）× DTC。缺一项不计算。"""
     from watchlist import _compute_short_composite, _short_composite_level, _enrich_short_crowding
 
-    assert _compute_short_composite(15.8, 3.18) == 0.5026
+    assert _compute_short_composite(15.8, 3.18) == 0.5024
     assert _compute_short_composite(None, 3.18) is None
     assert _compute_short_composite(15.8, None) is None
     assert _compute_short_composite(0, 3.18) == 0.0
-    assert _short_composite_level(0.5026) == "偏高"
+    assert _short_composite_level(0.5024) == "偏高"
     assert _short_composite_level(1.0) == "高"
     assert _short_composite_level(2.0) == "极端"
 
