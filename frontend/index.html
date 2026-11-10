@@ -6986,7 +6986,7 @@ async function loadCrowdingForAnalysis(sym) {
       mixed:'两项变化未达到方向阈值，暂不归入明确状态。',
       insufficient:'至少需要两个不同结算期的空头报告，并匹配对应交易日价格，才能判断变化方向。'
     };
-    const isShort = c.metric_type === 'short_composite_score' || c.metric_type === 'days_to_cover';
+    const isShort = c.metric_type === 'short_composite_score' || c.metric_type === 'days_to_cover' || c.metric_type === 'short_interest_incomplete';
     if (badge) badge.textContent = isShort ? (labels[state] || '历史数据不足') : (c.level || '成交量拥挤度');
     if (detail) detail.textContent = isShort ? (interpretations[state] || interpretations.insufficient) :
       (c.percentile != null ? '成交量处于自身历史 ' + Number(c.percentile).toFixed(1) + '% 分位。' : '暂无可用的行为分析。') +
@@ -7126,7 +7126,7 @@ async function loadStockAdvice(requestedSymbol) {
     const level = c.level || '数据不足';
     const score = _crowdingScoreLabel(c);
     const color = _crowdingLevelColor(level);
-    const isShort = c.metric_type === 'short_composite_score' || c.metric_type === 'days_to_cover';
+    const isShort = c.metric_type === 'short_composite_score' || c.metric_type === 'days_to_cover' || c.metric_type === 'short_interest_incomplete';
     let evidence = '';
     let advice = '当前数据不足以判断拥挤风险，暂不据此调整仓位。';
     let action = '等待有效数据更新，不因单一指标变化追涨杀跌。';
