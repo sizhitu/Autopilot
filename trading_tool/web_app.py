@@ -3376,6 +3376,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "reason": si.get("source") or "Nasdaq/FINRA OTC",
                         "short_pct_float": si.get("short_pct_float"),
                         "days_to_cover": days,
+                        "float_source": si.get("float_source"),
                         "source": si.get("source") or "Nasdaq/FINRA OTC",
                         "provider": si.get("provider") or ("nasdaq" if "Nasdaq" in str(si.get("source") or "") else None),
                         "listing_exchange": si.get("listing_exchange"),
