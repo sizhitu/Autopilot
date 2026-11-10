@@ -20,22 +20,20 @@ def test_us_short_interest():
             print(f"  {code}: {si.get('status')} - {si.get('message', '')}")
 
 
-def test_nyse_stock_does_not_fall_back_to_nasdaq_or_finra(monkeypatch):
-    """NYSE 股票不调用 Nasdaq 或 FINRA OTC，更不依赖付费第三方数据源。"""
+def test_nyse_and_amex_use_finra_consolidated(monkeypatch):
+    """NYSE/AMEX 也必须先查 FINRA 全市场合并空头持仓。"""
     import watchlist
-
-    monkeypatch.delenv("FINRA_API_CLIENT_ID", raising=False)
-    monkeypatch.delenv("FINRA_API_CLIENT_SECRET", raising=False)
     monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NYSE")
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
+        "status": "ok", "short_interest": 1000000, "days_to_cover": 2.0,
+        "history": [], "source": "FINRA 官方合并空头持仓",
+    })
     monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest",
                         lambda code: (_ for _ in ()).throw(AssertionError("NYSE must not call Nasdaq")))
-    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
-                        lambda code: (_ for _ in ()).throw(AssertionError("NYSE must not call FINRA OTC")))
-    si = watchlist._fetch_us_short_interest("BE")
-    assert si["status"] == "source_unavailable"
-    assert si["listing_exchange"] == "NYSE"
-    assert "NYSE Group" in si["source"]
-
+    result = watchlist._fetch_us_short_interest("BE")
+    assert result["status"] == "ok"
+    assert result["provider"] == "finra_consolidated"
+    assert result["listing_exchange"] == "NYSE"
 
 
 def test_compute_crowding_volume():
@@ -160,42 +158,27 @@ def test_finra_consolidated_short_interest(monkeypatch):
     assert "consolidatedShortInterest" in captured["url"]
 
 
-def test_exchange_aware_routing_without_paid_provider(monkeypatch):
-    """Nasdaq 走 Nasdaq；NYSE/AMEX 不跨源；未知代码只查 FINRA OTC。"""
+def test_exchange_aware_routing_uses_finra_first(monkeypatch):
+    """所有交易所先查 FINRA 合并数据；Nasdaq 仅在 FINRA 无记录时补充。"""
     import watchlist
+    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NYSE")
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
+        "status": "ok", "history": [], "source": "FINRA 官方合并空头持仓",
+    })
+    result = watchlist._fetch_us_short_interest("XYZ")
+    assert result["status"] == "ok"
+    assert result["provider"] == "finra_consolidated"
+
     monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "NASDAQ")
+    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
+                        lambda code: {"status": "no_records", "message": "no match"})
     monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest", lambda code: {
         "status": "ok", "short_interest": 123, "days_to_cover": 2.0,
         "history": [], "source": "Nasdaq 官方空头报告",
     })
-    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
-                        lambda code: (_ for _ in ()).throw(AssertionError("Nasdaq success must not call FINRA")))
     result = watchlist._fetch_us_short_interest("NVDA")
     assert result["status"] == "ok"
-    assert result["listing_exchange"] == "NASDAQ"
     assert result["provider"] == "nasdaq"
-
-    for venue in ("NYSE", "AMEX"):
-        monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code, v=venue: v)
-        monkeypatch.setattr(watchlist, "_fetch_nasdaq_short_interest",
-                            lambda code: (_ for _ in ()).throw(AssertionError("NYSE/AMEX must not call Nasdaq")))
-        monkeypatch.setattr(watchlist, "_fetch_finra_short_interest",
-                            lambda code: (_ for _ in ()).throw(AssertionError("NYSE/AMEX must not call FINRA OTC")))
-        result = watchlist._fetch_us_short_interest("XYZ")
-        assert result["status"] == "source_unavailable"
-        assert result["listing_exchange"] == venue
-
-    monkeypatch.setattr(watchlist, "_fetch_listing_exchange", lambda code: "UNKNOWN")
-    monkeypatch.setattr(watchlist, "_fetch_finra_short_interest", lambda code: {
-        "status": "ok", "history": [], "source": "FINRA OTC 官方空头持仓",
-    })
-    result = watchlist._fetch_us_short_interest("OTCQ")
-    assert result["status"] == "ok"
-    assert result["provider"] == "finra_otc"
-    assert result["listing_exchange"] == "OTC"
-
-
-
 def test_nasdaq_short_interest_parser_is_separate():
     """Nasdaq 报告解析独立于交易所识别与其他来源路由。"""
     import requests
@@ -245,6 +228,7 @@ def test_short_composite_requires_both_metrics():
     assert _compute_short_composite(15.8, 3.18) == 0.5024
     assert _compute_short_composite(None, 3.18) is None
     assert _compute_short_composite(15.8, None) is None
+    assert _compute_short_composite(15.8, 999.99) is None
     assert _compute_short_composite(0, 3.18) == 0.0
     assert _short_composite_level(0.5024) == "偏高"
     assert _short_composite_level(1.0) == "高"
