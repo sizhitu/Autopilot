@@ -250,7 +250,12 @@ def test_fill_crowding_does_not_use_dtc_as_composite(monkeypatch):
         "composite": None, "source": "FINRA 官方合并空头持仓",
     })
     monkeypatch.setattr(watchlist, "_fetch_volume_only", lambda code: pd.Series([100 + i for i in range(60)]))
-    rows = watchlist._fill_crowding_if_missing([{"code": "BE", "name": "Bloom Energy"}])
+    # 模拟旧缓存中把 DTC=4 错误写成 crowding_pct=4 的情况，补算必须清除旧值。
+    rows = watchlist._fill_crowding_if_missing([{
+        "code": "BE", "name": "Bloom Energy",
+        "crowding_pct": 4.0, "crowding_level": "正常",
+        "crowding_source": "legacy DTC",
+    }])
     row = rows[0]
     assert row["crowding_pct"] is not None
     assert row["crowding_source"] == "成交量历史分位（替代参考，非空头拥挤度）"
