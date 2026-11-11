@@ -226,6 +226,9 @@ class StockStatus:
     crowding_level: str = ""       # 正常/偏高/高/极端
     crowding_speed: str = ""       # 平稳/上升/快速上升/下降 或 空头来源说明
     short_pct_float: object = None # 美股：空头占流通 %
+    short_interest: object = None  # 美股：官方空头持仓股数
+    float_shares: object = None   # 美股：流通股数
+    short_history: list = field(default_factory=list) # 美股：官方空头历史
     days_to_cover: object = None   # 美股：回补天数
     crowding_source: str = ""      # 数据来源与滞后说明
     error: str = ""
@@ -918,6 +921,9 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
                 if si:
                     status.days_to_cover = si.get("days_to_cover")
                     status.short_pct_float = si.get("short_pct_float")
+                    status.short_interest = si.get("short_interest")
+                    status.float_shares = si.get("float_shares")
+                    status.short_history = si.get("history") or []
                     status.crowding_source = si.get("source") or ""
                     comp = si.get("composite")
                     days = si.get("days_to_cover")
@@ -1531,6 +1537,9 @@ def _status_to_dict(st: StockStatus) -> dict:
         'crowding_level': getattr(st, 'crowding_level', '') or '',
         'crowding_speed': getattr(st, 'crowding_speed', '') or '',
         'short_pct_float': getattr(st, 'short_pct_float', None),
+        'short_interest': getattr(st, 'short_interest', None),
+        'float_shares': getattr(st, 'float_shares', None),
+        'short_history': getattr(st, 'short_history', []) or [],
         'days_to_cover': getattr(st, 'days_to_cover', None),
         'crowding_source': getattr(st, 'crowding_source', '') or '',
         'error': st.error,
@@ -2298,8 +2307,17 @@ def _fill_crowding_if_missing(stocks: list) -> list:
     def _persist(code, row, si=None):
         try:
             import cache as _cache
-            si = si or {}
             is_us_row = _is_us_crowding_symbol(code, row.get("market"))
+            si = si or {
+                "short_interest": row.get("short_interest"),
+                "float_shares": row.get("float_shares"),
+                "short_pct_float": row.get("short_pct_float"),
+                "days_to_cover": row.get("days_to_cover"),
+                "composite": (float(row.get("crowding_pct")) / 100.0
+                              if is_us_row and row.get("crowding_pct") is not None and
+                              not str(row.get("crowding_source") or "").startswith("成交量历史分位") else None),
+                "history": row.get("short_history") or [],
+            }
             metric_type = (
                 "short_composite_score" if is_us_row and si.get("composite") is not None
                 else "short_interest_incomplete" if is_us_row and (si.get("short_pct_float") is not None or si.get("days_to_cover") is not None)
@@ -2317,8 +2335,8 @@ def _fill_crowding_if_missing(stocks: list) -> list:
                 "as_of": si.get("settlement_date") or row.get("bar_date") or "",
                 "short_interest": si.get("short_interest"),
                 "float_shares": si.get("float_shares"),
-                "short_pct_float": row.get("short_pct_float") if is_us_row else None,
-                "days_to_cover": row.get("days_to_cover") if is_us_row else None,
+                "short_pct_float": si.get("short_pct_float") if is_us_row else None,
+                "days_to_cover": si.get("days_to_cover") if is_us_row else None,
                 "history": None,
                 "short_history": si.get("history") if is_us_row else None,
                 "provider": si.get("provider"),
