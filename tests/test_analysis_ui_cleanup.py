@@ -72,8 +72,9 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
     assert "const fibUpdatedAt = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10);" in html
     assert "历史强信号" in html
     assert "loadFibSignalHistory();" in html
-    assert "const eventDate = String(fl.signal_date || dataDate || '').slice(0, 10);" in html
-    assert "const dataDate = String(item.created_at || '').slice(0, 10);" in html
+    assert "const eventDate = String(fl.signal_date || '').slice(0, 10);" in html
+    assert "if (!eventDate) continue;" in html
+    assert "item.created_at" not in html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
     assert 'class="fib-history-head"' in html
     assert "记录于" not in html
     assert "旧记录未保存信号发生日" not in html
