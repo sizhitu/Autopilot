@@ -5944,6 +5944,48 @@ function _formatSynAction(syn) {
 }
 
 // === 更新结果 ===
+async function loadFibSignalHistory() {
+  const box = document.getElementById('fibSignalHistoryBody');
+  if (!box) return;
+  if (!currentSymbol) { box.textContent = '请选择真实股票代码后查看历史信号'; return; }
+  if (!authToken) { box.textContent = '登录后可查看已保存的历史强信号'; return; }
+  box.textContent = '正在读取历史信号…';
+  try {
+    const response = await apiJSON('/api/history?symbol=' + encodeURIComponent(currentSymbol) + '&limit=100');
+    const items = Array.isArray(response.items) ? response.items : [];
+    const unique = new Map();
+    for (const item of items) {
+      let record = item.result_json || {};
+      if (typeof record === 'string') { try { record = JSON.parse(record); } catch (e) { record = {}; } }
+      const levels = record && record.data && Array.isArray(record.data.fib_levels) ? record.data.fib_levels : [];
+      for (const fl of levels) {
+        if (!fl || !fl.reacted || !fl.reaction_signal) continue;
+        const key = [item.symbol || currentSymbol, fl.level, fl.signal_date || '', fl.reaction_signal].join('|');
+        const prior = unique.get(key);
+        const detectedAt = item.created_at || '';
+        if (!prior || (detectedAt && (!prior.detectedAt || detectedAt < prior.detectedAt))) {
+          unique.set(key, { symbol: item.symbol || currentSymbol, level: fl.level, price: fl.price,
+            signalDate: fl.signal_date || '', signal: fl.reaction_signal, detectedAt });
+        }
+      }
+    }
+    const events = Array.from(unique.values()).sort((a, b) =>
+      String(b.signalDate || b.detectedAt).localeCompare(String(a.signalDate || a.detectedAt)));
+    if (!events.length) { box.textContent = '暂无已记录的斐波那契强信号'; return; }
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    box.innerHTML = events.slice(0, 30).map(ev => {
+      const date = ev.signalDate ? esc(ev.signalDate) : '旧记录未保存信号发生日';
+      const recorded = ev.detectedAt ? esc(String(ev.detectedAt).replace('T', ' ').slice(0, 16)) : '记录时间未知';
+      return `<div style="padding:7px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px;">
+        <div><b style="color:var(--gold);">${esc(ev.signal)}</b><div style="margin-top:3px;">${date} · Fib ${esc(ev.level)} · ${esc(ev.price)}</div></div>
+        <div style="text-align:right;white-space:nowrap;color:var(--text-dim);">记录于<br>${recorded}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.textContent = '历史信号读取失败：' + ((e && e.message) || '请稍后重试');
+  }
+}
+
 function updateResults(data, meta, nineTurn) {
   const tc = {'多头趋势':'var(--green)','空头趋势':'var(--red)','震荡':'var(--gold)'};
   const sc = {'买入':'var(--red)','卖出':'var(--green)','持有':'var(--blue)','观望':'var(--gold)','加仓':'var(--orange)','可关注买入':'var(--red)','关注减仓':'var(--green)'};
@@ -6061,11 +6103,20 @@ function updateResults(data, meta, nineTurn) {
     for (const fl of _fibs) {
       const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span style="color:var(--text-dim);">●</span>' : '');
       const rx = fl.reaction_signal ? ` <span style="color:var(--gold);">${fl.reaction_signal}</span>` : '';
+      const dateText = fl.signal_date ? ` <span style="color:var(--text-dim);font-size:10px;">${fl.signal_date}</span>` : '';
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span>${star}${rx}</span></div>`;
+      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span>${star}${rx}${dateText}</span></div>`;
     }
   }
-  document.getElementById('tab-fibonacci').innerHTML = fh;
+  document.getElementById('tab-fibonacci').innerHTML = fh
+    + `<div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+        <b style="font-size:12px;">历史强信号</b>
+        <button type="button" class="btn btn-sm" onclick="loadFibSignalHistory()">刷新</button>
+      </div>
+      <div id="fibSignalHistoryBody" style="font-size:11px;color:var(--text-dim);">读取历史信号…</div>
+    </div>`;
+  loadFibSignalHistory();
 
   document.getElementById('chartMeta').textContent = `${meta.rows}根K线 | 收盘 ${meta.last_close}`;
 
