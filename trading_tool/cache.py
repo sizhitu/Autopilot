@@ -437,7 +437,7 @@ def get_position_advice(symbol: str) -> list:
             if isinstance(row, dict):
                 day = str(row.get("bar_date") or row.get("date") or "")[:10]
                 if day:
-                    merged[day] = {**merged.get(day, {}), **row}
+                    merged[day] = {**merged.get(day, {}), **{k: v for k, v in row.items() if v is not None}}
         rows = sorted(merged.values(), key=lambda r: str(r.get("bar_date") or r.get("date") or ""), reverse=True)[:200]
         try:
             set_json(key, {"rows": rows}, POS_ADVICE_TTL)
