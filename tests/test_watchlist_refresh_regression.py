@@ -279,3 +279,32 @@ def test_fetch_abort_does_not_mark_backend_down():
     body = source[start:end]
     assert "opts.signal.aborted" in body
     assert "if (!cancelled)" in body
+
+
+def test_watchlist_local_cache_persists_all_dashboard_metric_columns():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("function persistWatchlistCache(stocks, meta)")
+    end = source.index("function loadWatchlistLocalCache()", start)
+    body = source[start:end]
+    for field in (
+        "high_low", "high_low_type", "role", "valuation", "valuation_detail",
+        "nine_turn_daily", "nine_turn_monthly", "nine_turn_daily_state",
+        "nine_turn_monthly_state", "crowding_pct", "crowding_level",
+        "crowding_speed", "crowding_source", "short_pct_float", "days_to_cover",
+    ):
+        assert field + ":" in body
+    assert "const complete = stocks.every" in body
+    assert "stocks.length < expectedCount" in body
+
+
+def test_watchlist_computing_partial_rows_never_overwrite_local_complete_cache():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+    computing_start = body.index("if (json.computing)")
+    computing_end = body.index("_wlPollCount = 0;", computing_start)
+    computing = body[computing_start:computing_end]
+    assert "persistWatchlistCache(" not in computing
+    # Only the fully completed response persists the full merged rows.
+    assert "persistWatchlistCache(merged" in body
