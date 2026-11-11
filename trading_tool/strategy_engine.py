@@ -544,7 +544,7 @@ class FujimotoStrategy:
         for level, label in levels_config:
             # 下跌波段从高点跌至低点，反弹阻力位从低点向上计算。
             price = swing_low + diff * level
-            tested = close * 0.98 <= price <= swing_high * 1.005
+            tested = bool(close * 0.98 <= price <= swing_high * 1.005)
 
             reacted = False
             reaction_signal = ""
