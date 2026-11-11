@@ -5943,6 +5943,49 @@ function _formatSynAction(syn) {
 }
 
 // === 更新结果 ===
+// === 读取并合并斐波那契历史强信号 ===
+async function loadFibSignalHistory() {
+  const box = document.getElementById('fibSignalHistoryBody');
+  if (!box) return;
+  if (!currentSymbol) { box.textContent = '请选择真实股票代码后查看'; return; }
+  if (!authToken) { box.textContent = '登录后可查看已保存的历史强信号'; return; }
+  box.textContent = '读取中…';
+  try {
+    const response = await apiJSON('/api/history?symbol=' + encodeURIComponent(currentSymbol) + '&limit=100');
+    const items = Array.isArray(response.items) ? response.items : [];
+    const unique = new Map();
+    for (const item of items) {
+      let record = item.result_json || {};
+      if (typeof record === 'string') { try { record = JSON.parse(record); } catch (e) { record = {}; } }
+      const levels = record && record.data && Array.isArray(record.data.fib_levels) ? record.data.fib_levels : [];
+      const dataDate = String(item.created_at || '').slice(0, 10);
+      for (const fl of levels) {
+        if (!fl || !fl.reacted || !fl.reaction_signal) continue;
+        const eventDate = String(fl.signal_date || dataDate || '').slice(0, 10);
+        const key = [item.symbol || currentSymbol, fl.level, eventDate, fl.reaction_signal].join('|');
+        const prior = unique.get(key);
+        if (!prior || String(item.created_at || '') < prior.detectedAt) {
+          unique.set(key, {
+            symbol: item.symbol || currentSymbol, level: fl.level, price: fl.price,
+            date: eventDate, signal: fl.reaction_signal, detectedAt: String(item.created_at || '')
+          });
+        }
+      }
+    }
+    const events = Array.from(unique.values()).sort((a, b) => b.date.localeCompare(a.date));
+    if (!events.length) { box.textContent = '暂无已记录的斐波那契强信号'; return; }
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    box.innerHTML = events.slice(0, 30).map(ev =>
+      `<div style="padding:7px 0;border-bottom:1px solid var(--border);">
+        <b style="color:var(--gold);">${esc(ev.signal)}</b>
+        <span style="margin-left:8px;">${esc(ev.date || '-')} · Fib ${esc(ev.level)} · ${esc(ev.price)}</span>
+      </div>`
+    ).join('');
+  } catch (e) {
+    box.textContent = '历史信号读取失败：' + ((e && e.message) || '请稍后重试');
+  }
+}
+
 function updateResults(data, meta, nineTurn) {
   const tc = {'多头趋势':'var(--green)','空头趋势':'var(--red)','震荡':'var(--gold)'};
   const sc = {'买入':'var(--red)','卖出':'var(--green)','持有':'var(--blue)','观望':'var(--gold)','加仓':'var(--orange)','可关注买入':'var(--red)','关注减仓':'var(--green)'};
@@ -6062,10 +6105,18 @@ function updateResults(data, meta, nineTurn) {
       fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span></div>`;
     }
   }
-  // 优先显示最后一根 K 线的交易日；缺失时回退到数据更新时间。
-  const fibUpdatedAt = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10) || '-';
+  // 历史强信号列表保留；每条日期优先取信号交易日，旧记录回退到该条分析数据的更新时间。
   document.getElementById('tab-fibonacci').innerHTML = fh
-    + `<div style="margin-top:10px;color:var(--text-dim);font-size:11px;text-align:right;">更新时间：${fibUpdatedAt}</div>`;
+    + `<div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px;">
+      <b style="font-size:12px;">历史强信号</b>
+      <div id="fibSignalHistoryBody" style="font-size:11px;color:var(--text-dim);margin-top:6px;">读取历史信号…</div>
+    </div>`;
+  loadFibSignalHistory();
+  const fibUpdatedAt = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10);
+  if (fibUpdatedAt) {
+    document.getElementById('tab-fibonacci').insertAdjacentHTML('beforeend',
+      `<div style="margin-top:8px;color:var(--text-dim);font-size:11px;text-align:right;">更新时间：${fibUpdatedAt}</div>`);
+  }
 
   document.getElementById('chartMeta').textContent = `${meta.rows}根K线 | 收盘 ${meta.last_close}`;
 
