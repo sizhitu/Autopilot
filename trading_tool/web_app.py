@@ -139,10 +139,22 @@ def _client_http_error(status: int, public_msg: str, exc: BaseException = None) 
 #  通过 CORS_ORIGINS 环境变量配置（逗号分隔），默认放行所有来源。
 # ----------------------------------------------------------------------
 _cors_origins = os.getenv("CORS_ORIGINS", "*")
-if _cors_origins == "*":
+if _cors_origins.strip() == "*":
     allow_origins = ["*"]
 else:
-    allow_origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+    # 始终保留本站正式域名和 Cloudflare Pages 默认域名，避免 Render
+    # 控制台中的旧 CORS_ORIGINS 覆盖 render.yaml 后导致前端被拒绝。
+    required_origins = {
+        "https://www.timebricks.bid",
+        "https://timebricks.bid",
+        "https://autopilot.pages.dev",
+    }
+    configured_origins = {
+        origin.strip().rstrip("/")
+        for origin in _cors_origins.split(",")
+        if origin.strip()
+    }
+    allow_origins = sorted(configured_origins | required_origins)
 
 app.add_middleware(
     CORSMiddleware,
