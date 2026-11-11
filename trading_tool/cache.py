@@ -477,6 +477,7 @@ def append_position_advice(symbol: str, row: dict) -> None:
         "volume": row.get("volume"),
         "avg_volume_20": row.get("avg_volume_20"),
         "history": row.get("history"),
+        "short_history": row.get("short_history"),
         "provider": row.get("provider"),
         "listing_exchange": row.get("listing_exchange"),
         "quality_status": row.get("quality_status") or "valid",
