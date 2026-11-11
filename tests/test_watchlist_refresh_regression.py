@@ -195,3 +195,19 @@ def test_local_snapshot_updates_initial_loading_state_before_overlay_decision():
     refresh_state = body.index("hasRows = !!(_lastWatchRows && _lastWatchRows.length);", restored)
     loading_branch = body.index("if (hasRows)", refresh_state)
     assert restored < refresh_state < loading_branch
+
+
+def test_watchlist_non_429_http_errors_preserve_status_and_backend_detail():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+
+    request = body.index("apiWithTimeout('/api/watchlist'")
+    non_ok = body.index("if (!res.ok)", request)
+    parse_error = body.index("const errBody = await res.json()", non_ok)
+    status = body.index("'HTTP ' + res.status", parse_error)
+    assert request < non_ok < parse_error < status
+    assert "接口异常：' + apiErrorText" in body
+    assert "（保留上次数据）" in body
+    assert "已保留上次数据" in body
