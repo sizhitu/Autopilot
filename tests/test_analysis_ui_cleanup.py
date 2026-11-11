@@ -79,3 +79,16 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
     assert "旧记录未保存信号发生日" not in html
     assert "仅供参考 · 不构成投资建议" not in html
     assert "刷新</button>" not in html[html.index("历史强信号"):html.index("document.getElementById('chartMeta')")]
+
+
+def test_fibonacci_history_columns_and_confirmation_stars_are_preserved():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+
+    assert "★确认" in html
+    assert "fl.tested" in html
+    assert "fl.reaction_signal" in html
+    assert "fib-history-head" in html
+    assert "grid-template-columns:minmax(0,1.5fr) 54px minmax(64px,.8fr) 88px" in html
+    assert "fib-history-date" in html
+    assert "fib-history-head span:last-child" in html
+    assert "★ ${esc(ev.signal)}" in html
