@@ -6,6 +6,8 @@ on:
       - "trading_tool/cache.py"
       - "trading_tool/watchlist.py"
       - "trading_tool/web_app.py"
+      - "trading_tool/strategy_engine.py"
+      - "tests/test_fibonacci_bearish.py"
       - "supabase/migrations/0008_crowding_persistence.sql"
       - "scripts/archive/archive_position_advice.py"
       - "scripts/archive/build_watchlist_snapshot.py"
@@ -30,9 +32,10 @@ jobs:
           pip install pandas numpy requests pytest
       - name: Compile changed Python modules
         run: |
-          python -m py_compile trading_tool/cache.py trading_tool/watchlist.py trading_tool/web_app.py scripts/archive/archive_position_advice.py scripts/archive/build_watchlist_snapshot.py
+          python -m py_compile trading_tool/cache.py trading_tool/watchlist.py trading_tool/web_app.py trading_tool/strategy_engine.py scripts/archive/archive_position_advice.py scripts/archive/build_watchlist_snapshot.py
       - name: Run persistence and fallback regression tests
         run: |
           PYTHONPATH=trading_tool python -m pytest tests/test_crowding.py -q -k "watchlist_restores_persisted_crowding or position_advice_persists_raw_short_metrics"
           python -m pytest tests/test_watchlist_refresh_regression.py -q
           python -m pytest tests/test_analysis_ui_cleanup.py -q
+          python -m pytest tests/test_fibonacci_bearish.py -q
