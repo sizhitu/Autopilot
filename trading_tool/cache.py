@@ -453,6 +453,14 @@ def append_position_advice(symbol: str, row: dict) -> None:
     if not day:
         return
     sym = str(symbol).upper()
+    as_of = str(row.get("as_of") or day)[:10]
+    if "/" in as_of:
+        for fmt in ("%m/%d/%Y", "%Y/%m/%d"):
+            try:
+                as_of = datetime.strptime(as_of, fmt).date().isoformat()
+                break
+            except ValueError:
+                continue
     existing = [r for r in (get_position_advice(sym) or []) if isinstance(r, dict)]
     # 同一天覆盖
     existing = [r for r in existing if str(r.get("bar_date") or r.get("date") or "")[:10] != day]
@@ -468,7 +476,8 @@ def append_position_advice(symbol: str, row: dict) -> None:
         "advice": row.get("advice") or "",
         "reason": row.get("reason") or "",
         "source": row.get("source") or "",
-        "as_of": row.get("as_of") or day,
+        "as_of": as_of,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
         "short_interest": row.get("short_interest"),
         "float_shares": row.get("float_shares"),
         "short_pct_float": row.get("short_pct_float"),
