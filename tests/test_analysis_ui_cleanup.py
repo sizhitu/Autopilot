@@ -66,14 +66,16 @@ def test_analysis_history_archive_reads_all_pages():
     assert '"result_json"' in source
 
 
-def test_fibonacci_panel_shows_only_levels_and_preferred_update_date():
+def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
 
-    assert "const fibUpdatedAt = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10) || '-';" in html
-    assert "更新时间：" in html
-    assert "历史强信号" not in html
-    assert "loadFibSignalHistory" not in html
-    assert "旧记录未保存信号发生日" not in html
+    assert "const fibUpdatedAt = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10);" in html
+    assert "历史强信号" in html
+    assert "loadFibSignalHistory();" in html
+    assert "const eventDate = String(fl.signal_date || dataDate || '').slice(0, 10);" in html
+    assert "const dataDate = String(item.created_at || '').slice(0, 10);" in html
+    assert "Fib ${esc(ev.level)}" in html
     assert "记录于" not in html
-    assert '<div class="footer-note">仅供参考 · 不构成投资建议</div>' not in html
-    assert "reaction_signal" not in html[html.index("let fh = '';"):html.index("document.getElementById('chartMeta')")]
+    assert "旧记录未保存信号发生日" not in html
+    assert "仅供参考 · 不构成投资建议" not in html
+    assert "刷新</button>" not in html[html.index("历史强信号"):html.index("document.getElementById('chartMeta')")]
