@@ -487,6 +487,29 @@ body.help-open { overflow: hidden; touch-action: none; }
 .fib-level { font-weight:600; color:var(--purple); width:55px; font-size:12px; }
 .fib-price { font-family:monospace; flex:1; font-size:12px; }
 .fib-star { color:var(--gold); font-size:11px; }
+.fib-tested { color:var(--text-dim); font-size:10px; }
+.fib-row { gap:8px; }
+.fib-status { display:flex; align-items:center; justify-content:flex-end; gap:6px; font-size:10px; white-space:nowrap; }
+.fib-reaction { color:var(--gold); }
+.fib-signal-date { color:var(--text-dim); }
+.fib-history-head,.fib-history-row {
+  display:grid;
+  grid-template-columns:minmax(0,1.5fr) 54px minmax(64px,.8fr) 88px;
+  align-items:center;
+  column-gap:10px;
+}
+.fib-history-head { padding:3px 0 5px; color:var(--text-dim); font-size:10px; border-bottom:1px solid var(--border); }
+.fib-history-head span:last-child,.fib-history-date { text-align:right; }
+.fib-history-row { padding:7px 0; border-bottom:1px solid var(--border); font-size:11px; }
+.fib-history-signal { color:var(--gold); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fib-history-level { color:var(--purple); white-space:nowrap; }
+.fib-history-price { font-family:monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fib-history-date { color:var(--text-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+@media (max-width:420px) {
+  .fib-history-head,.fib-history-row { grid-template-columns:minmax(0,1.25fr) 42px minmax(54px,.7fr) 76px; column-gap:6px; }
+  .fib-history-row { font-size:10px; }
+  .fib-history-signal { font-size:10px; }
+}
 
 /* 图表 */
 .chart-card { padding:0; overflow:hidden; }
@@ -6006,10 +6029,13 @@ async function loadFibSignalHistory() {
     const events = Array.from(unique.values()).sort((a, b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无已记录的斐波那契强信号'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    box.innerHTML = events.slice(0, 30).map(ev =>
-      `<div style="padding:7px 0;border-bottom:1px solid var(--border);">
-        <b style="color:var(--gold);">${esc(ev.signal)}</b>
-        <span style="margin-left:8px;">${esc(ev.date || '-')} · Fib ${esc(ev.level)} · ${esc(ev.price)}</span>
+    box.innerHTML = `<div class="fib-history-head"><span>信号</span><span>Fib</span><span>价格</span><span>日期</span></div>`
+      + events.slice(0, 30).map(ev =>
+      `<div class="fib-history-row">
+        <span class="fib-history-signal">★ ${esc(ev.signal)}</span>
+        <span class="fib-history-level">${esc(ev.level)}</span>
+        <span class="fib-history-price">${esc(ev.price)}</span>
+        <span class="fib-history-date">${esc(ev.date || '-')}</span>
       </div>`
     ).join('');
   } catch (e) {
@@ -6133,7 +6159,10 @@ function updateResults(data, meta, nineTurn) {
   } else {
     for (const fl of _fibs) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span></div>`;
+      const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●</span>' : '');
+      const rx = fl.reaction_signal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
+      const dateText = fl.signal_date ? `<span class="fib-signal-date">${fl.signal_date}</span>` : '';
+      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
     }
   }
   // 历史强信号列表保留；每条日期优先取信号交易日，旧记录回退到该条分析数据的更新时间。
