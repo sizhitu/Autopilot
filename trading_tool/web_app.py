@@ -243,7 +243,8 @@ def result_to_dict(result) -> dict:
                 "price": round(float(fl.price), 2),
                 "tested": bool(fl.tested),
                 "reacted": bool(fl.reacted),
-                "reaction_signal": fl.reaction_signal
+                "reaction_signal": fl.reaction_signal,
+                "signal_date": getattr(fl, "signal_date", None)
             } for fl in result.fib_levels
         ],
         "layers": _to_jsonable(result.layers_consistent),
