@@ -5176,7 +5176,7 @@ async function _loadWatchlistBody(forceRefresh) {
         const res = await apiWithTimeout('/api/watchlist/free-preview' + (forceRefresh ? '?refresh=1' : ''), {}, 20000);
         if (res.status === 429) {
           const j = await res.json().catch(function () { return {}; });
-          throw new Error((j && j.detail) || '请求过于频繁，请稍后再试');
+          throw new Error('429: ' + ((j && j.detail) || '请求过于频繁，请稍后再试'));
         }
         const json = await res.json();
         let stocks = (json && json.stocks) ? json.stocks : [];
@@ -5263,7 +5263,7 @@ async function _loadWatchlistBody(forceRefresh) {
     const res = await apiWithTimeout('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''), {}, 45000);
     if (res.status === 429) {
       const j = await res.json().catch(function () { return {}; });
-      throw new Error((j && j.detail) || '请求过于频繁，请稍后再试');
+      throw new Error('429: ' + ((j && j.detail) || '请求过于频繁，请稍后再试'));
     }
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
