@@ -372,6 +372,10 @@ def _calc_valuation(df: pd.DataFrame, role: str = DEFAULT_ROLE) -> tuple:
 
 _SHORT_CACHE = {}
 _SHORT_TTL = 3600 * 12  # 12 小时，半月数据不需要频繁拉
+_SHORT_FAILURE_TTL = 300  # 数据源故障短暂负缓存，避免每次看板请求重试
+_SHORT_REFRESHING = set()
+_SHORT_REFRESH_LOCK = threading.Lock()
+_SHORT_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="short-crowding")
 _FLOAT_SHARES_CACHE = {}
 _FLOAT_SHARES_TTL = 3600 * 24
 
@@ -391,7 +395,7 @@ def _fetch_float_shares(code: str):
             response = fetcher.session.get(
                 f"https://{domain}/v10/finance/quoteSummary/{code}",
                 params={"modules": "defaultKeyStatistics", "corsDomain": "finance.yahoo.com"},
-                headers=headers, timeout=10,
+                headers=headers, timeout=5,
             )
             if response.status_code != 200:
                 continue
@@ -469,14 +473,45 @@ def _enrich_short_crowding(data: dict, code: str = "") -> dict:
     return result
 
 
+def _refresh_short_cache(code: str) -> None:
+    """后台更新官方空头数据；外部数据源绝不阻塞看板主链路。"""
+    key = str(code or "").strip().upper()
+    try:
+        data = _enrich_short_crowding(_fetch_us_short_interest(key), key)
+        status = str((data or {}).get("status") or "")
+        ttl = _SHORT_FAILURE_TTL if status in ("source_error", "provider_error") else _SHORT_TTL
+        _SHORT_CACHE[key] = {"ts": time.time(), "ttl": ttl, "data": data or {}}
+    except Exception as exc:
+        _SHORT_CACHE[key] = {
+            "ts": time.time(), "ttl": _SHORT_FAILURE_TTL,
+            "data": {"status": "source_error", "source": "FINRA/Nasdaq",
+                     "message": f"后台数据源暂不可用：{type(exc).__name__}"},
+        }
+    finally:
+        with _SHORT_REFRESH_LOCK:
+            _SHORT_REFRESHING.discard(key)
+
+
 def _get_cached_short(code: str) -> dict:
-    import time
-    hit = _SHORT_CACHE.get(code.upper())
-    if hit and (time.time() - hit.get("ts", 0)) < _SHORT_TTL:
-        return hit.get("data") or {}
-    data = _enrich_short_crowding(_fetch_us_short_interest(code), code)
-    _SHORT_CACHE[code.upper()] = {"ts": time.time(), "data": data}
-    return data
+    """只读缓存并异步触发更新；调用方始终快速返回，不等待 FINRA/Nasdaq/Yahoo。"""
+    key = str(code or "").strip().upper()
+    if not key:
+        return {}
+    now = time.time()
+    hit = _SHORT_CACHE.get(key)
+    if hit:
+        ttl = float(hit.get("ttl") or _SHORT_TTL)
+        if now - float(hit.get("ts") or 0) < ttl:
+            return hit.get("data") or {}
+    # 过期数据可先继续展示，同时单飞刷新，避免同一股票重复打外部接口。
+    with _SHORT_REFRESH_LOCK:
+        if key not in _SHORT_REFRESHING:
+            _SHORT_REFRESHING.add(key)
+            try:
+                _SHORT_EXECUTOR.submit(_refresh_short_cache, key)
+            except Exception:
+                _SHORT_REFRESHING.discard(key)
+    return (hit or {}).get("data") or {}
 
 
 _FINRA_TOKEN_CACHE = {"token": None, "expires_at": 0}
@@ -501,7 +536,7 @@ def _get_finra_access_token() -> str:
         "https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token",
         params={"grant_type": "client_credentials"},
         auth=(client_id, client_secret),
-        timeout=20,
+        timeout=8,
     )
     if response.status_code != 200:
         raise RuntimeError(f"FINRA OAuth HTTP {response.status_code}")
@@ -534,7 +569,7 @@ def _fetch_finra_short_interest(code: str) -> dict:
     response = requests.post(
         url, json=body,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"},
-        timeout=30,
+        timeout=12,
     )
     if response.status_code == 204:
         rows = []
@@ -714,7 +749,7 @@ def _fetch_nasdaq_short_interest(code: str) -> dict:
     response = requests.get(
         url,
         headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-        timeout=12,
+        timeout=8,
     )
     if response.status_code != 200:
         return {"status": "provider_error", "source": "Nasdaq 官方空头报告",
@@ -765,15 +800,14 @@ def _fetch_us_short_interest(code: str) -> dict:
     if not code:
         return {"status": "invalid_symbol", "message": "股票代码为空。", "history": []}
 
-    venue = _fetch_listing_exchange(code)
+    # FINRA 是跨交易所合并源；先查 FINRA，成功时无需再扫描 Nasdaq 全市场股票列表。
+    # 交易所识别只在 FINRA 无结果时用于判断能否使用 Nasdaq 个股补充源。
+    venue = "UNKNOWN"
     finra_error = ""
     try:
-        # FINRA consolidatedShortInterest 覆盖交易所上市及 OTC 股票，
-        # 不应因 NYSE/AMEX 而跳过。注意这不是 Reg SHO 日度卖空成交量。
         result = _fetch_finra_short_interest(code)
         if result.get("status") == "ok":
             result["provider"] = "finra_consolidated"
-            result["listing_exchange"] = venue if venue != "UNKNOWN" else result.get("listing_exchange")
             result["metric_type"] = "days_to_cover"
             result["source"] = "FINRA 官方合并空头持仓"
             return result
@@ -781,6 +815,7 @@ def _fetch_us_short_interest(code: str) -> dict:
     except Exception as exc:
         finra_error = f"FINRA 查询失败：{type(exc).__name__}"
 
+    venue = _fetch_listing_exchange(code)
     # Nasdaq 的公开个股页面作为补充，不能把 Nasdaq 数据套到 NYSE/AMEX 股票。
     if venue == "NASDAQ":
         try:
@@ -2193,74 +2228,46 @@ def _hard_purge_stale_symbols(stocks_or_items) -> list:
 
 
 def _fill_crowding_if_missing(stocks: list) -> list:
-    """对缺少拥挤度的股票补算；美股官方空头复合分缺失时用成交量分位作明确标注的替代参考。"""
+    """仅用本地缓存补齐拥挤度；网络补数由 _get_cached_short 后台单飞执行。"""
     if not stocks:
         return stocks
     out = []
-    for s in stocks:
-        if not isinstance(s, dict):
-            out.append(s)
+    for row in stocks:
+        if not isinstance(row, dict):
+            out.append(row)
             continue
+        s = dict(row)
         code = str(s.get("code") or "").strip().upper()
         if not code:
             out.append(s)
             continue
         is_us = not (code.isdigit() or code.startswith(("SH", "SZ", "BJ")))
-        # A股已有有效分位可跳过；美股每次都重新校验短仓复合分，清理旧版 DTC 单项缓存。
-        if not is_us and (s.get("crowding_level") or "") and s.get("crowding_pct") is not None:
+        if not is_us:
             out.append(s)
             continue
-        try:
-            if is_us:
-                s = dict(s)
-                # 丢弃旧版可能写入的 DTC 单项伪评分，再用正式复合分或明确标注的替代分位重建。
-                s.pop("crowding_pct", None)
-                s.pop("crowding_level", None)
-                s["crowding_source"] = "官方空头复合分暂缺"
-                si = _get_cached_short(code)
-                if si:
-                    s["days_to_cover"] = si.get("days_to_cover")
-                    s["short_pct_float"] = si.get("short_pct_float")
-                    comp = si.get("composite")
-                    if comp is not None:
-                        s["crowding_pct"] = round(float(comp) * 100, 1)
-                        s["crowding_level"] = _short_composite_level(comp)
-                        s["crowding_source"] = si.get("source") or "FINRA/Nasdaq 官方空头数据"
-                    else:
-                        s["crowding_source"] = "官方空头复合分暂缺"
-                    days = si.get("days_to_cover")
-                    s["crowding_speed"] = (
-                        f"空头占流通{si.get('short_pct_float') if si.get('short_pct_float') is not None else '--'}% · "
-                        f"回补{days if days is not None else '--'}天"
-                    )
-                # 缺少复合分时，尽量补充价格成交量活跃度；绝不把 DTC 单项当作拥挤度分数。
-                if s.get("crowding_pct") is None:
-                    vol = _fetch_volume_only(code)
-                    if vol is not None and len(vol) >= 20:
-                        recent = vol.tail(20).mean()
-                        hist = vol.tail(min(250, len(vol)))
-                        if hist.sum() > 0 and recent > 0:
-                            pct = float((hist < recent).mean() * 100)
-                            s["crowding_pct"] = round(pct, 1)
-                            s["crowding_level"] = (
-                                "极端" if pct >= 95 else
-                                ("高" if pct >= 80 else ("偏高" if pct >= 60 else "正常"))
-                            )
-                            s["crowding_source"] = "成交量历史分位（替代参考，非空头拥挤度）"
-                            s["crowding_speed"] = "成交量活跃度参考"
-            else:
-                vol = _fetch_volume_only(code)
-                if vol is not None and len(vol) >= 20:
-                    recent = vol.tail(20).mean()
-                    hist = vol.tail(min(250, len(vol)))
-                    if hist.sum() > 0 and recent > 0:
-                        pct = float((hist < recent).mean() * 100)
-                        s = dict(s)
-                        s["crowding_pct"] = round(pct, 1)
-                        s["crowding_level"] = "极端" if pct >= 95 else ("高" if pct >= 80 else ("偏高" if pct >= 60 else "正常"))
-                        s["crowding_source"] = "成交量历史分位"
-        except Exception:
-            pass
+        source = str(s.get("crowding_source") or "")
+        # 已明确标注的成交量分位是合法替代参考，不要在每次请求时清空。
+        if source.startswith(("成交量历史分位", "成交量活跃度", "FINRA 官方", "Nasdaq 官方")) and s.get("crowding_pct") is not None:
+            out.append(s)
+            continue
+        # 不把旧版 DTC 单项伪评分继续显示为复合拥挤度。
+        s.pop("crowding_pct", None)
+        s.pop("crowding_level", None)
+        s["crowding_source"] = "官方空头复合分暂缺"
+        si = _get_cached_short(code)  # cache miss 时只排后台任务，不发起同步网络请求
+        if si:
+            s["days_to_cover"] = si.get("days_to_cover")
+            s["short_pct_float"] = si.get("short_pct_float")
+            comp = si.get("composite")
+            if comp is not None:
+                s["crowding_pct"] = round(float(comp) * 100, 1)
+                s["crowding_level"] = _short_composite_level(comp)
+                s["crowding_source"] = si.get("source") or "FINRA/Nasdaq 官方空头数据"
+            days = si.get("days_to_cover")
+            s["crowding_speed"] = (
+                f"空头占流通{si.get('short_pct_float') if si.get('short_pct_float') is not None else '--'}% · "
+                f"回补{days if days is not None else '--'}天"
+            )
         out.append(s)
     return out
 
@@ -2508,6 +2515,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
                     'progress': {'done': _done_n, 'total': total},
                 }
                 entry['refreshing'] = True
+                entry['ts'] = time.time()
                 _CACHES[key] = entry
 
     partial = _assemble(done_map)
@@ -2704,10 +2712,14 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
             pdata = cache.get('data') if isinstance(cache.get('data'), dict) else {}
             pr = (pdata.get('progress') or {}) if isinstance(pdata, dict) else {}
             done_n = int(pr.get('done') or 0)
-            if age > 90 and done_n <= 0:
+            if age > 180:
                 cache['refreshing'] = False
                 if isinstance(pdata, dict):
                     pdata['computing'] = False
+                    pdata['stalled'] = True
+                    pdata['refresh_error'] = (
+                        f"后台刷新超过 180 秒未完成（已完成 {done_n}/{pdata.get('total') or 0}）"
+                    )
                 cache['ts'] = now - _WATCHLIST_SOFT_TTL - 1
     except Exception:
         pass
@@ -2791,6 +2803,14 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                         if not got and force:
                             got = _BG_SEM.acquire(timeout=45)
                         if not got:
+                            ent = _CACHES.get(key)
+                            if ent:
+                                ent['refreshing'] = False
+                                if isinstance(ent.get('data'), dict):
+                                    ent['data']['computing'] = False
+                                    ent['data']['refresh_deferred'] = True
+                                    ent['data']['refresh_error'] = "后台计算资源繁忙，已保留现有行情，请稍后重试"
+                                ent['ts'] = time.time()
                             return
                         try:
                             _background_refresh(key, items, user_id, bool(force or hard))

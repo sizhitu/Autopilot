@@ -12,6 +12,7 @@ on:
       - "tests/test_watchlist_refresh_regression.py"
       - "frontend/index.html"
       - "trading_tool/web_app.py"
+      - "trading_tool/watchlist.py"
       - "render.yaml"
       - ".github/workflows/deployment-smoke.yml"
   workflow_dispatch:
@@ -32,7 +33,7 @@ jobs:
       - name: Test live backend, CORS, frontend, and user scenarios
         run: |
           mkdir -p test-results
-          python -m pytest tests/test_deployment_smoke.py tests/test_user_scenarios_live.py -q -ra --junitxml=test-results/live-diagnostics.xml
+          python -m pytest tests/test_deployment_smoke.py tests/test_user_scenarios_live.py tests/test_watchlist_refresh_regression.py -q -ra --junitxml=test-results/live-diagnostics.xml
       - name: Upload machine-readable test report
         if: always()
         uses: actions/upload-artifact@v4
