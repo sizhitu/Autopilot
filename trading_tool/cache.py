@@ -412,7 +412,7 @@ def _pos_advice_from_db(symbol: str) -> list:
             return []
         client = supabase_client.get_service_client()
         rows = (client.table("position_advice_logs")
-                .select("symbol,bar_date,level,percentile,score,metric_type,speed,divergence,advice,reason,source,as_of")
+                .select("*")
                 .eq("symbol", str(symbol or "").upper())
                 .order("bar_date", desc=True)
                 .limit(200).execute()).data or []
@@ -423,16 +423,28 @@ def _pos_advice_from_db(symbol: str) -> list:
 def get_position_advice(symbol: str) -> list:
     key = f"posadvice:{str(symbol or '').upper()}"
     raw = get_json(key)
-    if isinstance(raw, dict) and isinstance(raw.get("rows"), list) and raw["rows"]:
-        return raw["rows"]
+    cached = raw.get("rows", []) if isinstance(raw, dict) else raw if isinstance(raw, list) else []
+    # Supabase 是持久主存储；不能让旧的/不完整热缓存遮住数据库中的完整历史。
     db_rows = _pos_advice_from_db(symbol)
     if db_rows:
+        merged = {}
+        for row in cached if isinstance(cached, list) else []:
+            if isinstance(row, dict):
+                day = str(row.get("bar_date") or row.get("date") or "")[:10]
+                if day:
+                    merged[day] = row
+        for row in db_rows:
+            if isinstance(row, dict):
+                day = str(row.get("bar_date") or row.get("date") or "")[:10]
+                if day:
+                    merged[day] = {**merged.get(day, {}), **{k: v for k, v in row.items() if v is not None}}
+        rows = sorted(merged.values(), key=lambda r: str(r.get("bar_date") or r.get("date") or ""), reverse=True)[:200]
         try:
-            set_json(key, {"rows": db_rows}, POS_ADVICE_TTL)
+            set_json(key, {"rows": rows}, POS_ADVICE_TTL)
         except Exception:
             pass
-        return db_rows
-    return []
+        return rows
+    return cached[:200] if isinstance(cached, list) else []
 
 def append_position_advice(symbol: str, row: dict) -> None:
     if not symbol or not isinstance(row, dict):
@@ -441,7 +453,19 @@ def append_position_advice(symbol: str, row: dict) -> None:
     if not day:
         return
     sym = str(symbol).upper()
-    existing = [r for r in (get_position_advice(sym) or []) if isinstance(r, dict)]
+    as_of = str(row.get("as_of") or day)[:10]
+    if "/" in as_of:
+        for fmt in ("%m/%d/%Y", "%Y/%m/%d"):
+            try:
+                as_of = datetime.strptime(as_of, fmt).date().isoformat()
+                break
+            except ValueError:
+                continue
+    # 写入路径只读热缓存，避免看板每只股票都先 SELECT 一次 Supabase；
+    # 持久历史由 get_position_advice() 在读取时与数据库合并。
+    raw_cached = get_json(f"posadvice:{sym}")
+    cached_rows = raw_cached.get("rows", []) if isinstance(raw_cached, dict) else raw_cached if isinstance(raw_cached, list) else []
+    existing = [r for r in cached_rows if isinstance(r, dict)]
     # 同一天覆盖
     existing = [r for r in existing if str(r.get("bar_date") or r.get("date") or "")[:10] != day]
     new_row = {
@@ -456,7 +480,25 @@ def append_position_advice(symbol: str, row: dict) -> None:
         "advice": row.get("advice") or "",
         "reason": row.get("reason") or "",
         "source": row.get("source") or "",
-        "as_of": row.get("as_of") or day,
+        "as_of": as_of,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "short_interest": row.get("short_interest"),
+        "float_shares": row.get("float_shares"),
+        "short_pct_float": row.get("short_pct_float"),
+        "days_to_cover": row.get("days_to_cover"),
+        "price": row.get("price") or row.get("close"),
+        "volume": row.get("volume"),
+        "avg_volume_20": row.get("avg_volume_20"),
+        "history": row.get("history"),
+        "short_history": row.get("short_history"),
+        "short_behavior": row.get("short_behavior"),
+        "published_date": row.get("published_date"),
+        "float_source": row.get("float_source"),
+        "speed_change_pct": row.get("speed_change_pct"),
+        "price_change_pct": row.get("price_change_pct"),
+        "provider": row.get("provider"),
+        "listing_exchange": row.get("listing_exchange"),
+        "quality_status": row.get("quality_status") or "valid",
     }
     existing.insert(0, new_row)
     existing = existing[:200]
@@ -469,6 +511,7 @@ def append_position_advice(symbol: str, row: dict) -> None:
         import supabase_client
         if supabase_client.using_supabase():
             client = supabase_client.get_service_client()
-            client.table("position_advice_logs").upsert(new_row, on_conflict="symbol,bar_date").execute()
+            db_row = {k: v for k, v in new_row.items() if k != "symbol" or v}
+            client.table("position_advice_logs").upsert(db_row, on_conflict="symbol,bar_date").execute()
     except Exception:
         pass

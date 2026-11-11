@@ -40,8 +40,18 @@ def main():
             from datetime import timedelta
             cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).strftime("%Y-%m-%d")
             q = q.gte("bar_date", cutoff)
-        res = q.limit(50000).execute()
-        rows = res.data or []
+        # Supabase 项目通常有单次返回行数上限，必须分页，避免冷备静默截断。
+        rows = []
+        page_size = 1000
+        start = 0
+        while True:
+            page = q.range(start, start + page_size - 1).execute().data or []
+            if not page:
+                break
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+            start += page_size
     except Exception as e:
         print(f"读取 position_advice_logs 失败: {e}")
         return

@@ -40,7 +40,9 @@ ORDER BY date;
 
 - 日文件：每标的仅保留最近约 8 根 K 线（可调 `--days`）
 - 月并后：建议保留约 90 天 daily，更旧可删（workflow 可选）
-- 指标不落库，回测时用主仓同一套算法重算
+- 原始日 K 仍归档到 daily/monthly Parquet；拥挤度计算快照另存 Supabase 的 `position_advice_logs`。
+- `archive_position_advice.py` 每日分页导出完整快照到 `position_advice_logs/YYYY-MM-DD.parquet`，包含指标口径、原始空头指标、数据来源/发布日期及历史序列 JSON。
+- 首次部署需在 Supabase SQL Editor 执行 `supabase/migrations/0008_crowding_persistence.sql`，否则新增字段写入会被数据库拒绝（旧字段仍可用）。
 
 
 ## 看板日更快照（降级）

@@ -264,3 +264,70 @@ def test_fill_crowding_does_not_use_dtc_as_composite(monkeypatch):
     assert row["crowding_pct"] != 4.0
 
 
+
+
+def test_watchlist_restores_persisted_crowding_when_live_data_missing(monkeypatch):
+    import watchlist
+    import cache
+
+    def history(symbol):
+        if symbol == "600887":
+            return [{"bar_date": "2026-11-10", "percentile": 72.5, "score": None,
+                     "level": "偏高", "source": "成交量历史分位"}]
+        return [{"bar_date": "2026-11-10", "percentile": None, "score": 0.75,
+                 "level": "偏高", "short_pct_float": 12.5, "days_to_cover": 3.0,
+                 "source": "FINRA 官方空头持仓"}]
+
+    monkeypatch.setattr(cache, "get_position_advice", history)
+    monkeypatch.setattr(watchlist, "_get_cached_short", lambda code: None)
+    rows = watchlist._fill_crowding_if_missing([
+        {"code": "600887", "market": "A股", "bar_date": "2026-11-11"},
+        {"code": "NVDA", "market": "美股", "bar_date": "2026-11-11"},
+    ])
+    assert rows[0]["crowding_pct"] == 72.5
+    assert rows[0]["crowding_stale"] is True
+    assert "历史回退" in rows[0]["crowding_source"]
+    assert rows[1]["crowding_pct"] == 75.0
+    assert rows[1]["short_pct_float"] == 12.5
+    assert rows[1]["days_to_cover"] == 3.0
+    assert rows[1]["crowding_stale"] is True
+
+
+def test_position_advice_persists_raw_short_metrics_and_history(monkeypatch):
+    import cache
+    import supabase_client
+
+    captured = {}
+    class Query:
+        def upsert(self, payload, on_conflict=None):
+            captured["payload"] = payload
+            captured["on_conflict"] = on_conflict
+            return self
+        def execute(self):
+            return type("Result", (), {"data": []})()
+
+    class Client:
+        def table(self, name):
+            captured["table"] = name
+            return Query()
+
+    monkeypatch.setattr(cache, "get_position_advice", lambda symbol: [])
+    monkeypatch.setattr(cache, "set_json", lambda key, value, ttl: None)
+    monkeypatch.setattr(supabase_client, "using_supabase", lambda: True)
+    monkeypatch.setattr(supabase_client, "get_service_client", lambda: Client())
+
+    cache.append_position_advice("NVDA", {
+        "bar_date": "2026-11-10", "score": 0.75,
+        "metric_type": "short_composite_score", "short_interest": 1200000,
+        "float_shares": 10000000, "short_pct_float": 12.0,
+        "days_to_cover": 3.0, "provider": "finra",
+        "history": [{"date": "2026-10-30", "short_interest": 1200000}],
+    })
+    payload = captured["payload"]
+    assert captured["table"] == "position_advice_logs"
+    assert captured["on_conflict"] == "symbol,bar_date"
+    assert payload["short_interest"] == 1200000
+    assert payload["float_shares"] == 10000000
+    assert payload["short_pct_float"] == 12.0
+    assert payload["days_to_cover"] == 3.0
+    assert payload["history"][0]["date"] == "2026-10-30"
