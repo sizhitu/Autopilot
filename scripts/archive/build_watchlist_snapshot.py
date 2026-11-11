@@ -88,7 +88,10 @@ def main() -> int:
         get_stock_status,
         compute_stock_status_from_df,
         _status_to_dict,
+        _fill_crowding_if_missing,
     )
+    from data_fetcher import DataFetcher
+    analyst_fetcher = DataFetcher()
 
     symbols = load_symbols(args.symbols_file or None)
     pq_map: dict[str, pd.DataFrame] = {}
@@ -119,6 +122,7 @@ def main() -> int:
     symbols = symbols[: max(1, args.limit)]
     stocks = []
     by_code: dict = {}
+    bars_by_code: dict[str, pd.DataFrame] = {}
     errors = []
     src_counts = {"parquet": 0, "network": 0}
     t0 = time.time()
@@ -177,6 +181,8 @@ def main() -> int:
                 print(f"fail {code}: {st.error}", flush=True)
                 continue
             stocks.append(d)
+            if df is not None and isinstance(df, pd.DataFrame) and len(df) > 0:
+                bars_by_code[str(code).strip().upper()] = df
             key = str(d.get("code") or code).strip()
             by_code[key] = d
             by_code[key.upper()] = d
@@ -187,6 +193,91 @@ def main() -> int:
             print(f"fail {code}: {msg}", flush=True)
         if network:
             time.sleep(max(0.0, args.sleep))
+
+    # 快照必须与实时看板使用相同的末端字段补全逻辑，不能因为行情来自
+    # Parquet 就把参考价/拥挤度整列留空。
+    analyst_filled = 0
+    if network:
+        for row in stocks:
+            if row.get("analyst_target") is not None:
+                continue
+            code = str(row.get("code") or "").strip()
+            price = row.get("price")
+            if not code or price in (None, "", 0):
+                continue
+            try:
+                target = analyst_fetcher.fetch_analyst_mean_target(code)
+                if target is not None and float(target) > 0:
+                    row["analyst_target"] = round(float(target), 2)
+                    row["analyst_upside_pct"] = round(
+                        (float(target) / float(price) - 1.0) * 100.0, 2
+                    )
+                    analyst_filled += 1
+            except Exception as exc:
+                print(f"analyst target unavailable {code}: {str(exc)[:100]}", flush=True)
+
+    # 先从 Supabase/热缓存恢复已保存的官方空头复合分或历史快照。
+    try:
+        stocks = _fill_crowding_if_missing(stocks)
+    except Exception as exc:
+        print(f"crowding history restore skipped: {str(exc)[:160]}", flush=True)
+
+    # 对仍缺少有效拥挤度的股票，用同一份 OHLCV 的近20日成交量分位作
+    # 明确标注的替代参考；绝不把 DTC 单项冒充美股复合拥挤度。
+    volume_filled = 0
+    for row in stocks:
+        code = str(row.get("code") or "").strip().upper()
+        df = bars_by_code.get(code)
+        if df is None or "volume" not in df.columns or len(df) < 20:
+            continue
+        try:
+            vol = pd.to_numeric(df["volume"], errors="coerce").fillna(0).astype(float)
+            if (vol > 0).sum() < 20:
+                continue
+            recent = float(vol.tail(20).mean())
+            hist = vol.tail(min(250, len(vol)))
+            if recent <= 0 or float(hist.sum()) <= 0:
+                continue
+            if row.get("crowding_pct") is None:
+                pct = round(float((hist < recent).mean() * 100.0), 1)
+                row["crowding_pct"] = pct
+                row["crowding_level"] = (
+                    "极端" if pct >= 95 else "高" if pct >= 80
+                    else "偏高" if pct >= 60 else "正常"
+                )
+                row["crowding_source"] = (
+                    "成交量历史分位（替代参考，非空头拥挤度）"
+                    if row.get("market") == "美股" else "成交量历史分位"
+                )
+                volume_filled += 1
+            if not row.get("crowding_speed") and len(vol) >= 40:
+                previous = float(vol.iloc[-40:-20].mean())
+                change = (recent - previous) / previous * 100.0 if previous > 0 else 0.0
+                row["crowding_speed"] = (
+                    "快速上升" if change > 30 else "上升" if change > 10
+                    else "下降" if change < -20 else "平稳"
+                )
+        except Exception as exc:
+            print(f"volume crowding unavailable {code}: {str(exc)[:100]}", flush=True)
+
+    # 把新算出的成交量替代指标也写入历史；官方复合分仍由 _fill 函数按原始字段计算。
+    try:
+        stocks = _fill_crowding_if_missing(stocks)
+    except Exception as exc:
+        print(f"crowding persistence skipped: {str(exc)[:160]}", flush=True)
+
+    by_code = {}
+    for row in stocks:
+        key = str(row.get("code") or "").strip()
+        if key:
+            by_code[key] = row
+            by_code[key.upper()] = row
+
+    print(
+        f"snapshot enrichment: analyst_targets={analyst_filled}, "
+        f"volume_crowding={volume_filled}",
+        flush=True,
+    )
 
     payload = {
         "success": True,
