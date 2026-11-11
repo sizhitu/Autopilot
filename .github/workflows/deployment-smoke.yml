@@ -9,6 +9,8 @@ on:
     paths:
       - "tests/test_deployment_smoke.py"
       - "tests/test_user_scenarios_live.py"
+      - "tests/test_watchlist_refresh_regression.py"
+      - "frontend/index.html"
       - "trading_tool/web_app.py"
       - "render.yaml"
       - ".github/workflows/deployment-smoke.yml"
