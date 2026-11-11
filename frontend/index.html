@@ -4481,10 +4481,30 @@ function mergeWatchRows(incoming, previous) {
 let _wlInflight = null;
 let _wlPollTimer = null;
 let _wlPollCount = 0;
+let _wlAuthPollCount = 0;
 let _wlPendingForce = false;
 let _manualRefreshStreak = 0;
 let _manualRefreshTs = 0;
 const _WL_MAX_POLL = 60;  // 大自选需足够轮询；熔断放宽
+
+// 认证状态未就绪时使用有限退避，避免 600ms 无限请求。
+function scheduleWatchlistAuthRetry() {
+  const delays = [1000, 2000, 4000, 8000, 12000];
+  if (_wlAuthPollCount >= delays.length) {
+    _wlAuthPollCount = 0;
+    _watchWasComputing = false;
+    _wlLoadStartedAt = 0;
+    setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt || '' });
+    try { showToast('登录状态暂未同步，请稍后手动刷新看板', 'info'); } catch (e) {}
+    return false;
+  }
+  const delay = delays[_wlAuthPollCount++];
+  clearTimeout(_wlPollTimer);
+  _wlPollTimer = setTimeout(function () {
+    if (_mainTab === 'watchlist') loadWatchlist(false);
+  }, delay);
+  return true;
+}
 
 
 function isFreeUser() {
@@ -5278,20 +5298,39 @@ async function _loadWatchlistBody(forceRefresh) {
     leaveSnapshotMode();
     if (json.auth_pending && (authToken || currentUser)) {
       if (loading) loading.classList.add('hidden');
-      _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 600);
+      scheduleWatchlistAuthRetry();
       return;
     }
     if ((authToken || currentUser) && json.user_scoped === false && !json.empty) {
       if (loading) loading.classList.add('hidden');
-      _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 600);
+      scheduleWatchlistAuthRetry();
       return;
     }
+    _wlAuthPollCount = 0;
     if (json.hard_refresh && (json.hard_purged || []).length) {
       try { showToast('已强制更新 ' + json.hard_purged.length + ' 只非最新代码', 'ok'); } catch (e) {}
       _watchWasComputing = true;
       // 强制清签名，后续轮询结果必须重绘
       _lastWatchSig = '';
       _lastProgKey = '';
+    }
+
+    if (json.refresh_deferred) {
+      const deferredStocks = (json.stocks && json.stocks.length)
+        ? json.stocks
+        : (_lastWatchRows || []);
+      if (deferredStocks.length) {
+        const stableRows = mergeWatchRows(deferredStocks, _lastWatchRows);
+        renderWatchlistSummary(json.summary || {});
+        renderWatchlist(stableRows);
+        _lastWatchRows = stableRows.slice();
+      }
+      _wlPollCount = 0;
+      _watchWasComputing = false;
+      _wlLoadStartedAt = 0;
+      setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt || '' });
+      try { showToast('后台计算资源繁忙，已保留现有行情；请稍后再刷新', 'info'); } catch (e) {}
+      return;
     }
 
     if (json.computing) {
