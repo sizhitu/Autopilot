@@ -2863,6 +2863,22 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
     except Exception:
         pass
 
+    # 资源繁忙时进入短暂冷却；普通轮询直接返回缓存，不重复创建后台线程。
+    if cache and not force:
+        try:
+            retry_after = float(cache.get('retry_after') or 0)
+        except (TypeError, ValueError):
+            retry_after = 0
+        if retry_after > now and isinstance(cache.get('data'), dict):
+            out = dict(cache['data'])
+            out['computing'] = False
+            out['refresh_deferred'] = True
+            out['refresh_error'] = out.get('refresh_error') or '后台计算资源繁忙，已保留现有行情'
+            return _annotate_and_maybe_refresh_dates(out, key, items)
+        elif retry_after:
+            cache.pop('retry_after', None)
+            cache.pop('refresh_deferred', None)
+
     # 软 TTL：完整可用数据 → 毫秒级返回；但必须与当前自选 codes 对齐
     # 若后台仍在 refreshing（例如刚点了二次强制刷新），禁止早退，否则前端停轮询、页面不重绘
     if (not force and cache and isinstance(cache.get('data'), dict)
@@ -2938,20 +2954,25 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                             'total': len(items),
                         }
                     def _run_bg():
+                        # 不在后台线程等待全局计算锁；拿不到资源就冷却，避免堆积等待线程。
                         got = _BG_SEM.acquire(blocking=False)
-                        if not got and force:
-                            got = _BG_SEM.acquire(timeout=45)
                         if not got:
                             ent = _CACHES.get(key)
                             if ent:
                                 ent['refreshing'] = False
+                                ent['retry_after'] = time.time() + 20
+                                ent['refresh_deferred'] = True
                                 if isinstance(ent.get('data'), dict):
                                     ent['data']['computing'] = False
                                     ent['data']['refresh_deferred'] = True
-                                    ent['data']['refresh_error'] = "后台计算资源繁忙，已保留现有行情，请稍后重试"
+                                    ent['data']['refresh_error'] = "后台计算资源繁忙，已保留现有行情，请 20 秒后重试"
                                 ent['ts'] = time.time()
                             return
                         try:
+                            ent = _CACHES.get(key)
+                            if ent:
+                                ent.pop('retry_after', None)
+                                ent.pop('refresh_deferred', None)
                             _background_refresh(key, items, user_id, bool(force or hard))
                         finally:
                             try:
@@ -3024,17 +3045,26 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                     return
                 got = _BG_SEM.acquire(blocking=False)
                 if not got:
-                    # 不要把 refreshing 留死：拿不到锁则结束 computing，前端可再轮询触发
+                    # 冷启动时也设置冷却窗口；避免每次前端轮询都创建新线程抢同一把锁。
                     try:
                         ent = _CACHES.get(key)
                         if ent:
                             ent['refreshing'] = False
+                            ent['retry_after'] = time.time() + 20
+                            ent['refresh_deferred'] = True
                             if isinstance(ent.get('data'), dict):
                                 ent['data']['computing'] = False
+                                ent['data']['refresh_deferred'] = True
+                                ent['data']['refresh_error'] = "后台计算资源繁忙，已保留现有行情，请 20 秒后重试"
+                            ent['ts'] = time.time()
                     except Exception:
                         pass
                     return
                 try:
+                    ent = _CACHES.get(key)
+                    if ent:
+                        ent.pop('retry_after', None)
+                        ent.pop('refresh_deferred', None)
                     _background_refresh(key, items, user_id, force)
                 finally:
                     try:
