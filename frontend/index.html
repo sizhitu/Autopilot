@@ -3906,6 +3906,16 @@ async function fetchQuote(symbol, name, market) {
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
+    // 一旦业务 API 成功返回有效数据，就立即退出旧快照状态；无需等待分批计算完成。
+    markBackendUp();
+    leaveSnapshotMode();
+    // 一旦业务 API 成功返回有效数据，就立即退出旧快照状态；无需等待分批计算完成。
+    markBackendUp();
+    leaveSnapshotMode();
+    // 业务 API 已成功返回：即使仍在分批计算，也说明后端已恢复。
+    // 立即清除快照状态和旧来源标签，不必等待所有股票计算完成。
+    try { markBackendUp(); } catch (eUp) {}
+    try { leaveSnapshotMode(); } catch (eLeave) {}
     // 已切换到其他代码：丢弃本响应，避免串图/串面板
     if (reqId !== _quoteReqSeq || String(currentSymbol || '').toUpperCase() !== symbol) {
       return;
@@ -5074,10 +5084,13 @@ function applyWatchlistSnapshot(json) {
     ? ('自选×快照 · ' + stocks.length + ' 只')
     : (fromLocal ? ('本地自选缓存 · ' + stocks.length + ' 只') : ('公共快照 · ' + stocks.length + ' 只'));
   try {
+    // 展示标签与规范更新时间分离，不能把“公共快照/本地缓存”写入时间戳状态。
+    const asOf = json.as_of || '';
     setWatchUpdatedLabel({
       computing: false,
-      updated_at: (json.as_of || '') + ' · ' + tag,
+      updated_at: asOf ? (asOf + ' · ' + tag) : tag,
     });
+    _lastWatchUpdatedAt = asOf;
   } catch (e3) {}
   enterSnapshotMode(json.as_of || '');
   return stocks;
@@ -5277,6 +5290,9 @@ async function _loadWatchlistBody(forceRefresh) {
     }
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
+    // 成功取得业务 API 数据后立即退出旧快照状态，分批计算期间也不保留快照标记。
+    markBackendUp();
+    leaveSnapshotMode();
     if (json.auth_pending && (authToken || currentUser)) {
       if (loading) loading.classList.add('hidden');
       _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 600);

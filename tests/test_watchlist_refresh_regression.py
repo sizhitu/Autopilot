@@ -133,3 +133,26 @@ def test_dashboard_crowding_comment_does_not_trip_single_metric_assertion():
     end = source.index("function rememberActionSnap(s)", start)
     body = source[start:end]
     assert "单项指标" not in body
+
+
+def test_snapshot_display_label_does_not_pollute_canonical_updated_at():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("function applyWatchlistSnapshot(json)")
+    end = source.index("async function loadWatchlist", start)
+    block = source[start:end]
+    assert "_lastWatchUpdatedAt = asOf;" in block
+    assert "updated_at: asOf ? (asOf + ' · ' + tag) : tag" in block
+
+
+def test_successful_watchlist_api_response_exits_snapshot_mode_immediately():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    block = source[start:end]
+    api_request = block.index("apiWithTimeout('/api/watchlist'")
+    response = block.index("const json = await res.json();", api_request)
+    success = block.index("if (!json.success) throw new Error", response)
+    mark_up = block.index("markBackendUp();", success)
+    leave = block.index("leaveSnapshotMode();", mark_up)
+    computing = block.index("if (json.computing)", leave)
+    assert response < success < mark_up < leave < computing
