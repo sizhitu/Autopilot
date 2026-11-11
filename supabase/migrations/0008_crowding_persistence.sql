@@ -9,6 +9,7 @@ ALTER TABLE public.position_advice_logs
     ADD COLUMN IF NOT EXISTS volume numeric,
     ADD COLUMN IF NOT EXISTS avg_volume_20 numeric,
     ADD COLUMN IF NOT EXISTS history jsonb,
+    ADD COLUMN IF NOT EXISTS short_history jsonb,
     ADD COLUMN IF NOT EXISTS provider text,
     ADD COLUMN IF NOT EXISTS listing_exchange text,
     ADD COLUMN IF NOT EXISTS quality_status text;
