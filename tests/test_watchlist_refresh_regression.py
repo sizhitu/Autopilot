@@ -60,3 +60,19 @@ def test_watchlist_refresh_watchdog_handles_stalled_partial_progress():
     assert "if age > 180:" in source
     assert "pdata['stalled'] = True" in source
     assert "entry['ts'] = time.time()" in source
+
+
+def test_dashboard_crowding_shows_raw_short_metrics_when_composite_is_unavailable():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("function renderWatchlist(stocks)")
+    end = source.index("function rememberActionSnap(s)", start)
+    body = source[start:end]
+
+    assert "s.short_pct_float" in body
+    assert "s.days_to_cover" in body
+    assert "单项指标" in body
+    assert "回补 " in body
+    assert "空头 " in body
+    # A single raw metric must not be represented as a composite score.
+    assert "复合评分缺少组成数据时" in body
+
