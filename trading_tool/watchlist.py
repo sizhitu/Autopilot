@@ -912,7 +912,7 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
 
         # 拥挤度：美股优先用空头数据，A股用成交量分位
         try:
-            is_us = not (str(code).isdigit() or str(code).upper().startswith(("SH", "SZ", "BJ")))
+            is_us = _is_us_crowding_symbol(code, status.market)
             if is_us:
                 si = _get_cached_short(code)
                 if si:
@@ -1144,9 +1144,28 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
     return status
 
 
+def _is_us_crowding_symbol(code: str, market: str = "") -> bool:
+    """区分美股与 A 股/港股代码，兼容 600000.SH、SH600000 等常见写法。"""
+    raw = str(code or "").strip().upper()
+    market_name = str(market or "").strip()
+    if market_name in ("A股", "港股", "沪深", "中国市场"):
+        return False
+    if raw.startswith(("SH", "SZ", "BJ")) and raw[2:].isdigit() and len(raw[2:]) == 6:
+        return False
+    if raw.endswith((".SH", ".SZ", ".BJ")):
+        bare = raw.rsplit(".", 1)[0]
+        if bare.isdigit() and len(bare) == 6:
+            return False
+    if raw.endswith(".HK"):
+        return False
+    if raw.isdigit() and len(raw) in (5, 6):
+        return False
+    return True
+
+
 def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
     """获取单只股票完整状态"""
-    market = '美股' if not code.isdigit() else 'A股'
+    market = '美股' if _is_us_crowding_symbol(code) else ('港股' if str(code).upper().endswith('.HK') else 'A股')
     status = StockStatus(code=code, name=name, market=market)
     status.role = STOCK_ROLE.get(code, DEFAULT_ROLE)
 
@@ -2241,8 +2260,9 @@ def _fill_crowding_if_missing(stocks: list) -> list:
         if not code:
             out.append(s)
             continue
-        is_us = not (code.isdigit() or code.startswith(("SH", "SZ", "BJ")))
+        is_us = _is_us_crowding_symbol(code, s.get("market"))
         if not is_us:
+            # A股/港股拥挤度沿用状态计算阶段的成交量历史分位，不套用美股空头口径。
             out.append(s)
             continue
         source = str(s.get("crowding_source") or "")
