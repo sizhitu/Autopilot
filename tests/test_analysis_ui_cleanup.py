@@ -75,4 +75,5 @@ def test_fibonacci_panel_shows_only_levels_and_preferred_update_date():
     assert "loadFibSignalHistory" not in html
     assert "旧记录未保存信号发生日" not in html
     assert "记录于" not in html
+    assert '<div class="footer-note">仅供参考 · 不构成投资建议</div>' not in html
     assert "reaction_signal" not in html[html.index("let fh = '';"):html.index("document.getElementById('chartMeta')")]
