@@ -5746,10 +5746,9 @@ function renderWatchlist(stocks) {
           const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
           return '<span style="color:' + c + ';font-weight:600;">' + (lv || '综合指标') + '</span>' + (hasPct ? '<div style="font-size:10px;color:var(--text-dim);">' + Number(pct).toFixed(1) + '/100</div>' : '');
         }
-        // 复合评分缺少组成数据时，仍展示官方原始指标，但绝不把单项指标伪装成综合分。
+        // 复合评分缺失时直接展示可用的原始空头指标，不额外添加“单项指标”标签。
         if (hasShortPct || hasDtc) {
-          return '<span style="color:var(--text-dim);font-size:10px;">单项指标</span>' +
-            (hasShortPct ? '<div style="font-size:10px;">空头 ' + Number(shortPct).toFixed(1) + '%</div>' : '') +
+          return (hasShortPct ? '<div style="font-size:10px;">空头 ' + Number(shortPct).toFixed(1) + '%</div>' : '') +
             (hasDtc ? '<div style="font-size:10px;color:var(--text-dim);">回补 ' + Number(dtc).toFixed(1) + '天</div>' : '');
         }
         return '<span style="color:var(--text-dim);font-size:10px;">--</span>';

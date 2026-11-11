@@ -70,9 +70,18 @@ def test_dashboard_crowding_shows_raw_short_metrics_when_composite_is_unavailabl
 
     assert "s.short_pct_float" in body
     assert "s.days_to_cover" in body
-    assert "单项指标" in body
+    assert "单项指标" not in body
     assert "回补 " in body
     assert "空头 " in body
     # A single raw metric must not be represented as a composite score.
-    assert "复合评分缺少组成数据时" in body
+    assert "复合评分缺失时直接展示" in body
+
+
+def test_crowding_market_detection_handles_china_exchange_suffixes():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    assert "def _is_us_crowding_symbol(code: str, market: str = \"\") -> bool:" in source
+    assert 'raw.endswith((".SH", ".SZ", ".BJ"))' in source
+    assert 'raw.startswith(("SH", "SZ", "BJ"))' in source
+    assert 'is_us = _is_us_crowding_symbol(code, status.market)' in source
+    assert 'is_us = _is_us_crowding_symbol(code, s.get("market"))' in source
 
