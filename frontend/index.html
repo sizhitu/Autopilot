@@ -1745,6 +1745,28 @@ function leaveSnapshotMode() {
   try { setSnapshotBanner(false); } catch (e) {}
 }
 
+// 页面导航/移动端下拉刷新：离开页面时停止前端轮询；BFCache 恢复时再做一次受控恢复。
+let _appPageLeaving = false;
+try {
+  window.addEventListener('pagehide', function () {
+    _appPageLeaving = true;
+    try { clearTimeout(_wlPollTimer); } catch (e) {}
+    try { clearSnapshotReprobe(); } catch (e) {}
+  });
+  window.addEventListener('pageshow', function (event) {
+    _appPageLeaving = false;
+    // 仅 BFCache 返回时补一次加载；普通首屏仍由原初始化流程负责，避免双请求。
+    if (event && event.persisted) {
+      setTimeout(function () {
+        if (!_appPageLeaving && document.visibilityState !== 'hidden'
+            && _mainTab === 'watchlist' && !_wlInflight) {
+          loadWatchlist(false);
+        }
+      }, 800);
+    }
+  });
+} catch (eLifecycle) {}
+
 // 前台可见：快照模式下按最小间隔重探；隐藏时暂停定时器
 try {
   document.addEventListener('visibilitychange', function () {
@@ -1771,23 +1793,37 @@ try {
   });
 } catch (eVis) {}
 
-/** 带超时的 API，避免永久 pending 导致「首次加载中」卡死 */
+/** 带超时的 API。主动取消/页面离开/超时都不等同于后端宕机。 */
 async function apiWithTimeout(path, opts, ms) {
   ms = ms || 18000;
   const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-  const timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, ms) : null;
+  let timedOut = false;
+  const timer = ctrl ? setTimeout(function () {
+    timedOut = true;
+    try { ctrl.abort('request-timeout'); } catch (e) { try { ctrl.abort(); } catch (e2) {} }
+  }, ms) : null;
   try {
-    const res = await api(path, Object.assign({}, opts || {}, ctrl ? { signal: ctrl.signal } : {}));
-    if (timer) clearTimeout(timer);
-    return res;
+    return await api(path, Object.assign({}, opts || {}, ctrl ? { signal: ctrl.signal } : {}));
   } catch (e) {
-    if (timer) clearTimeout(timer);
-    // 看板/分析慢不等于实例挂了，先探活再决定是否降级
-    const name = (e && e.name) ? String(e.name) : '';
-    if (name !== 'AbortError') {
-      try { markBackendDown(); } catch (e2) {}
+    // 浏览器/运行时可能返回 AbortError，也可能返回 TypeError；以 signal 状态为准。
+    const cancelled = !!(ctrl && ctrl.signal.aborted);
+    if (timedOut) {
+      const timeoutError = new Error('请求超时（' + Math.round(ms / 1000) + '秒）');
+      timeoutError.code = 'API_TIMEOUT';
+      timeoutError.cause = e;
+      throw timeoutError;
     }
+    if (cancelled || (e && e.name === 'AbortError') || _appPageLeaving) {
+      const abortError = new Error('请求已取消');
+      abortError.name = 'AbortError';
+      abortError.code = 'API_ABORTED';
+      abortError.cause = e;
+      throw abortError;
+    }
+    // 只有非取消类异常才交给上层探活判断。
     throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -1927,7 +1963,12 @@ async function api(path, opts = {}) {
     }
     return res;
   } catch (e) {
-    try { markBackendDown(); } catch (e1) {}
+    // Fetch 被 AbortController/页面导航取消时，不要污染全局后端健康状态。
+    const cancelled = !!(opts && opts.signal && opts.signal.aborted)
+      || !!(e && e.name === 'AbortError') || _appPageLeaving;
+    if (!cancelled) {
+      try { markBackendDown(); } catch (e1) {}
+    }
     throw e;
   }
 }
@@ -5490,6 +5531,22 @@ async function _loadWatchlistBody(forceRefresh) {
       });
     } catch (e) {}
   } catch(e) {
+    // 页面导航/移动端下拉刷新导致旧文档请求取消：静默结束，不探活、不报接口异常。
+    if (_appPageLeaving || (e && (e.code === 'API_ABORTED' || e.name === 'AbortError'))) {
+      return;
+    }
+    // 请求超时不是后端宕机的充分证据：保留旧数据，不做双探活和快照降级。
+    if (e && e.code === 'API_TIMEOUT') {
+      setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt || '' });
+      if (_lastWatchRows && _lastWatchRows.length) {
+        const el = document.getElementById('watchlistUpdated');
+        if (el) el.textContent = (_lastWatchUpdatedAt ? ('更新于 ' + _lastWatchUpdatedAt + ' · ') : '') + '请求超时（保留上次数据）';
+      } else if (body) {
+        body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px;">请求超时，请稍后重试</td></tr>';
+      }
+      _watchWasComputing = false;
+      return;
+    }
     // 限流是业务层明确拒绝，不代表后端不可用；保留当前数据，绝不降级成快照。
     if (_toastRateLimit(e && (e.message || e))) {
       setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt || '' });
