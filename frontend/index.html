@@ -5734,12 +5734,25 @@ function renderWatchlist(stocks) {
       <td title="${escapeAttr(actionTip)}"><span style="color:${actionColor};font-weight:700;font-size:11px;">${escapeHtml(actionText)}</span>${strengthHtml}</td>
       <td style="padding:5px 6px;font-size:11px;">${hlHtml}</td>
       <td style="padding:5px 6px;font-size:11px;text-align:center;white-space:nowrap;">${analystHtml}</td>
-      <td style="padding:5px 4px;font-size:11px;text-align:center;" title="${escapeAttr(s.crowding_source || '')}">${(function(){
+      <td style="padding:5px 4px;font-size:11px;text-align:center;white-space:nowrap;" title="${escapeAttr(s.crowding_source || '')}">${(function(){
         const lv = s.crowding_level || '';
         const pct = s.crowding_pct;
-        if (!lv && (pct == null || pct === '')) return '<span style="color:var(--text-dim);font-size:10px;">--</span>';
-        const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
-        return '<span style="color:' + c + ';font-weight:600;">' + (lv || '正常') + '</span>' + (pct != null ? '<div style="font-size:10px;color:var(--text-dim);">' + pct + '</div>' : '');
+        const shortPct = s.short_pct_float;
+        const dtc = s.days_to_cover;
+        const hasPct = pct != null && pct !== '' && Number.isFinite(Number(pct));
+        const hasShortPct = shortPct != null && shortPct !== '' && Number.isFinite(Number(shortPct));
+        const hasDtc = dtc != null && dtc !== '' && Number.isFinite(Number(dtc));
+        if (lv || hasPct) {
+          const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
+          return '<span style="color:' + c + ';font-weight:600;">' + (lv || '综合指标') + '</span>' + (hasPct ? '<div style="font-size:10px;color:var(--text-dim);">' + Number(pct).toFixed(1) + '/100</div>' : '');
+        }
+        // 复合评分缺少组成数据时，仍展示官方原始指标，但绝不把单项指标伪装成综合分。
+        if (hasShortPct || hasDtc) {
+          return '<span style="color:var(--text-dim);font-size:10px;">单项指标</span>' +
+            (hasShortPct ? '<div style="font-size:10px;">空头 ' + Number(shortPct).toFixed(1) + '%</div>' : '') +
+            (hasDtc ? '<div style="font-size:10px;color:var(--text-dim);">回补 ' + Number(dtc).toFixed(1) + '天</div>' : '');
+        }
+        return '<span style="color:var(--text-dim);font-size:10px;">--</span>';
       })()}</td>
     </tr>`;
   }
