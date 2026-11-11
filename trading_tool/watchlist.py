@@ -2247,7 +2247,7 @@ def _fill_crowding_if_missing(stocks: list) -> list:
             continue
         source = str(s.get("crowding_source") or "")
         # 已明确标注的成交量分位是合法替代参考，不要在每次请求时清空。
-        if source.startswith(("成交量历史分位", "成交量活跃度")) and s.get("crowding_pct") is not None:
+        if source.startswith(("成交量历史分位", "成交量活跃度", "FINRA 官方", "Nasdaq 官方")) and s.get("crowding_pct") is not None:
             out.append(s)
             continue
         # 不把旧版 DTC 单项伪评分继续显示为复合拥挤度。
