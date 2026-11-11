@@ -59,7 +59,7 @@ services:
 
       # ===== 跨域 / 管理员 =====
       - key: CORS_ORIGINS
-        value: "https://timebricks.bid,https://autopilot.pages.dev"
+        value: "https://www.timebricks.bid,https://timebricks.bid,https://autopilot.pages.dev"
       # 额外授予管理员权限的邮箱（逗号分隔）
       - key: ADMIN_EMAILS
         sync: false
