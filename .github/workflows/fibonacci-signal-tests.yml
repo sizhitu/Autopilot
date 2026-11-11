@@ -1,0 +1,30 @@
+name: Fibonacci signal regression tests
+
+on:
+  pull_request:
+    paths:
+      - "trading_tool/strategy_engine.py"
+      - "tests/test_fibonacci_signal_events.py"
+      - ".github/workflows/fibonacci-signal-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "trading_tool/strategy_engine.py"
+      - "tests/test_fibonacci_signal_events.py"
+      - ".github/workflows/fibonacci-signal-tests.yml"
+
+jobs:
+  fibonacci-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest pandas numpy
+      - name: Compile and test Fibonacci signal detection
+        run: |
+          python -m py_compile trading_tool/strategy_engine.py
+          python -m pytest tests/test_fibonacci_signal_events.py -q
