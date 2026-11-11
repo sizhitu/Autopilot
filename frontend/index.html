@@ -5290,6 +5290,9 @@ async function _loadWatchlistBody(forceRefresh) {
     }
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
+    // 成功取得业务 API 数据后立即退出旧快照状态，分批计算期间也不保留快照标记。
+    markBackendUp();
+    leaveSnapshotMode();
     if (json.auth_pending && (authToken || currentUser)) {
       if (loading) loading.classList.add('hidden');
       _wlPollTimer = setTimeout(function () { if (_mainTab === 'watchlist') loadWatchlist(false); }, 600);
