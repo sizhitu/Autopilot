@@ -4694,32 +4694,44 @@ function _wlCacheUserKey() {
 function persistWatchlistCache(stocks, meta) {
   try {
     if (!Array.isArray(stocks) || !stocks.length) return;
-    // 只存可展示字段，控制体积
+    // 只允许完整看板写入：分批计算中的子集/占位行不能覆盖上次完整缓存。
+    const expectedCount = (_lastWatchSkeleton && _lastWatchSkeleton.length)
+      || (_lastWatchRows && _lastWatchRows.length) || 0;
+    const complete = stocks.every(function (s) {
+      return !!(s && s.code && !s.pending
+        && s.price != null && s.price !== '' && s.price !== '-' && s.price !== '…'
+        && s.signal && s.signal !== '计算中');
+    });
+    if (!complete || (expectedCount > 0 && stocks.length < expectedCount)) return;
+    // 保存看板所有可见指标，保证整页重载时各列可从本地恢复。
     const slim = stocks.map(function (s) {
       if (!s || !s.code) return null;
       return {
-        code: s.code,
-        name: s.name || '',
-        market: s.market || '',
-        price: s.price,
-        bar_date: s.bar_date,
-        change_1d: s.change_1d,
-        change_5d: s.change_5d,
-        signal: s.signal,
-        signal_color: s.signal_color,
-        trend: s.trend,
-        timing: s.timing,
-        timing_color: s.timing_color,
-        trend_filter: s.trend_filter,
-        trend_filter_color: s.trend_filter_color,
-        action: s.action,
-        action_color: s.action_color,
-        action_strength: s.action_strength,
-        action_side: s.action_side,
+        code: s.code, name: s.name || '', market: s.market || '',
+        price: s.price, bar_date: s.bar_date, bar_stale: s.bar_stale,
+        fetched_at: s.fetched_at, change_1d: s.change_1d, change_5d: s.change_5d,
+        signal: s.signal, signal_color: s.signal_color, trend: s.trend,
+        timing: s.timing, timing_color: s.timing_color,
+        trend_filter: s.trend_filter, trend_filter_color: s.trend_filter_color,
+        action: s.action, action_color: s.action_color,
+        action_strength: s.action_strength, action_side: s.action_side,
         action_reason: s.action_reason,
-        nine_turn: s.nine_turn,
-        pending: false,
-        data_source: 'local_cache',
+        nine_turn: s.nine_turn, nine_turn_dir: s.nine_turn_dir,
+        nine_turn_level: s.nine_turn_level, nine_turn_daily: s.nine_turn_daily,
+        nine_turn_monthly: s.nine_turn_monthly,
+        nine_turn_daily_state: s.nine_turn_daily_state,
+        nine_turn_monthly_state: s.nine_turn_monthly_state,
+        nine_turn_complete: s.nine_turn_complete,
+        nine_turn_completing: s.nine_turn_completing,
+        high_low: s.high_low, high_low_type: s.high_low_type,
+        role: s.role, valuation: s.valuation, valuation_type: s.valuation_type,
+        valuation_detail: s.valuation_detail,
+        analyst_target: s.analyst_target, analyst_upside_pct: s.analyst_upside_pct,
+        crowding_pct: s.crowding_pct, crowding_level: s.crowding_level,
+        crowding_speed: s.crowding_speed, crowding_source: s.crowding_source,
+        crowding_stale: s.crowding_stale, short_pct_float: s.short_pct_float,
+        days_to_cover: s.days_to_cover,
+        pending: false, data_source: 'local_cache',
       };
     }).filter(Boolean);
     if (!slim.length) return;
@@ -5409,9 +5421,7 @@ async function _loadWatchlistBody(forceRefresh) {
           // 有任一可用行或强制刷新时更新底图
           if (usable.length > 0 || forceRefresh) {
             _lastWatchRows = stocks.slice();
-            if (usable.length > 0) {
-              try { persistWatchlistCache(usable, { updated_at: json.updated_at || _lastWatchUpdatedAt }); } catch (ePc) {}
-            }
+            // computing 阶段只更新内存展示，不写本地持久缓存；完整结果在完成分支统一保存。
           }
         }
       } else if (!hasRows) {
