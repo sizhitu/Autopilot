@@ -412,7 +412,7 @@ def _pos_advice_from_db(symbol: str) -> list:
             return []
         client = supabase_client.get_service_client()
         rows = (client.table("position_advice_logs")
-                .select("symbol,bar_date,level,percentile,score,metric_type,speed,divergence,advice,reason,source,as_of")
+                .select("*")
                 .eq("symbol", str(symbol or "").upper())
                 .order("bar_date", desc=True)
                 .limit(200).execute()).data or []
@@ -423,16 +423,28 @@ def _pos_advice_from_db(symbol: str) -> list:
 def get_position_advice(symbol: str) -> list:
     key = f"posadvice:{str(symbol or '').upper()}"
     raw = get_json(key)
-    if isinstance(raw, dict) and isinstance(raw.get("rows"), list) and raw["rows"]:
-        return raw["rows"]
+    cached = raw.get("rows", []) if isinstance(raw, dict) else raw if isinstance(raw, list) else []
+    # Supabase 是持久主存储；不能让旧的/不完整热缓存遮住数据库中的完整历史。
     db_rows = _pos_advice_from_db(symbol)
     if db_rows:
+        merged = {}
+        for row in cached if isinstance(cached, list) else []:
+            if isinstance(row, dict):
+                day = str(row.get("bar_date") or row.get("date") or "")[:10]
+                if day:
+                    merged[day] = row
+        for row in db_rows:
+            if isinstance(row, dict):
+                day = str(row.get("bar_date") or row.get("date") or "")[:10]
+                if day:
+                    merged[day] = {**merged.get(day, {}), **row}
+        rows = sorted(merged.values(), key=lambda r: str(r.get("bar_date") or r.get("date") or ""), reverse=True)[:200]
         try:
-            set_json(key, {"rows": db_rows}, POS_ADVICE_TTL)
+            set_json(key, {"rows": rows}, POS_ADVICE_TTL)
         except Exception:
             pass
-        return db_rows
-    return []
+        return rows
+    return cached[:200] if isinstance(cached, list) else []
 
 def append_position_advice(symbol: str, row: dict) -> None:
     if not symbol or not isinstance(row, dict):
