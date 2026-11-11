@@ -267,6 +267,7 @@ def test_fill_crowding_does_not_use_dtc_as_composite(monkeypatch):
 
 
 def test_watchlist_restores_persisted_crowding_when_live_data_missing(monkeypatch):
+    import time
     import watchlist
     import cache
 
@@ -280,10 +281,23 @@ def test_watchlist_restores_persisted_crowding_when_live_data_missing(monkeypatc
 
     monkeypatch.setattr(cache, "get_position_advice", history)
     monkeypatch.setattr(watchlist, "_get_cached_short", lambda code: None)
-    rows = watchlist._fill_crowding_if_missing([
+    for code in ("600887", "NVDA"):
+        watchlist._POS_ADVICE_HISTORY_CACHE.pop(code, None)
+        watchlist._POS_ADVICE_HISTORY_PENDING.discard(code)
+    source_rows = [
         {"code": "600887", "market": "A股", "bar_date": "2026-11-11"},
         {"code": "NVDA", "market": "美股", "bar_date": "2026-11-11"},
-    ])
+    ]
+    # 第一次响应只排队，不等待远端历史库。
+    first = watchlist._fill_crowding_if_missing(source_rows)
+    assert "crowding_pct" not in first[0]
+    # 后台历史读取完成后，下一次响应从进程内缓存恢复原指标。
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        if all(code in watchlist._POS_ADVICE_HISTORY_CACHE for code in ("600887", "NVDA")):
+            break
+        time.sleep(0.01)
+    rows = watchlist._fill_crowding_if_missing(source_rows)
     assert rows[0]["crowding_pct"] == 72.5
     assert rows[0]["crowding_stale"] is True
     assert "历史回退" in rows[0]["crowding_source"]

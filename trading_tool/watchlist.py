@@ -2289,64 +2289,141 @@ def _hard_purge_stale_symbols(stocks_or_items) -> list:
     return stale
 
 
-def _fill_crowding_if_missing(stocks: list) -> list:
-    """仅用本地缓存补齐美股实时指标；同时持久化有效快照并在失败时恢复历史。"""
-    if not stocks:
-        return stocks
+# 看板响应路径不得同步访问 position_advice_logs / 远端 cache。
+# 历史回退读取和快照双写均在独立小线程池执行，并按 symbol/day 去重。
+_POS_ADVICE_IO = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pos-advice-io")
+_POS_ADVICE_LOCK = threading.Lock()
+_POS_ADVICE_HISTORY_CACHE = {}   # symbol -> {ts, row}
+_POS_ADVICE_HISTORY_PENDING = set()
+_POS_ADVICE_WRITE_PENDING = set()
+_POS_ADVICE_WRITE_LAST = {}       # (symbol, day) -> (signature, attempted_at)
+_POS_ADVICE_HISTORY_TTL = 300
+_POS_ADVICE_WRITE_RETRY = 300
 
-    def _history_row(code):
+
+def _load_pos_advice_history_async(code: str) -> None:
+    key = str(code or "").strip().upper()
+    if not key:
+        return
+    with _POS_ADVICE_LOCK:
+        cached = _POS_ADVICE_HISTORY_CACHE.get(key)
+        if cached and time.time() - cached.get("ts", 0) < _POS_ADVICE_HISTORY_TTL:
+            return
+        if key in _POS_ADVICE_HISTORY_PENDING:
+            return
+        _POS_ADVICE_HISTORY_PENDING.add(key)
+
+    def _run():
+        row = None
         try:
             import cache as _cache
-            rows = _cache.get_position_advice(code) or []
-            return next((r for r in rows if isinstance(r, dict) and
-                         (r.get("percentile") is not None or r.get("score") is not None or
-                          r.get("days_to_cover") is not None or r.get("short_pct_float") is not None)), None)
+            rows = _cache.get_position_advice(key) or []
+            row = next((r for r in rows if isinstance(r, dict) and
+                        (r.get("percentile") is not None or r.get("score") is not None or
+                         r.get("days_to_cover") is not None or r.get("short_pct_float") is not None)), None)
         except Exception:
-            return None
+            row = None
+        finally:
+            with _POS_ADVICE_LOCK:
+                _POS_ADVICE_HISTORY_CACHE[key] = {"ts": time.time(), "row": row}
+                _POS_ADVICE_HISTORY_PENDING.discard(key)
 
-    def _persist(code, row, si=None):
+    try:
+        _POS_ADVICE_IO.submit(_run)
+    except Exception:
+        with _POS_ADVICE_LOCK:
+            _POS_ADVICE_HISTORY_PENDING.discard(key)
+
+
+def _cached_pos_advice_history(code: str):
+    key = str(code or "").strip().upper()
+    with _POS_ADVICE_LOCK:
+        hit = _POS_ADVICE_HISTORY_CACHE.get(key)
+        if hit and time.time() - hit.get("ts", 0) < _POS_ADVICE_HISTORY_TTL:
+            return hit.get("row")
+    _load_pos_advice_history_async(key)
+    return None
+
+
+def _persist_pos_advice_async(code: str, row: dict, si=None) -> None:
+    key = str(code or "").strip().upper()
+    day = str((row or {}).get("bar_date") or (si or {}).get("settlement_date") or "")[:10]
+    if not key or not day:
+        return
+    is_us_row = _is_us_crowding_symbol(key, (row or {}).get("market"))
+    si = si or {
+        "short_interest": (row or {}).get("short_interest"),
+        "float_shares": (row or {}).get("float_shares"),
+        "short_pct_float": (row or {}).get("short_pct_float"),
+        "days_to_cover": (row or {}).get("days_to_cover"),
+        "composite": (float(row.get("crowding_pct")) / 100.0
+                      if is_us_row and row.get("crowding_pct") is not None and
+                      not str(row.get("crowding_source") or "").startswith("成交量历史分位") else None),
+        "history": (row or {}).get("short_history") or [],
+    }
+    metric_type = (
+        "short_composite_score" if is_us_row and si.get("composite") is not None
+        else "short_interest_incomplete" if is_us_row and (si.get("short_pct_float") is not None or si.get("days_to_cover") is not None)
+        else "volume_percentile"
+    )
+    payload = {
+        "bar_date": day,
+        "level": row.get("crowding_level") or "",
+        "percentile": row.get("crowding_pct") if (not is_us_row or metric_type == "volume_percentile") else None,
+        "score": si.get("composite") if is_us_row else None,
+        "metric_type": metric_type,
+        "speed": row.get("crowding_speed") or "",
+        "reason": si.get("source") or row.get("crowding_source") or "",
+        "source": si.get("source") or row.get("crowding_source") or "",
+        "as_of": si.get("settlement_date") or row.get("bar_date") or "",
+        "short_interest": si.get("short_interest"),
+        "float_shares": si.get("float_shares"),
+        "short_pct_float": si.get("short_pct_float") if is_us_row else None,
+        "days_to_cover": si.get("days_to_cover") if is_us_row else None,
+        "history": None,
+        "short_history": si.get("history") if is_us_row else None,
+        "provider": si.get("provider"),
+        "listing_exchange": si.get("listing_exchange"),
+        "price": row.get("price"),
+        "quality_status": "valid" if row.get("crowding_pct") is not None or row.get("short_pct_float") is not None else "partial",
+    }
+    signature = tuple(str(payload.get(k)) for k in (
+        "level", "percentile", "score", "metric_type", "speed", "source",
+        "short_interest", "float_shares", "short_pct_float", "days_to_cover",
+    ))
+    marker = (key, day)
+    now = time.time()
+    with _POS_ADVICE_LOCK:
+        previous = _POS_ADVICE_WRITE_LAST.get(marker)
+        if previous and previous[0] == signature and now - previous[1] < _POS_ADVICE_WRITE_RETRY:
+            return
+        if marker in _POS_ADVICE_WRITE_PENDING:
+            return
+        _POS_ADVICE_WRITE_PENDING.add(marker)
+
+    def _run():
         try:
             import cache as _cache
-            is_us_row = _is_us_crowding_symbol(code, row.get("market"))
-            si = si or {
-                "short_interest": row.get("short_interest"),
-                "float_shares": row.get("float_shares"),
-                "short_pct_float": row.get("short_pct_float"),
-                "days_to_cover": row.get("days_to_cover"),
-                "composite": (float(row.get("crowding_pct")) / 100.0
-                              if is_us_row and row.get("crowding_pct") is not None and
-                              not str(row.get("crowding_source") or "").startswith("成交量历史分位") else None),
-                "history": row.get("short_history") or [],
-            }
-            metric_type = (
-                "short_composite_score" if is_us_row and si.get("composite") is not None
-                else "short_interest_incomplete" if is_us_row and (si.get("short_pct_float") is not None or si.get("days_to_cover") is not None)
-                else "volume_percentile"
-            )
-            _cache.append_position_advice(code, {
-                "bar_date": row.get("bar_date") or si.get("settlement_date") or "",
-                "level": row.get("crowding_level") or "",
-                "percentile": row.get("crowding_pct") if (not is_us_row or metric_type == "volume_percentile") else None,
-                "score": si.get("composite") if is_us_row else None,
-                "metric_type": metric_type,
-                "speed": row.get("crowding_speed") or "",
-                "reason": si.get("source") or row.get("crowding_source") or "",
-                "source": si.get("source") or row.get("crowding_source") or "",
-                "as_of": si.get("settlement_date") or row.get("bar_date") or "",
-                "short_interest": si.get("short_interest"),
-                "float_shares": si.get("float_shares"),
-                "short_pct_float": si.get("short_pct_float") if is_us_row else None,
-                "days_to_cover": si.get("days_to_cover") if is_us_row else None,
-                "history": None,
-                "short_history": si.get("history") if is_us_row else None,
-                "provider": si.get("provider"),
-                "listing_exchange": si.get("listing_exchange"),
-                "price": row.get("price"),
-                "quality_status": "valid" if row.get("crowding_pct") is not None or row.get("short_pct_float") is not None else "partial",
-            })
+            _cache.append_position_advice(key, payload)
+            with _POS_ADVICE_LOCK:
+                _POS_ADVICE_WRITE_LAST[marker] = (signature, time.time())
         except Exception:
             pass
+        finally:
+            with _POS_ADVICE_LOCK:
+                _POS_ADVICE_WRITE_PENDING.discard(marker)
 
+    try:
+        _POS_ADVICE_IO.submit(_run)
+    except Exception:
+        with _POS_ADVICE_LOCK:
+            _POS_ADVICE_WRITE_PENDING.discard(marker)
+
+
+def _fill_crowding_if_missing(stocks: list) -> list:
+    """只做内存补齐；历史读取与 Supabase/Redis 持久化均异步执行。"""
+    if not stocks:
+        return stocks
     out = []
     for row in stocks:
         if not isinstance(row, dict):
@@ -2360,9 +2437,9 @@ def _fill_crowding_if_missing(stocks: list) -> list:
         is_us = _is_us_crowding_symbol(code, s.get("market"))
         has_primary_live = s.get("crowding_pct") is not None
         if has_primary_live:
-            _persist(code, s)
+            _persist_pos_advice_async(code, s)
         else:
-            saved = _history_row(code)
+            saved = _cached_pos_advice_history(code)
             if saved:
                 s["crowding_pct"] = (
                     round(float(saved["score"]) * 100, 1) if saved.get("score") is not None
@@ -2380,33 +2457,28 @@ def _fill_crowding_if_missing(stocks: list) -> list:
                 )
                 s["crowding_stale"] = True
             elif any(s.get(k) is not None for k in ("short_pct_float", "days_to_cover")):
-                _persist(code, s)
+                _persist_pos_advice_async(code, s)
 
-        if not is_us:
-            out.append(s)
-            continue
-
-        source = str(s.get("crowding_source") or "")
-        # 已明确标注的成交量分位或有效官方指标无需重复请求。
-        if source.startswith(("成交量历史分位", "成交量活跃度", "FINRA 官方", "Nasdaq 官方")) and s.get("crowding_pct") is not None:
-            out.append(s)
-            continue
-        si = _get_cached_short(code)  # cache miss 时只排后台任务，不发起同步网络请求
-        if si:
-            s["days_to_cover"] = si.get("days_to_cover") if si.get("days_to_cover") is not None else s.get("days_to_cover")
-            s["short_pct_float"] = si.get("short_pct_float") if si.get("short_pct_float") is not None else s.get("short_pct_float")
-            comp = si.get("composite")
-            if comp is not None:
-                s["crowding_pct"] = round(float(comp) * 100, 1)
-                s["crowding_level"] = _short_composite_level(comp)
-                s["crowding_source"] = si.get("source") or "FINRA/Nasdaq 官方空头数据"
-            days = si.get("days_to_cover")
-            s["crowding_speed"] = (
-                f"空头占流通{s.get('short_pct_float') if s.get('short_pct_float') is not None else '--'}% · "
-                f"回补{days if days is not None else '--'}天"
-            )
-            if comp is not None or s.get("short_pct_float") is not None or days is not None:
-                _persist(code, s, si)
+        if is_us:
+            source = str(s.get("crowding_source") or "")
+            if not (source.startswith(("成交量历史分位", "成交量活跃度", "FINRA 官方", "Nasdaq 官方"))
+                    and s.get("crowding_pct") is not None):
+                si = _get_cached_short(code)  # 仅读进程内缓存；缺失时只排后台数据源任务
+                if si:
+                    s["days_to_cover"] = si.get("days_to_cover") if si.get("days_to_cover") is not None else s.get("days_to_cover")
+                    s["short_pct_float"] = si.get("short_pct_float") if si.get("short_pct_float") is not None else s.get("short_pct_float")
+                    comp = si.get("composite")
+                    if comp is not None:
+                        s["crowding_pct"] = round(float(comp) * 100, 1)
+                        s["crowding_level"] = _short_composite_level(comp)
+                        s["crowding_source"] = si.get("source") or "FINRA/Nasdaq 官方空头数据"
+                    days = si.get("days_to_cover")
+                    s["crowding_speed"] = (
+                        f"空头占流通{s.get('short_pct_float') if s.get('short_pct_float') is not None else '--'}% · "
+                        f"回补{days if days is not None else '--'}天"
+                    )
+                    if comp is not None or s.get("short_pct_float") is not None or days is not None:
+                        _persist_pos_advice_async(code, s, si)
         out.append(s)
     return out
 
