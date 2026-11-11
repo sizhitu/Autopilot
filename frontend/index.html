@@ -5084,6 +5084,8 @@ async function _loadWatchlistBody(forceRefresh) {
       const localSnapshot = loadWatchlistLocalCache();
       if (localSnapshot && localSnapshot.stocks && localSnapshot.stocks.length) {
         applyWatchlistSnapshot(localSnapshot);
+        setWatchUpdatedLabel({ computing: true, updated_at: localSnapshot.as_of || '' });
+        if (loading) loading.classList.add('hidden');
       }
     } catch (eCacheFirst) {}
     fetchWatchlistSnapshot().then(function (snapshot) {
@@ -5092,7 +5094,11 @@ async function _loadWatchlistBody(forceRefresh) {
       const hasUsableCurrent = current.some(function (s) {
         return s && s.price != null && s.price !== '-' && s.price !== '';
       });
-      if (!hasUsableCurrent) applyWatchlistSnapshot(snapshot);
+      if (!hasUsableCurrent) {
+        applyWatchlistSnapshot(snapshot);
+        setWatchUpdatedLabel({ computing: true, updated_at: snapshot.as_of || '' });
+        if (loading) loading.classList.add('hidden');
+      }
     }).catch(function () {});
   }
   // 手动刷新：清会话「最新锁」，允许接口新日期写回（避免前端锁死旧 bar_date）
