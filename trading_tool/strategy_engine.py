@@ -474,6 +474,8 @@ class FujimotoStrategy:
                     if reacted:
                         try:
                             raw_signal_date = last_near["date"] if "date" in df.columns else last_near.name
+                            if isinstance(raw_signal_date, (int, float, np.integer, np.floating)):
+                                raise ValueError("numeric row index is not a trading date")
                             parsed_signal_date = pd.to_datetime(raw_signal_date, errors="coerce")
                             if not pd.isna(parsed_signal_date):
                                 signal_date = parsed_signal_date.strftime("%Y-%m-%d")
