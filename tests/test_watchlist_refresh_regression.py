@@ -242,3 +242,40 @@ def test_watchlist_resource_deferred_response_stops_frontend_polling_and_keeps_r
     assert "mergeWatchRows(deferredStocks, _lastWatchRows)" in body
     assert "_watchWasComputing = false;" in body
     assert "后台计算资源繁忙，已保留现有行情" in body
+
+
+
+def test_watchlist_navigation_abort_is_silent_and_does_not_probe_backend():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    assert "let _appPageLeaving = false;" in source
+    assert "window.addEventListener('pagehide'" in source
+    assert "window.addEventListener('pageshow'" in source
+    assert "if (_appPageLeaving || (e && (e.code === 'API_ABORTED' || e.name === 'AbortError')))" in source
+    assert "请求已取消" in source
+    # Abort/cancel handling must happen before the ordinary business-error health probe.
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+    catch_block = body.index("} catch(e) {")
+    abort_branch = body.index("e.code === 'API_ABORTED'", catch_block)
+    health_probe = body.index("await confirmBackendUnavailable()", catch_block)
+    assert abort_branch < health_probe
+
+
+def test_watchlist_timeout_is_not_misclassified_as_backend_outage():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    helper = source[source.index("async function apiWithTimeout"):source.index("// 登录态")]
+    assert "timeoutError.code = 'API_TIMEOUT'" in helper
+    assert "cancelled || (e && e.name === 'AbortError')" in helper
+    assert "if (timedOut)" in helper
+    assert "if (e && e.code === 'API_TIMEOUT')" in source
+    assert "请求超时（保留上次数据）" in source
+
+
+def test_fetch_abort_does_not_mark_backend_down():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function api(path")
+    end = source.index("// 取 JSON（带容错）", start)
+    body = source[start:end]
+    assert "opts.signal.aborted" in body
+    assert "if (!cancelled)" in body
