@@ -3,7 +3,6 @@
 These tests intentionally live in a dedicated class/file and verify that the
 new bearish reference path is isolated from the existing bullish strategy.
 """
-import numpy as np
 import pandas as pd
 
 from trading_tool.strategy_engine import FujimotoStrategy
@@ -102,15 +101,16 @@ class TestBearishFibonacciSignals:
         assert level.reaction_signal == ""
         assert level.signal_date is None
 
-    def test_level_not_reached_by_rebound_is_not_marked_tested(self):
+    def test_level_not_reached_by_rebound_does_not_emit_signal(self):
         frame = self.bars([
             self.anchor(),
             self.touch(95, 96, volume=100, high=100.0),
             self.touch(96, 97, volume=100, high=101.0),
         ])
         level = self.get_0786(frame)
-        # The mirrored tested flag means the resistance is within the active price range;
-        # actual candle contact is independently verified by the high-price touch zone.
+        # No candle high enters the ±1% resistance touch zone.
+        assert all(not (level.price * 0.99 <= high <= level.price * 1.01)
+                   for high in frame["high"])
         assert level.reacted is False
 
     def test_numeric_index_is_not_misreported_as_trading_date(self):
