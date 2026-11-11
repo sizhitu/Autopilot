@@ -5265,9 +5265,10 @@ async function _loadWatchlistBody(forceRefresh) {
       try { showToast('正在更新自选行情…', 'ok'); } catch (e) {}
     }
     const res = await apiWithTimeout('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''), {}, 45000);
-    if (res.status === 429) {
-      const j = await res.json().catch(function () { return {}; });
-      throw new Error('429: ' + ((j && j.detail) || '请求过于频繁，请稍后再试'));
+    if (!res.ok) {
+      const errBody = await res.json().catch(function () { return {}; });
+      const errDetail = (errBody && (errBody.detail || errBody.message)) || res.statusText || '请求失败';
+      throw new Error('HTTP ' + res.status + ': ' + String(errDetail).slice(0, 160));
     }
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
@@ -5469,16 +5470,17 @@ async function _loadWatchlistBody(forceRefresh) {
       backendUnavailable = false; // 探测自身异常时采取保守策略，不切快照
     }
     if (!backendUnavailable) {
+      const apiErrorText = String((e && (e.message || e)) || '未知错误').slice(0, 140);
       if (_lastWatchRows && _lastWatchRows.length) {
         setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt || '' });
         const el = document.getElementById('watchlistUpdated');
-        if (el && _lastWatchUpdatedAt) {
-          el.textContent = `更新于 ${_lastWatchUpdatedAt} · 接口异常，保留上次数据`;
+        if (el) {
+          el.textContent = (_lastWatchUpdatedAt ? ('更新于 ' + _lastWatchUpdatedAt + ' · ') : '') + '接口异常：' + apiErrorText + '（保留上次数据）';
         }
-        try { showToast('看板接口请求失败，但后端仍可访问；已保留上次数据', 'info'); } catch (eKeep) {}
+        try { showToast('看板接口异常：' + apiErrorText + '；已保留上次数据', 'info'); } catch (eKeep) {}
       } else {
-        body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">看板接口请求失败，后端仍可访问，请稍后重试。</td></tr>`;
-        try { showToast('看板接口请求失败，未切换静态快照', 'info'); } catch (eKeep2) {}
+        body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">看板接口请求失败：${apiErrorText}</td></tr>`;
+        try { showToast('看板接口请求失败：' + apiErrorText, 'info'); } catch (eKeep2) {}
       }
       _watchWasComputing = false;
       return;
