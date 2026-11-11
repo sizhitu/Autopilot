@@ -3906,6 +3906,9 @@ async function fetchQuote(symbol, name, market) {
     });
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
+    // 一旦业务 API 成功返回有效数据，就立即退出旧快照状态；无需等待分批计算完成。
+    markBackendUp();
+    leaveSnapshotMode();
     // 业务 API 已成功返回：即使仍在分批计算，也说明后端已恢复。
     // 立即清除快照状态和旧来源标签，不必等待所有股票计算完成。
     try { markBackendUp(); } catch (eUp) {}
