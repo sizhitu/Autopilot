@@ -6060,7 +6060,7 @@ function updateResults(data, meta, nineTurn) {
   } else {
     for (const fl of _fibs) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span></span></div>`;
+      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span></div>`;
     }
   }
   // 优先显示最后一根 K 线的交易日；缺失时回退到数据更新时间。
