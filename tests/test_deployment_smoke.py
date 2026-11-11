@@ -56,7 +56,7 @@ def test_frontend_is_reachable_and_points_to_expected_api():
     # 绝不把挑战页算成通过，也不让它误报为应用前端故障。
     server = response.headers.get("server", "").lower()
     cf_ray = response.headers.get("cf-ray")
-        is_cloudflare_challenge = (
+    is_cloudflare_challenge = (
         response.status_code == 403
         and server == "cloudflare"
         and bool(cf_ray)
