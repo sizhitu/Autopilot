@@ -343,3 +343,17 @@ def test_watchlist_crowding_persistence_deduplicates_same_symbol_day():
     assert "marker in _POS_ADVICE_WRITE_PENDING" in body
     assert "_cache.append_position_advice(key, payload)" in body
     assert "_POS_ADVICE_WRITE_RETRY" in body
+
+
+def test_watchlist_cold_start_does_not_read_persisted_status_serially_in_request_path():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("    # 无可用缓存：骨架 + 后台计算", source.index("def get_watchlist_status"))
+    end = source.index("            all_fresh = bool(seeded)", start)
+    cold_seed = source[start:end]
+    assert "_load_persisted_status(" not in cold_seed
+    assert "冷启动 API 响应不能逐只同步读取远端状态缓存" in cold_seed
+    # Persistent rows are still recovered inside background compute workers.
+    compute_start = source.index("def _compute_watchlist")
+    compute_end = source.index("\nif __name__ == \"__main__\"", compute_start)
+    compute = source[compute_start:compute_end]
+    assert "persisted = _load_persisted_status(cu)" in compute

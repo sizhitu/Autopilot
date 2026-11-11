@@ -3083,12 +3083,9 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                 cu = str(c).upper()
                 if cu in have:
                     continue
-                persisted = _load_persisted_status(cu)
-                if persisted and not _row_incomplete(persisted):
-                    persisted["name"] = item_name.get(c) or persisted.get("name") or c
-                    seeded.append(persisted)
-                    have.add(cu)
-                    continue
+                # 冷启动 API 响应不能逐只同步读取远端状态缓存（Supabase/Upstash）。
+                # 后台 _compute_watchlist 的 worker 会并发恢复持久状态；此处先返回占位，
+                # 前端同时可从本地完整快照恢复旧数据。
                 seeded.append({
                         'code': c, 'name': item_name.get(c) or c,
                         'market': '美股' if not str(c).isdigit() else 'A股',
