@@ -5075,7 +5075,7 @@ let _watchlistLiveRevision = 0;
 async function _loadWatchlistBody(forceRefresh) {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
-  const hasRows = _lastWatchRows && _lastWatchRows.length;
+  let hasRows = _lastWatchRows && _lastWatchRows.length;
   // 首屏先显示本机上次成功数据，不等 Render 冷启动或本次业务 API 返回。
   // 若本机没有缓存，则并行读取静态/冷备快照；实时 API 一旦成功，快照结果自动作废。
   if (!hasRows) {
@@ -5084,6 +5084,7 @@ async function _loadWatchlistBody(forceRefresh) {
       const localSnapshot = loadWatchlistLocalCache();
       if (localSnapshot && localSnapshot.stocks && localSnapshot.stocks.length) {
         applyWatchlistSnapshot(localSnapshot);
+        hasRows = !!(_lastWatchRows && _lastWatchRows.length);
         setWatchUpdatedLabel({ computing: true, updated_at: localSnapshot.as_of || '' });
         if (loading) loading.classList.add('hidden');
       }
