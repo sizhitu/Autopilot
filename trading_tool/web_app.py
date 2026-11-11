@@ -3535,7 +3535,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
         timeline = _cache.get_position_advice(sym) or []
         # 本次外部数据源不可用/指标缺失时，恢复最后一份有效持久化快照。
         # 明确标记为历史回退，绝不把旧数据伪装成实时数据。
-        if not metrics or not any(metrics.get(k) is not None for k in ("percentile", "score", "days_to_cover", "short_pct_float")):
+        if not metrics or (metrics.get("percentile") is None and metrics.get("score") is None):
             saved = next((r for r in timeline if isinstance(r, dict) and
                           (r.get("percentile") is not None or r.get("score") is not None or
                            r.get("days_to_cover") is not None or r.get("short_pct_float") is not None)), None)
