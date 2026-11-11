@@ -31,3 +31,32 @@ def test_watchlist_rate_limit_does_not_fall_back_to_snapshot():
     snapshot_fallback = body.index("在线 API 确实失败")
     assert rate_limit < snapshot_fallback
     assert body.count("throw new Error('429: '") == 2
+
+
+
+def test_short_interest_lookup_is_nonblocking_for_watchlist():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("def _get_cached_short(code: str) -> dict:")
+    end = source.index("\n\n_FINRA_TOKEN_CACHE", start)
+    body = source[start:end]
+
+    assert "_SHORT_EXECUTOR.submit(_refresh_short_cache, key)" in body
+    assert "_fetch_us_short_interest(code)" not in body
+    assert "_fetch_us_short_interest(key)" not in body
+
+
+def test_watchlist_crowding_annotation_does_not_call_network_fallbacks():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("def _fill_crowding_if_missing(stocks: list) -> list:")
+    end = source.index("\ndef _annotate_and_maybe_refresh_dates", start)
+    body = source[start:end]
+
+    assert "_fetch_volume_only" not in body
+    assert "_get_cached_short(code)" in body
+
+
+def test_watchlist_refresh_watchdog_handles_stalled_partial_progress():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    assert "if age > 180:" in source
+    assert "pdata['stalled'] = True" in source
+    assert "entry['ts'] = time.time()" in source
