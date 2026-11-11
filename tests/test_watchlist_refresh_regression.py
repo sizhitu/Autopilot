@@ -213,3 +213,32 @@ def test_watchlist_non_429_http_errors_preserve_status_and_backend_detail():
     assert "接口异常：' + apiErrorText" in body
     assert "（保留上次数据）" in body
     assert "已保留上次数据" in body
+
+
+
+def test_watchlist_backend_resource_contention_uses_cooldown_instead_of_retry_thread_storm():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    assert "ent['retry_after'] = time.time() + 20" in source
+    assert "out['refresh_deferred'] = True" in source
+    assert "if retry_after > now and isinstance(cache.get('data'), dict):" in source
+    # Force refresh must not block a worker thread waiting 45 seconds for the global semaphore.
+    assert "_BG_SEM.acquire(timeout=45)" not in source
+
+
+def test_watchlist_auth_pending_polling_is_bounded_with_backoff():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    assert "let _wlAuthPollCount = 0;" in source
+    assert "const delays = [1000, 2000, 4000, 8000, 12000]" in source
+    assert "scheduleWatchlistAuthRetry();" in source
+    assert "}, 600);" not in source
+
+
+def test_watchlist_resource_deferred_response_stops_frontend_polling_and_keeps_rows():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+    assert "if (json.refresh_deferred)" in body
+    assert "mergeWatchRows(deferredStocks, _lastWatchRows)" in body
+    assert "_watchWasComputing = false;" in body
+    assert "后台计算资源繁忙，已保留现有行情" in body
