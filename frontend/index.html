@@ -1580,85 +1580,14 @@ body.landing-locked #freeBanner { display: none !important; }
       </div>
     </div>
 
-    <!-- Tab 区 -->
+    <!-- 分析结果面板：只保留指标与斐波那契 -->
     <div class="card" style="flex:1; overflow-y:auto;">
       <div class="tabs">
         <div class="tab active" onclick="switchTab('indicators',this)">指标</div>
         <div class="tab" onclick="switchTab('fibonacci',this)">斐波那契</div>
-        <div class="tab" onclick="switchTab('backtest',this)">回测配置</div>
-        <div class="tab" id="adminTab" style="display:none;" onclick="switchTab('admin',this)">管理</div>
       </div>
       <div id="tab-indicators"><div style="color:var(--text-dim);text-align:center;padding:15px;">等待分析</div></div>
       <div id="tab-fibonacci" class="hidden"><div style="color:var(--text-dim);text-align:center;padding:15px;">等待分析</div></div>
-      <div id="tab-backtest" class="hidden">
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">回测参数配置</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-          <div><label style="font-size:10px;color:var(--text-dim);">初始资金</label><input type="number" id="btCapital" value="100000" step="10000" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;font-size:12px;"></div>
-          <div><label style="font-size:10px;color:var(--text-dim);">回测天数</label><input type="number" id="btDays" value="300" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;font-size:12px;"></div>
-          <div><label style="font-size:10px;color:var(--text-dim);">单笔风险%</label><input type="number" id="btRisk" value="2" step="0.5" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;font-size:12px;"></div>
-          <div><label style="font-size:10px;color:var(--text-dim);">最大仓位%</label><input type="number" id="btMaxPos" value="70" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;font-size:12px;"></div>
-          <div><label style="font-size:10px;color:var(--text-dim);">手续费‰</label><input type="number" id="btCommission" value="3" step="0.5" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;font-size:12px;"></div>
-          <div><label style="font-size:10px;color:var(--text-dim);">预热期</label><input type="number" id="btWarmup" value="60" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px;font-size:12px;"></div>
-        </div>
-        <button class="btn btn-orange btn-sm" style="width:100%;margin-top:8px;" onclick="runBacktest()">📊 执行回测</button>
-        <div id="btResultSummary" style="margin-top:8px;font-size:11px;"></div>
-      </div>
-
-      <!-- 管理后台（仅管理员可见） -->
-      <div id="tab-admin" class="hidden">
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">用户管理 · EDM 群发 · 客服工单 · SMTP 配置</div>
-
-        <!-- 统计 -->
-        <div class="bt-stats" id="adminStats" style="grid-template-columns:repeat(5,1fr);">
-          <div class="bt-stat"><div class="label">注册用户</div><div class="value" id="stTotal">-</div></div>
-          <div class="bt-stat"><div class="label">已验证</div><div class="value" id="stVerified">-</div></div>
-          <div class="bt-stat"><div class="label">近7天</div><div class="value" id="st7">-</div></div>
-          <div class="bt-stat"><div class="label">近30天</div><div class="value" id="st30">-</div></div>
-          <div class="bt-stat"><div class="label">未结工单</div><div class="value" id="stTickets">-</div></div>
-        </div>
-
-        <!-- SMTP 配置 -->
-        <div class="card" style="margin-bottom:10px;">
-          <div class="card-title">SMTP 发信配置 <span id="smtpState" style="font-size:10px;color:var(--text-dim);"></span></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-            <input id="smtpHost" placeholder="SMTP_HOST 如 smtp.qq.com" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
-            <input id="smtpPort" placeholder="端口 465" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
-            <input id="smtpUser" placeholder="登录账号/邮箱" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
-            <input id="smtpPass" type="password" placeholder="授权码（非登录密码）" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
-            <input id="smtpFrom" placeholder="发件人（留空=同账号）" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
-            <input id="smtpTls" placeholder="TLS true/false" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
-          </div>
-          <button class="btn btn-sm" style="margin-top:6px;width:100%;" onclick="saveSmtp()">保存并发送测试邮件</button>
-          <div id="smtpMsg" style="font-size:11px;margin-top:6px;min-height:14px;color:var(--orange);"></div>
-        </div>
-
-        <!-- EDM 群发 -->
-        <div class="card" style="margin-bottom:10px;">
-          <div class="card-title">群发邮件（EDM）</div>
-          <input id="edmSubject" placeholder="邮件主题（如：新功能上线通知）" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;margin-bottom:6px;">
-          <textarea id="edmBody" placeholder="正文内容…" style="width:100%;height:70px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;margin-bottom:6px;resize:vertical;"></textarea>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <select id="edmScope" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
-              <option value="all">全部注册用户</option>
-              <option value="verified">仅已验证用户</option>
-            </select>
-            <button class="btn btn-green btn-sm" style="flex:1;" onclick="sendEdm()">发送群发</button>
-          </div>
-          <div id="edmMsg" style="font-size:11px;margin-top:6px;min-height:14px;color:var(--orange);"></div>
-        </div>
-
-        <!-- 用户列表 -->
-        <div class="card" style="margin-bottom:10px;">
-          <div class="card-title">注册用户</div>
-          <div id="adminUsers" style="font-size:12px;"></div>
-        </div>
-
-        <!-- 工单 -->
-        <div class="card">
-          <div class="card-title">客服工单</div>
-          <div id="adminTickets" style="font-size:12px;"></div>
-        </div>
-      </div>
     </div>
 
     <div class="footer-note">仅供参考 · 不构成投资建议</div>
@@ -3185,7 +3114,7 @@ function switchTab(name, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   if (el) el.classList.add('active');
   // 只切换右侧面板内容，绝不能匹配主导航 tabWatchlist / tabAnalysis
-  const SIDE_PANELS = ['indicators', 'fibonacci', 'backtest', 'admin'];
+  const SIDE_PANELS = ['indicators', 'fibonacci'];
   SIDE_PANELS.forEach(function (n) {
     const pane = document.getElementById('tab-' + n);
     if (pane) pane.classList.toggle('hidden', n !== name);
@@ -6329,31 +6258,26 @@ function clearBacktestUI(statusText) {
 }
 
 async function runBacktest() {
-  // 先清空上次结果，避免换代码/改参数后仍显示旧数据
-  const _btDays0 = parseInt((document.getElementById('btDays') || {}).value) || 300;
-  const _btEta0 = _formatEtaSeconds(_backtestEtaSec(_btDays0));
+  // 回测配置面板已移除；保留工具栏入口，使用固定、透明的默认参数。
+  const days = 300;
+  const risk = 0.02;
+  const maxPosDefault = 0.70;
+  const commission = 0.0003;
+  const warmup = 60;
+  const _btEta0 = _formatEtaSeconds(_backtestEtaSec(days));
   clearBacktestUI('回测中… ' + _btEta0);
   const symbol = currentSymbol || '';
-  // 优先用工具栏资金/建仓价/持仓；回测配置 Tab 可覆盖
   const capitalToolbar = parseFloat(document.getElementById('capital') && document.getElementById('capital').value);
-  const capitalTab = parseFloat(document.getElementById('btCapital') && document.getElementById('btCapital').value);
-  const capital = (!isNaN(capitalToolbar) && capitalToolbar > 0) ? capitalToolbar : (capitalTab || 100000);
+  const capital = (!isNaN(capitalToolbar) && capitalToolbar > 0) ? capitalToolbar : 100000;
   const entryEl = document.getElementById('entryPrice');
   const entryPrice = entryEl && entryEl.value !== '' ? parseFloat(entryEl.value) : null;
   const posEl = document.getElementById('position');
   // 工具栏「持仓%」：既作起始仓位，也作最大仓位上限（100% = 满仓回测）
   let posPct = posEl ? (parseFloat(posEl.value) || 0) / 100 : 0;
   if (posPct > 1) posPct = 1;
-  const days = parseInt(document.getElementById('btDays').value) || 300;
-  const risk = parseFloat(document.getElementById('btRisk').value) / 100 || 0.02;
-  const maxPosTab = parseFloat(document.getElementById('btMaxPos') && document.getElementById('btMaxPos').value) / 100 || 0.7;
-  const maxPos = posPct > 0 ? Math.max(posPct, 0.05) : (maxPosTab || 0.7);
+  const maxPos = posPct > 0 ? Math.max(posPct, 0.05) : maxPosDefault;
   const initialPos = posPct;
-  const commission = parseFloat(document.getElementById('btCommission').value) / 1000 || 0.0003;
-  const warmup = parseInt(document.getElementById('btWarmup').value) || 60;
-
-  const _btDays = parseInt((document.getElementById('btDays') || {}).value) || 300;
-  const _btEta = _formatEtaSeconds(_backtestEtaSec(_btDays));
+  const _btEta = _formatEtaSeconds(_backtestEtaSec(days));
   document.getElementById('chartMeta').textContent = '回测中… ' + _btEta;
   switchView('backtest');
 
