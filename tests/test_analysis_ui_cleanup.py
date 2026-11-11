@@ -74,8 +74,22 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
     assert "loadFibSignalHistory();" in html
     assert "const eventDate = String(fl.signal_date || dataDate || '').slice(0, 10);" in html
     assert "const dataDate = String(item.created_at || '').slice(0, 10);" in html
-    assert "Fib ${esc(ev.level)}" in html
+    assert 'class="fib-history-head"' in html
     assert "记录于" not in html
     assert "旧记录未保存信号发生日" not in html
     assert "仅供参考 · 不构成投资建议" not in html
     assert "刷新</button>" not in html[html.index("历史强信号"):html.index("document.getElementById('chartMeta')")]
+
+
+def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    assert 'grid-template-columns:minmax(0,1.5fr) 54px minmax(64px,.8fr) 88px' in html
+    assert 'fib-history-head span:last-child,.fib-history-date { text-align:right; }' in html
+    assert '★ ${esc(ev.signal)}' in html
+    assert 'class="fib-history-date"' in html
+    assert 'class="fib-star">★确认</span>' in html
+    assert 'fl.reacted' in html
+    assert 'fl.tested' in html
+    assert 'fl.reaction_signal' in html
+    assert 'fib-history-head,.fib-history-row' in html
+    assert '@media (max-width:420px)' in html
