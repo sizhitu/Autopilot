@@ -457,6 +457,17 @@ def append_position_advice(symbol: str, row: dict) -> None:
         "reason": row.get("reason") or "",
         "source": row.get("source") or "",
         "as_of": row.get("as_of") or day,
+        "short_interest": row.get("short_interest"),
+        "float_shares": row.get("float_shares"),
+        "short_pct_float": row.get("short_pct_float"),
+        "days_to_cover": row.get("days_to_cover"),
+        "price": row.get("price") or row.get("close"),
+        "volume": row.get("volume"),
+        "avg_volume_20": row.get("avg_volume_20"),
+        "history": row.get("history"),
+        "provider": row.get("provider"),
+        "listing_exchange": row.get("listing_exchange"),
+        "quality_status": row.get("quality_status") or "valid",
     }
     existing.insert(0, new_row)
     existing = existing[:200]
@@ -469,6 +480,7 @@ def append_position_advice(symbol: str, row: dict) -> None:
         import supabase_client
         if supabase_client.using_supabase():
             client = supabase_client.get_service_client()
-            client.table("position_advice_logs").upsert(new_row, on_conflict="symbol,bar_date").execute()
+            db_row = {k: v for k, v in new_row.items() if k != "symbol" or v}
+            client.table("position_advice_logs").upsert(db_row, on_conflict="symbol,bar_date").execute()
     except Exception:
         pass
