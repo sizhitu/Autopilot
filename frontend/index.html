@@ -5069,10 +5069,32 @@ function _watchRowsSig(stocks) {
   }).join('|');
 }
 
+// 每次成功取得业务 API 响应都会递增；防止较慢的快照请求覆盖新鲜实时数据。
+let _watchlistLiveRevision = 0;
+
 async function _loadWatchlistBody(forceRefresh) {
   const loading = document.getElementById('watchlistLoading');
   const body = document.getElementById('watchlistBody');
   const hasRows = _lastWatchRows && _lastWatchRows.length;
+  // 首屏先显示本机上次成功数据，不等 Render 冷启动或本次业务 API 返回。
+  // 若本机没有缓存，则并行读取静态/冷备快照；实时 API 一旦成功，快照结果自动作废。
+  if (!hasRows) {
+    const revisionAtStart = _watchlistLiveRevision;
+    try {
+      const localSnapshot = loadWatchlistLocalCache();
+      if (localSnapshot && localSnapshot.stocks && localSnapshot.stocks.length) {
+        applyWatchlistSnapshot(localSnapshot);
+      }
+    } catch (eCacheFirst) {}
+    fetchWatchlistSnapshot().then(function (snapshot) {
+      if (_watchlistLiveRevision !== revisionAtStart) return;
+      const current = _lastWatchRows || [];
+      const hasUsableCurrent = current.some(function (s) {
+        return s && s.price != null && s.price !== '-' && s.price !== '';
+      });
+      if (!hasUsableCurrent) applyWatchlistSnapshot(snapshot);
+    }).catch(function () {});
+  }
   // 手动刷新：清会话「最新锁」，允许接口新日期写回（避免前端锁死旧 bar_date）
   if (forceRefresh) {
     try {
@@ -5130,6 +5152,7 @@ async function _loadWatchlistBody(forceRefresh) {
           throw new Error('429: ' + ((j && j.detail) || '请求过于频繁，请稍后再试'));
         }
         const json = await res.json();
+        _watchlistLiveRevision += 1;
         let stocks = (json && json.stocks) ? json.stocks : [];
         // 接口空结果：保留上一帧完整数据，避免「有数→全空」闪一下
         const prevGood = (_lastWatchRows || []).filter(function (s) {
@@ -5218,6 +5241,7 @@ async function _loadWatchlistBody(forceRefresh) {
     }
     const json = await res.json();
     if (!json.success) throw new Error(json.detail || '获取失败');
+    _watchlistLiveRevision += 1;
     // 成功取得业务 API 数据后立即退出旧快照状态，分批计算期间也不保留快照标记。
     markBackendUp();
     leaveSnapshotMode();
