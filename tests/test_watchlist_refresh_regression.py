@@ -156,3 +156,30 @@ def test_successful_watchlist_api_response_exits_snapshot_mode_immediately():
     leave = block.index("leaveSnapshotMode();", mark_up)
     computing = block.index("if (json.computing)", leave)
     assert response < success < mark_up < leave < computing
+
+
+def test_watchlist_shows_local_cache_before_waiting_for_live_api():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+
+    local_cache = body.index("const localSnapshot = loadWatchlistLocalCache();")
+    apply_cache = body.index("applyWatchlistSnapshot(localSnapshot);", local_cache)
+    live_request = body.index("apiWithTimeout('/api/watchlist'", apply_cache)
+    assert local_cache < apply_cache < live_request
+    assert "fetchWatchlistSnapshot().then(function (snapshot)" in body
+    assert "_watchlistLiveRevision !== revisionAtStart" in body
+    assert "_watchlistLiveRevision += 1;" in body
+
+
+def test_late_snapshot_cannot_overwrite_successful_live_watchlist_response():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+
+    fallback = body.index("fetchWatchlistSnapshot().then(function (snapshot)")
+    revision_guard = body.index("_watchlistLiveRevision !== revisionAtStart", fallback)
+    live_success = body.index("_watchlistLiveRevision += 1;", body.index("apiWithTimeout('/api/watchlist'"))
+    assert fallback < revision_guard < live_success
