@@ -64,3 +64,16 @@ def test_analysis_history_archive_reads_all_pages():
     assert "start += page_size" in source
     assert '.table("analysis_history")' in source
     assert '"result_json"' in source
+
+
+def test_fibonacci_signal_history_records_actual_candle_date_and_displays_timeline():
+    strategy = (ROOT / "trading_tool/strategy_engine.py").read_text(encoding="utf-8")
+    web_app = (ROOT / "trading_tool/web_app.py").read_text(encoding="utf-8")
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+
+    assert 'signal_date: Optional[str] = None' in strategy
+    assert 'raw_signal_date = last_near["date"] if "date" in df.columns else last_near.name' in strategy
+    assert '"signal_date": getattr(fl, "signal_date", None)' in web_app
+    assert "async function loadFibSignalHistory()" in html
+    assert "旧记录未保存信号发生日" in html
+    assert "记录于" in html
