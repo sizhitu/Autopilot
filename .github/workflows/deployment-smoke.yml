@@ -1,4 +1,5 @@
 name: Deployment smoke diagnostics
+# Triggered by changes to live smoke tests and deployment configuration.
 
 on:
   push:
