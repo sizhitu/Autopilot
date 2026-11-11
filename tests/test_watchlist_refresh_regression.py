@@ -98,3 +98,12 @@ def test_a_share_crowding_is_computed_in_live_status_path():
     assert "status.crowding_pct = round(pct, 1)" in body
     assert 'status.crowding_source = "成交量历史分位"' in body
     assert "_fetch_volume_only" not in body
+
+
+def test_a_share_crowding_dashboard_value_has_no_out_of_100_suffix():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("const pctText = hasPct")
+    end = source.index("if (hasShortPct || hasDtc)", start)
+    body = source[start:end]
+    assert "s.market === '美股' ? '/100' : ''" in body
+    assert "Number(pct).toFixed(1) + '/100'" not in body
