@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_analysis_panel_only_exposes_indicators_and_fibonacci():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     start = html.index("<!-- 分析结果面板")
-    end = html.index('<div class="footer-note">', start)
+    end = html.index("<!-- /分析模式视图 -->", start)
     panel = html[start:end]
 
     assert 'switchTab(\'indicators\'' in panel
@@ -75,4 +75,5 @@ def test_fibonacci_panel_shows_only_levels_and_preferred_update_date():
     assert "loadFibSignalHistory" not in html
     assert "旧记录未保存信号发生日" not in html
     assert "记录于" not in html
+    assert '<div class="footer-note">仅供参考 · 不构成投资建议</div>' not in html
     assert "reaction_signal" not in html[html.index("let fh = '';"):html.index("document.getElementById('chartMeta')")]
