@@ -517,6 +517,100 @@ class FujimotoStrategy:
 
         return fib_levels, swing_high, swing_low, target_prices
 
+    def _calc_fibonacci_bearish(self, df: pd.DataFrame, lookback: int = 60) -> tuple:
+        """
+        下跌侧斐波那契反弹受阻参考信号。
+        与上涨侧 _calc_fibonacci 使用相同的回看窗口、Fib 比例、1%触及区间、
+        连续触及 episode 去重、首次确认、1.2 倍量能阈值和真实交易日期规则。
+        独立返回，不参与现有三层决策，避免改变任何既有买卖门槛。
+        返回: (fib_levels列表, swing_high, swing_low, target_prices)
+        """
+        recent = df.tail(lookback) if len(df) >= lookback else df
+        swing_high = recent['high'].max()
+        swing_low = recent['low'].min()
+        diff = swing_high - swing_low
+
+        if diff <= 0:
+            return [], swing_high, swing_low, []
+
+        levels_config = [
+            (0.786, "深度反弹"),
+            (0.618, "黄金反弹"),
+            (0.500, "中等反弹"),
+            (0.382, "浅反弹"),
+        ]
+        close = df['close'].iloc[-1]
+        fib_levels = []
+        for level, label in levels_config:
+            # 下跌波段从高点跌至低点，反弹阻力位从低点向上计算。
+            price = swing_low + diff * level
+            tested = close * 0.98 <= price <= swing_high * 1.005
+
+            reacted = False
+            reaction_signal = ""
+            signal_date = None
+            if tested:
+                # 对称于上涨侧：用 K 线高点判断触及阻力区。
+                near_mask = ((df['high'] <= price * 1.01) &
+                             (df['high'] >= price * 0.99)).to_numpy()
+                near_positions = np.flatnonzero(near_mask)
+                episodes = []
+                for pos in near_positions:
+                    if not episodes or pos > episodes[-1][-1] + 1:
+                        episodes.append([int(pos)])
+                    else:
+                        episodes[-1].append(int(pos))
+
+                # 每轮连续触及只保留首次确认；最终展示最近一轮已有的确认事件。
+                for episode in episodes:
+                    episode_confirmation = None
+                    for idx in episode:
+                        if idx <= 0:
+                            continue
+                        candle = df.iloc[idx]
+                        prev = df.iloc[idx - 1]
+                        body = candle['close'] - candle['open']
+                        prev_body = prev['close'] - prev['open']
+
+                        # 阴线反包：当前实体覆盖前一根阳线实体。
+                        if (body < 0 and prev_body > 0 and
+                                candle['close'] < prev['open'] and
+                                candle['open'] > prev['close']):
+                            episode_confirmation = (idx, "阴线反包受阻")
+                            break
+                        # 与上涨侧保持一致：同一轮触及中首次出现量能较前一日放大20%。
+                        if df['volume'].iloc[idx] > df['volume'].iloc[idx - 1] * 1.2:
+                            episode_confirmation = (idx, "放量受阻")
+                            break
+
+                    if episode_confirmation:
+                        idx, reaction_signal = episode_confirmation
+                        reacted = True
+                        try:
+                            raw_signal_date = (
+                                df.iloc[idx]["date"] if "date" in df.columns
+                                else df.index[idx]
+                            )
+                            if isinstance(raw_signal_date, (int, float, np.integer, np.floating)):
+                                raise ValueError("numeric row index is not a trading date")
+                            parsed_signal_date = pd.to_datetime(raw_signal_date, errors="coerce")
+                            signal_date = (
+                                parsed_signal_date.strftime("%Y-%m-%d")
+                                if not pd.isna(parsed_signal_date) else None
+                            )
+                        except Exception:
+                            signal_date = None
+
+            fib_levels.append(FibLevel(
+                level=level, price=price, tested=tested,
+                reacted=reacted, reaction_signal=reaction_signal,
+                signal_date=signal_date
+            ))
+
+        # 下跌侧反弹阻力确认仅作参考；不改变原有目标价和交易决策。
+        target_prices = [swing_low - diff * (ext - 1) for ext in (1.272, 1.618)]
+        return fib_levels, swing_high, swing_low, target_prices
+
     def _find_fib_buy_point(self, fib_levels: list, close: float) -> Optional[FibLevel]:
         """找到有市场反应确认的斐波那契买点"""
         # 优先找有反应确认的
@@ -614,6 +708,7 @@ class FujimotoStrategy:
 
         # === 工具层 ===
         fib_result = self._calc_fibonacci(df)
+        fib_bearish_levels, _, _, _ = self._calc_fibonacci_bearish(df)
         if len(fib_result) == 4:
             fib_levels, swing_high, swing_low, target_prices = fib_result
         else:
@@ -918,6 +1013,7 @@ class FujimotoStrategy:
             "swing_high": swing_high,
             "swing_low": swing_low,
             "fib_levels": fib_levels,
+            "fib_bearish_levels": fib_bearish_levels,
             "target_prices": target_prices,
             "mas": {p: v for p, v in mas.items() if v is not None},
             "vwma": vwma,
