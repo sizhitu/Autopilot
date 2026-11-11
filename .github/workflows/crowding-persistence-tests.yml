@@ -1,0 +1,32 @@
+name: Crowding persistence regression tests
+
+on:
+  pull_request:
+    paths:
+      - "trading_tool/cache.py"
+      - "trading_tool/watchlist.py"
+      - "trading_tool/web_app.py"
+      - "supabase/migrations/0008_crowding_persistence.sql"
+      - "scripts/archive/archive_position_advice.py"
+      - "tests/test_crowding.py"
+      - ".github/workflows/crowding-persistence-tests.yml"
+
+jobs:
+  crowding-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r trading_tool/requirements.txt pytest
+      - name: Compile changed Python modules
+        run: |
+          python -m py_compile trading_tool/cache.py trading_tool/watchlist.py trading_tool/web_app.py scripts/archive/archive_position_advice.py
+      - name: Run persistence and fallback regression tests
+        run: |
+          PYTHONPATH=trading_tool python -m pytest tests/test_crowding.py -q -k "watchlist_restores_persisted_crowding or position_advice_persists_raw_short_metrics"
