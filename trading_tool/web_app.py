@@ -3513,6 +3513,15 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                 "provider": metrics.get("provider"),
                 "listing_exchange": metrics.get("listing_exchange"),
                 "as_of": metrics.get("as_of") or snapshot_date,
+                "short_interest": metrics.get("short_interest"),
+                "float_shares": metrics.get("float_shares"),
+                "short_pct_float": metrics.get("short_pct_float"),
+                "days_to_cover": metrics.get("days_to_cover"),
+                "price": metrics.get("close"),
+                "volume": metrics.get("volume"),
+                "avg_volume_20": metrics.get("avg_volume_20"),
+                "history": metrics.get("volume_history") or (metrics.get("short_behavior") or {}).get("history"),
+                "quality_status": "partial" if metrics.get("metric_type") == "short_interest_incomplete" else "valid",
             }
             try:
                 _cache.append_position_advice(sym, row)
@@ -3520,6 +3529,35 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                 pass
         import cache as _cache
         timeline = _cache.get_position_advice(sym) or []
+        # 本次外部数据源不可用/指标缺失时，恢复最后一份有效持久化快照。
+        # 明确标记为历史回退，绝不把旧数据伪装成实时数据。
+        if not metrics or not any(metrics.get(k) is not None for k in ("percentile", "score", "days_to_cover", "short_pct_float")):
+            saved = next((r for r in timeline if isinstance(r, dict) and
+                          (r.get("percentile") is not None or r.get("score") is not None or
+                           r.get("days_to_cover") is not None or r.get("short_pct_float") is not None)), None)
+            if saved:
+                metrics = {
+                    "percentile": saved.get("percentile"),
+                    "score": saved.get("score"),
+                    "metric_type": saved.get("metric_type") or "persisted_snapshot",
+                    "level": saved.get("level") or "",
+                    "speed": saved.get("speed") or "",
+                    "divergence": saved.get("divergence") or "",
+                    "advice": saved.get("advice") or "",
+                    "reason": saved.get("reason") or "",
+                    "source": saved.get("source") or "",
+                    "short_interest": saved.get("short_interest"),
+                    "float_shares": saved.get("float_shares"),
+                    "short_pct_float": saved.get("short_pct_float"),
+                    "days_to_cover": saved.get("days_to_cover"),
+                    "provider": saved.get("provider"),
+                    "listing_exchange": saved.get("listing_exchange"),
+                    "as_of": saved.get("as_of") or saved.get("bar_date"),
+                    "volume_history": saved.get("history") if saved.get("metric_type") == "volume_percentile" else None,
+                    "data_status": "stale_fallback",
+                    "is_stale": True,
+                    "stale_since": saved.get("bar_date"),
+                }
         return {"success": True, "symbol": sym, "current": metrics, "timeline": timeline[:60]}
     except Exception as e:
         return {"success": False, "advice": None, "timeline": [], "error": str(e)[:120]}
