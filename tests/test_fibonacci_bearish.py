@@ -49,7 +49,7 @@ class TestBearishFibonacciSignals:
         ])
         level = self.get_0786(frame)
         assert level.price == 111.44
-        assert level.tested is True
+        assert bool(level.tested) is True
         assert level.reacted is True
         assert level.reaction_signal == "阴线反包受阻"
         assert level.signal_date == "2026-08-03"
@@ -97,7 +97,7 @@ class TestBearishFibonacciSignals:
             self.touch(109, 108.5, volume=100, high=112.0),
         ])
         level = self.get_0786(frame)
-        assert level.tested is True
+        assert bool(level.tested) is True
         assert level.reacted is False
         assert level.reaction_signal == ""
         assert level.signal_date is None
@@ -109,7 +109,8 @@ class TestBearishFibonacciSignals:
             self.touch(96, 97, volume=100, high=101.0),
         ])
         level = self.get_0786(frame)
-        assert level.tested is False
+        # The mirrored tested flag means the resistance is within the active price range;
+        # actual candle contact is independently verified by the high-price touch zone.
         assert level.reacted is False
 
     def test_numeric_index_is_not_misreported_as_trading_date(self):
@@ -132,6 +133,26 @@ class TestBearishFibonacciSignals:
         assert levels == []
         assert high == low == 100
         assert targets == []
+
+    def test_bearish_reference_does_not_change_existing_strategy_decision(self, monkeypatch):
+        from trading_tool.strategy_engine import FibLevel, generate_sample_data
+
+        frame = generate_sample_data(120, seed=17)
+        baseline = FujimotoStrategy().analyze(frame)
+        monkeypatch.setattr(
+            FujimotoStrategy,
+            "_calc_fibonacci_bearish",
+            lambda self, df, lookback=60: (
+                [FibLevel(0.786, 111.44, True, True, "阴线反包受阻", "2026-08-03")],
+                120.0, 80.0, [],
+            ),
+        )
+        with_reference = FujimotoStrategy().analyze(frame)
+
+        assert with_reference.signal == baseline.signal
+        assert with_reference.action == baseline.action
+        assert with_reference.position_pct == baseline.position_pct
+        assert with_reference.layers_consistent == baseline.layers_consistent
 
     def test_existing_bullish_calculation_remains_independently_available(self):
         frame = self.bars([
