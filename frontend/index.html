@@ -6120,10 +6120,11 @@ async function loadFibSignalHistory() {
       let record = item.result_json || {};
       if (typeof record === 'string') { try { record = JSON.parse(record); } catch (e) { record = {}; } }
       const levels = record && record.data && Array.isArray(record.data.fib_levels) ? record.data.fib_levels : [];
-      const dataDate = String(item.created_at || '').slice(0, 10);
       for (const fl of levels) {
         if (!fl || !fl.reacted || !fl.reaction_signal) continue;
-        const eventDate = String(fl.signal_date || dataDate || '').slice(0, 10);
+        // 只把真实 K 线交易日作为信号日期；分析记录保存日不是信号发生日。
+        const eventDate = String(fl.signal_date || '').slice(0, 10);
+        if (!eventDate) continue; // 旧记录缺少 signal_date，不能用 created_at 伪造事件日期
         const key = [item.symbol || currentSymbol, fl.level, eventDate, fl.reaction_signal].join('|');
         const prior = unique.get(key);
         if (!prior || String(item.created_at || '') < prior.detectedAt) {
@@ -6135,7 +6136,7 @@ async function loadFibSignalHistory() {
       }
     }
     const events = Array.from(unique.values()).sort((a, b) => b.date.localeCompare(a.date));
-    if (!events.length) { box.textContent = '暂无已记录的斐波那契强信号'; return; }
+    if (!events.length) { box.textContent = '暂无可确认交易日期的历史强信号'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     box.innerHTML = `<div class="fib-history-head"><span>信号</span><span>Fib</span><span>价格</span><span>日期</span></div>`
       + events.slice(0, 30).map(ev =>
