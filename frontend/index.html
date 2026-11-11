@@ -5163,49 +5163,17 @@ async function _loadWatchlistBody(forceRefresh) {
       try { showToast('自选较多，继续拉取实时行情…', 'info'); } catch (eT2) {}
     }
 
-    // Cloudflare 静态前端可先探测 Render：不可用则直接走日更快照，不空等 API
-    try {
-      const alive = await probeBackendAlive(!!forceRefresh);
-      if (alive) {
-        try { leaveSnapshotMode(); } catch (eLv) {}
-      }
-      if (!alive) {
-        try {
-          const snap = await fetchWatchlistSnapshot();
-          applyWatchlistSnapshot(snap);
-          try { showToast('后端暂不可用，已加载收盘快照', 'info'); } catch (eT) {}
-          return;
-        } catch (eSnap) {
-          if (!(_lastWatchRows && _lastWatchRows.length)) {
-            body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:24px;line-height:1.7;">'
-              + '后端服务暂时不可用（可能超额或维护中）<br>'
-              + '<span style="font-size:12px;">收盘快照尚未生成时无法展示列表。请稍后重试或待 GitHub Action 日更完成。</span></td></tr>';
-            setWatchUpdatedLabel({ computing: false, updated_at: '' });
-            try { enterSnapshotMode(''); } catch (eB) {}
-          } else {
-            try { enterSnapshotMode(_lastWatchUpdatedAt || ''); } catch (eB2) {}
-            showToast('后端不可用，仍显示本地已有数据', 'info');
-          }
-          return;
-        }
-      }
-    } catch (eProbe) { /* 探测异常则继续走原 API 逻辑 */ }
+    // 不用 /api/health 的单次探测结果决定数据来源。
+    // Render 冷启动/跨境网络下 health 可能超时，但业务 API 随后仍可能成功；
+    // 直接请求业务接口，只有业务请求本身确认失败才进入快照兜底。
 
     // 免费 / 未登录：固定两只真实行情（服务端缓存），可点进分析
     if (isDemoMode()) {
       try {
-        let hardQ = '';
         if (forceRefresh) {
-          const now = Date.now();
-          if (now - _manualRefreshTs > 120000) _manualRefreshStreak = 0;
-          _manualRefreshStreak += 1;
-          _manualRefreshTs = now;
-          hardQ = (_manualRefreshStreak >= 2) ? '&hard=1' : '';
-          try {
-            showToast(hardQ ? '二次刷新：强制清除非最新代码缓存…' : '正在拉取最新收盘价…', 'ok');
-          } catch (e) {}
+          try { showToast('正在拉取最新收盘价…', 'ok'); } catch (e) {}
         }
-        const res = await apiWithTimeout('/api/watchlist/free-preview' + (forceRefresh ? ('?refresh=1' + hardQ) : ''), {}, 20000);
+        const res = await apiWithTimeout('/api/watchlist/free-preview' + (forceRefresh ? '?refresh=1' : ''), {}, 20000);
         if (res.status === 429) {
           const j = await res.json().catch(function () { return {}; });
           throw new Error((j && j.detail) || '请求过于频繁，请稍后再试');
@@ -5273,6 +5241,11 @@ async function _loadWatchlistBody(forceRefresh) {
         } catch (e) {}
         return;
       } catch (e) {
+        if (_toastRateLimit(e && (e.message || e))) {
+          setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt || '' });
+          loading.classList.add('hidden');
+          return;
+        }
         // 失败时保留上一帧完整数据，避免整页刷新把指标冲成空
         let stocks = (_lastWatchRows && _lastWatchRows.length) ? _lastWatchRows.slice() : getDemoWatchlistRows();
         watchNotes = {};
@@ -5284,18 +5257,10 @@ async function _loadWatchlistBody(forceRefresh) {
       }
     }
     setDemoBanner(false);
-    let hardQ2 = '';
     if (forceRefresh) {
-      const now2 = Date.now();
-      if (now2 - _manualRefreshTs > 120000) _manualRefreshStreak = 0;
-      _manualRefreshStreak += 1;
-      _manualRefreshTs = now2;
-      hardQ2 = (_manualRefreshStreak >= 2) ? '&hard=1' : '';
-      try {
-        showToast(hardQ2 ? '二次刷新：强制清除非最新代码缓存并重拉…' : '正在更新自选行情…', 'ok');
-      } catch (e) {}
+      try { showToast('正在更新自选行情…', 'ok'); } catch (e) {}
     }
-    const res = await apiWithTimeout('/api/watchlist' + (forceRefresh ? ('?refresh=1' + hardQ2) : ''), {}, 45000);
+    const res = await apiWithTimeout('/api/watchlist' + (forceRefresh ? '?refresh=1' : ''), {}, 45000);
     if (res.status === 429) {
       const j = await res.json().catch(function () { return {}; });
       throw new Error((j && j.detail) || '请求过于频繁，请稍后再试');
@@ -5477,7 +5442,17 @@ async function _loadWatchlistBody(forceRefresh) {
       });
     } catch (e) {}
   } catch(e) {
-    // 在线 API 失败：尝试静态日更快照（不依赖 Render 进程内缓存）
+    // 限流是业务层明确拒绝，不代表后端不可用；保留当前数据，绝不降级成快照。
+    if (_toastRateLimit(e && (e.message || e))) {
+      setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt || '' });
+      if (_lastWatchRows && _lastWatchRows.length) {
+        const el = document.getElementById('watchlistUpdated');
+        if (el && _lastWatchUpdatedAt) el.textContent = '更新于 ' + _lastWatchUpdatedAt + ' · 请求受限';
+      }
+      _watchWasComputing = false;
+      return;
+    }
+    // 在线 API 确实失败（网络/超时/服务端错误）时，才尝试静态日更快照。
     let usedSnap = false;
     try {
       const snap = await fetchWatchlistSnapshot();
