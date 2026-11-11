@@ -65,6 +65,7 @@ class FibLevel:
     tested: bool = False       # 价格是否触及
     reacted: bool = False      # 是否有市场反应确认
     reaction_signal: str = ""  # 反应类型描述
+    signal_date: Optional[str] = None  # 触发反应的实际交易日
 
 
 @dataclass
@@ -449,11 +450,19 @@ class FujimotoStrategy:
             # 检查反应确认：该位置附近是否有阳线反包
             reacted = False
             reaction_signal = ""
+            signal_date = None
             if tested:
                 near_candles = df[(df['low'] <= price * 1.01) &
                                   (df['low'] >= price * 0.99)]
                 if len(near_candles) > 0:
                     last_near = near_candles.iloc[-1]
+                    try:
+                        raw_signal_date = last_near["date"] if "date" in df.columns else last_near.name
+                        parsed_signal_date = pd.to_datetime(raw_signal_date, errors="coerce")
+                        if not pd.isna(parsed_signal_date):
+                            signal_date = parsed_signal_date.strftime("%Y-%m-%d")
+                    except Exception:
+                        signal_date = None
                     idx = near_near_idx = df.index.get_loc(last_near.name)
                     if idx > 0:
                         prev = df.iloc[idx - 1]
@@ -472,7 +481,8 @@ class FujimotoStrategy:
 
             fib_levels.append(FibLevel(
                 level=level, price=price, tested=tested,
-                reacted=reacted, reaction_signal=reaction_signal
+                reacted=reacted, reaction_signal=reaction_signal,
+                signal_date=signal_date
             ))
 
         # 扩展位作为目标
