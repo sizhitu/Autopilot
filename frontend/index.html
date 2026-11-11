@@ -5744,7 +5744,10 @@ function renderWatchlist(stocks) {
         const hasDtc = dtc != null && dtc !== '' && Number.isFinite(Number(dtc));
         if (lv || hasPct) {
           const c = lv === '极端' ? 'var(--red)' : (lv === '高' ? 'var(--orange)' : (lv === '偏高' ? 'var(--gold)' : 'var(--text-dim)'));
-          return '<span style="color:' + c + ';font-weight:600;">' + (lv || '综合指标') + '</span>' + (hasPct ? '<div style="font-size:10px;color:var(--text-dim);">' + Number(pct).toFixed(1) + '/100</div>' : '');
+          const pctText = hasPct
+            ? Number(pct).toFixed(1) + (s.market === '美股' ? '/100' : '')
+            : '';
+          return '<span style="color:' + c + ';font-weight:600;">' + (lv || '综合指标') + '</span>' + (hasPct ? '<div style="font-size:10px;color:var(--text-dim);">' + pctText + '</div>' : '');
         }
         // 复合评分缺失时直接展示可用的原始空头指标，不额外添加“单项指标”标签。
         if (hasShortPct || hasDtc) {
