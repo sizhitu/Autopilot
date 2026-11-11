@@ -3525,6 +3525,11 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                 "avg_volume_20": metrics.get("avg_volume_20"),
                 "history": metrics.get("volume_history"),
                 "short_history": metrics.get("short_history") or (metrics.get("short_behavior") or {}).get("history"),
+                "short_behavior": metrics.get("short_behavior"),
+                "published_date": metrics.get("published_date"),
+                "float_source": metrics.get("float_source"),
+                "speed_change_pct": metrics.get("speed_chg"),
+                "price_change_pct": metrics.get("price_chg"),
                 "quality_status": "partial" if metrics.get("metric_type") == "short_interest_incomplete" else "valid",
             }
             try:
@@ -3552,6 +3557,11 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                     "source": saved.get("source") or "",
                     "short_interest": saved.get("short_interest"),
                     "short_history": saved.get("short_history") or [],
+                    "short_behavior": saved.get("short_behavior") or {},
+                    "published_date": saved.get("published_date"),
+                    "float_source": saved.get("float_source"),
+                    "speed_chg": saved.get("speed_change_pct"),
+                    "price_chg": saved.get("price_change_pct"),
                     "float_shares": saved.get("float_shares"),
                     "short_pct_float": saved.get("short_pct_float"),
                     "days_to_cover": saved.get("days_to_cover"),
