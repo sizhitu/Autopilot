@@ -1729,6 +1729,16 @@ async function probeBackendAlive(force) {
 function markBackendDown() {
   _backendAliveCache = { ts: Date.now(), ok: false };
 }
+/** 快照降级前做双重探活，避免 Render 冷启动/跨境网络瞬时超时误判为宕机。 */
+async function confirmBackendUnavailable() {
+  try {
+    if (await probeBackendAlive(true)) return false;
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    return !(await probeBackendAlive(true));
+  } catch (e) {
+    return true;
+  }
+}
 function markBackendUp() {
   _backendAliveCache = { ts: Date.now(), ok: true };
   _snapshotFailStreak = 0;
@@ -5143,8 +5153,8 @@ async function _loadWatchlistBody(forceRefresh) {
   try {
     // 墙钟超时：后端仍活着则继续等现场计算，只有探活失败才切快照
     if ((Date.now() - _wlLoadStartedAt) > _wlHardLimitMs()) {
-      let aliveNow = false;
-      try { aliveNow = await probeBackendAlive(true); } catch (eAl) { aliveNow = false; }
+      let aliveNow = true;
+      try { aliveNow = !(await confirmBackendUnavailable()); } catch (eAl) { aliveNow = true; }
       if (!aliveNow) {
         try {
           const snap = await fetchWatchlistSnapshot();
@@ -5342,7 +5352,7 @@ async function _loadWatchlistBody(forceRefresh) {
         const stalled = _wlStalledPolls >= 8;
         if (hardTimeout || stalled) {
           let aliveNow = true;
-          try { aliveNow = await probeBackendAlive(true); } catch (eAl2) { aliveNow = false; }
+          try { aliveNow = !(await confirmBackendUnavailable()); } catch (eAl2) { aliveNow = true; }
           if (!aliveNow) {
             _wlPollCount = 0;
             _watchWasComputing = false;
