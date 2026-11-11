@@ -3387,6 +3387,9 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                         "advice": "",
                         "reason": si.get("source") or "Nasdaq/FINRA OTC",
                         "short_pct_float": si.get("short_pct_float"),
+                        "short_interest": si.get("short_interest"),
+                        "float_shares": si.get("float_shares"),
+                        "short_history": si.get("history") or [],
                         "days_to_cover": days,
                         "float_source": si.get("float_source"),
                         "source": si.get("source") or "Nasdaq/FINRA OTC",
@@ -3520,7 +3523,8 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                 "price": metrics.get("close"),
                 "volume": metrics.get("volume"),
                 "avg_volume_20": metrics.get("avg_volume_20"),
-                "history": metrics.get("volume_history") or (metrics.get("short_behavior") or {}).get("history"),
+                "history": metrics.get("volume_history"),
+                "short_history": metrics.get("short_history") or (metrics.get("short_behavior") or {}).get("history"),
                 "quality_status": "partial" if metrics.get("metric_type") == "short_interest_incomplete" else "valid",
             }
             try:
@@ -3547,6 +3551,7 @@ async def stock_position_advice(symbol: str = "", authorization: Optional[str] =
                     "reason": saved.get("reason") or "",
                     "source": saved.get("source") or "",
                     "short_interest": saved.get("short_interest"),
+                    "short_history": saved.get("short_history") or [],
                     "float_shares": saved.get("float_shares"),
                     "short_pct_float": saved.get("short_pct_float"),
                     "days_to_cover": saved.get("days_to_cover"),
