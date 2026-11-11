@@ -38,8 +38,51 @@ def test_cors_preflight_for_frontend_origins(origin):
 
 
 def test_frontend_is_reachable_and_points_to_expected_api():
-    response = requests.get(FRONTEND, timeout=30)
-    assert response.status_code == 200, f"frontend HTTP {response.status_code}"
+    response = requests.get(
+        FRONTEND,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+        timeout=30,
+    )
+
+    # Cloudflare 对 CI 数据中心 IP 可能返回机器人挑战页（403）。
+    # 这不等同于真实浏览器用户无法访问；标记为跳过/待浏览器验证，
+    # 绝不把挑战页算成通过，也不让它误报为应用前端故障。
+    server = response.headers.get("server", "").lower()
+    cf_ray = response.headers.get("cf-ray")
+    body_lower = response.text[:5000].lower()
+    is_cloudflare_challenge = (
+        response.status_code == 403
+        and server == "cloudflare"
+        and bool(cf_ray)
+        and any(
+            marker in body_lower
+            for marker in (
+                "just a moment",
+                "checking your browser",
+                "challenge-platform",
+                "cf-browser-verification",
+                "sorry, you have been blocked",
+            )
+        )
+    )
+    if is_cloudflare_challenge:
+        pytest.skip(
+            "Cloudflare challenged the GitHub Actions runner IP; "
+            "site availability must be confirmed from a real browser."
+        )
+
+    assert response.status_code == 200, (
+        f"frontend HTTP {response.status_code}; "
+        f"server={server!r}; cf-ray={cf_ray!r}; "
+        f"body={response.text[:300]!r}"
+    )
     html = response.text
     assert "autopilot-598c.onrender.com" in html, "前端页面未发现预期 Render API 地址"
     assert "probeBackendAlive" in html, "前端缺少后端健康探测函数"
