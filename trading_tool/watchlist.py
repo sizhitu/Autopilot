@@ -2326,7 +2326,7 @@ def _fill_crowding_if_missing(stocks: list) -> list:
             _cache.append_position_advice(code, {
                 "bar_date": row.get("bar_date") or si.get("settlement_date") or "",
                 "level": row.get("crowding_level") or "",
-                "percentile": None if is_us_row else row.get("crowding_pct"),
+                "percentile": row.get("crowding_pct") if (not is_us_row or metric_type == "volume_percentile") else None,
                 "score": si.get("composite") if is_us_row else None,
                 "metric_type": metric_type,
                 "speed": row.get("crowding_speed") or "",
