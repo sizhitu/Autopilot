@@ -456,13 +456,6 @@ class FujimotoStrategy:
                                   (df['low'] >= price * 0.99)]
                 if len(near_candles) > 0:
                     last_near = near_candles.iloc[-1]
-                    try:
-                        raw_signal_date = last_near["date"] if "date" in df.columns else last_near.name
-                        parsed_signal_date = pd.to_datetime(raw_signal_date, errors="coerce")
-                        if not pd.isna(parsed_signal_date):
-                            signal_date = parsed_signal_date.strftime("%Y-%m-%d")
-                    except Exception:
-                        signal_date = None
                     idx = near_near_idx = df.index.get_loc(last_near.name)
                     if idx > 0:
                         prev = df.iloc[idx - 1]
@@ -478,6 +471,14 @@ class FujimotoStrategy:
                         elif idx > 0 and df['volume'].iloc[idx] > df['volume'].iloc[idx-1] * 1.2:
                             reacted = True
                             reaction_signal = "放量止跌"
+                    if reacted:
+                        try:
+                            raw_signal_date = last_near["date"] if "date" in df.columns else last_near.name
+                            parsed_signal_date = pd.to_datetime(raw_signal_date, errors="coerce")
+                            if not pd.isna(parsed_signal_date):
+                                signal_date = parsed_signal_date.strftime("%Y-%m-%d")
+                        except Exception:
+                            signal_date = None
 
             fib_levels.append(FibLevel(
                 level=level, price=price, tested=tested,
