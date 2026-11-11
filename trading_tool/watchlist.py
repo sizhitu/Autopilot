@@ -2281,9 +2281,53 @@ def _hard_purge_stale_symbols(stocks_or_items) -> list:
 
 
 def _fill_crowding_if_missing(stocks: list) -> list:
-    """仅用本地缓存补齐拥挤度；网络补数由 _get_cached_short 后台单飞执行。"""
+    """仅用本地缓存补齐美股实时指标；同时持久化有效快照并在失败时恢复历史。"""
     if not stocks:
         return stocks
+
+    def _history_row(code):
+        try:
+            import cache as _cache
+            rows = _cache.get_position_advice(code) or []
+            return next((r for r in rows if isinstance(r, dict) and
+                         (r.get("percentile") is not None or r.get("score") is not None or
+                          r.get("days_to_cover") is not None or r.get("short_pct_float") is not None)), None)
+        except Exception:
+            return None
+
+    def _persist(code, row, si=None):
+        try:
+            import cache as _cache
+            si = si or {}
+            is_us_row = _is_us_crowding_symbol(code, row.get("market"))
+            metric_type = (
+                "short_composite_score" if is_us_row and si.get("composite") is not None
+                else "short_interest_incomplete" if is_us_row and (si.get("short_pct_float") is not None or si.get("days_to_cover") is not None)
+                else "volume_percentile"
+            )
+            _cache.append_position_advice(code, {
+                "bar_date": row.get("bar_date") or si.get("settlement_date") or "",
+                "level": row.get("crowding_level") or "",
+                "percentile": None if is_us_row else row.get("crowding_pct"),
+                "score": si.get("composite") if is_us_row else None,
+                "metric_type": metric_type,
+                "speed": row.get("crowding_speed") or "",
+                "reason": si.get("source") or row.get("crowding_source") or "",
+                "source": si.get("source") or row.get("crowding_source") or "",
+                "as_of": si.get("settlement_date") or row.get("bar_date") or "",
+                "short_interest": si.get("short_interest"),
+                "float_shares": si.get("float_shares"),
+                "short_pct_float": row.get("short_pct_float") if is_us_row else None,
+                "days_to_cover": row.get("days_to_cover") if is_us_row else None,
+                "history": si.get("history") if is_us_row else None,
+                "provider": si.get("provider"),
+                "listing_exchange": si.get("listing_exchange"),
+                "price": row.get("price"),
+                "quality_status": "valid" if row.get("crowding_pct") is not None or row.get("short_pct_float") is not None else "partial",
+            })
+        except Exception:
+            pass
+
     out = []
     for row in stocks:
         if not isinstance(row, dict):
@@ -2295,23 +2339,39 @@ def _fill_crowding_if_missing(stocks: list) -> list:
             out.append(s)
             continue
         is_us = _is_us_crowding_symbol(code, s.get("market"))
+        has_live = any(s.get(k) is not None for k in ("crowding_pct", "short_pct_float", "days_to_cover"))
+        if has_live:
+            _persist(code, s)
+        else:
+            saved = _history_row(code)
+            if saved:
+                s["crowding_pct"] = (
+                    round(float(saved["score"]) * 100, 1) if saved.get("score") is not None
+                    else saved.get("percentile")
+                )
+                s["crowding_level"] = saved.get("level") or ""
+                s["crowding_speed"] = saved.get("speed") or ""
+                s["short_pct_float"] = saved.get("short_pct_float")
+                s["days_to_cover"] = saved.get("days_to_cover")
+                s["crowding_source"] = (
+                    f"历史回退（截至{str(saved.get('bar_date') or saved.get('as_of') or '')[:10]}） · "
+                    f"{saved.get('source') or '已保存指标'}"
+                )
+                s["crowding_stale"] = True
+
         if not is_us:
-            # A股/港股拥挤度沿用状态计算阶段的成交量历史分位，不套用美股空头口径。
             out.append(s)
             continue
+
         source = str(s.get("crowding_source") or "")
-        # 已明确标注的成交量分位是合法替代参考，不要在每次请求时清空。
+        # 已明确标注的成交量分位或有效官方指标无需重复请求。
         if source.startswith(("成交量历史分位", "成交量活跃度", "FINRA 官方", "Nasdaq 官方")) and s.get("crowding_pct") is not None:
             out.append(s)
             continue
-        # 不把旧版 DTC 单项伪评分继续显示为复合拥挤度。
-        s.pop("crowding_pct", None)
-        s.pop("crowding_level", None)
-        s["crowding_source"] = "官方空头复合分暂缺"
         si = _get_cached_short(code)  # cache miss 时只排后台任务，不发起同步网络请求
         if si:
-            s["days_to_cover"] = si.get("days_to_cover")
-            s["short_pct_float"] = si.get("short_pct_float")
+            s["days_to_cover"] = si.get("days_to_cover") if si.get("days_to_cover") is not None else s.get("days_to_cover")
+            s["short_pct_float"] = si.get("short_pct_float") if si.get("short_pct_float") is not None else s.get("short_pct_float")
             comp = si.get("composite")
             if comp is not None:
                 s["crowding_pct"] = round(float(comp) * 100, 1)
@@ -2319,9 +2379,11 @@ def _fill_crowding_if_missing(stocks: list) -> list:
                 s["crowding_source"] = si.get("source") or "FINRA/Nasdaq 官方空头数据"
             days = si.get("days_to_cover")
             s["crowding_speed"] = (
-                f"空头占流通{si.get('short_pct_float') if si.get('short_pct_float') is not None else '--'}% · "
+                f"空头占流通{s.get('short_pct_float') if s.get('short_pct_float') is not None else '--'}% · "
                 f"回补{days if days is not None else '--'}天"
             )
+            if comp is not None or s.get("short_pct_float") is not None or days is not None:
+                _persist(code, s, si)
         out.append(s)
     return out
 
