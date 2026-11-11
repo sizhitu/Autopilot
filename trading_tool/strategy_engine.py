@@ -452,33 +452,57 @@ class FujimotoStrategy:
             reaction_signal = ""
             signal_date = None
             if tested:
-                near_candles = df[(df['low'] <= price * 1.01) &
-                                  (df['low'] >= price * 0.99)]
-                if len(near_candles) > 0:
-                    last_near = near_candles.iloc[-1]
-                    idx = near_near_idx = df.index.get_loc(last_near.name)
-                    if idx > 0:
+                # 将连续触及同一 Fib 价位的 K 线视为一次测试过程。
+                # 同一轮测试中只记录首次满足确认条件的交易日，避免每天重复
+                # 因成交量较前一日增加 20% 而反复生成同一条“放量止跌”信号。
+                near_mask = ((df['low'] <= price * 1.01) &
+                             (df['low'] >= price * 0.99)).to_numpy()
+                near_positions = np.flatnonzero(near_mask)
+                episodes = []
+                for pos in near_positions:
+                    if not episodes or pos > episodes[-1][-1] + 1:
+                        episodes.append([int(pos)])
+                    else:
+                        episodes[-1].append(int(pos))
+
+                # 若历史上有多轮触及，只保留最近一轮中首次确认的信号。
+                # 若最近一轮尚未确认，则沿用最近一轮已有确认事件，避免旧信号消失。
+                for episode in episodes:
+                    episode_confirmation = None
+                    for idx in episode:
+                        if idx <= 0:
+                            continue
+                        candle = df.iloc[idx]
                         prev = df.iloc[idx - 1]
-                        # 阳线反包：当前实体覆盖前一根
-                        body = last_near['close'] - last_near['open']
+                        body = candle['close'] - candle['open']
                         prev_body = prev['close'] - prev['open']
-                        if body > 0 and prev_body < 0 and \
-                           last_near['close'] > prev['open'] and \
-                           last_near['open'] < prev['close']:
-                            reacted = True
-                            reaction_signal = "阳线反包确认"
-                        # 下方阴线放量
-                        elif idx > 0 and df['volume'].iloc[idx] > df['volume'].iloc[idx-1] * 1.2:
-                            reacted = True
-                            reaction_signal = "放量止跌"
-                    if reacted:
+
+                        # 阳线反包：当前实体覆盖前一根阴线实体
+                        if (body > 0 and prev_body < 0 and
+                                candle['close'] > prev['open'] and
+                                candle['open'] < prev['close']):
+                            episode_confirmation = (idx, "阳线反包确认")
+                            break
+                        # 放量止跌：同一轮触及过程中首次出现量能明显放大
+                        if df['volume'].iloc[idx] > df['volume'].iloc[idx - 1] * 1.2:
+                            episode_confirmation = (idx, "放量止跌")
+                            break
+
+                    if episode_confirmation:
+                        idx, reaction_signal = episode_confirmation
+                        reacted = True
                         try:
-                            raw_signal_date = last_near["date"] if "date" in df.columns else last_near.name
+                            raw_signal_date = (
+                                df.iloc[idx]["date"] if "date" in df.columns
+                                else df.index[idx]
+                            )
                             if isinstance(raw_signal_date, (int, float, np.integer, np.floating)):
                                 raise ValueError("numeric row index is not a trading date")
                             parsed_signal_date = pd.to_datetime(raw_signal_date, errors="coerce")
-                            if not pd.isna(parsed_signal_date):
-                                signal_date = parsed_signal_date.strftime("%Y-%m-%d")
+                            signal_date = (
+                                parsed_signal_date.strftime("%Y-%m-%d")
+                                if not pd.isna(parsed_signal_date) else None
+                            )
                         except Exception:
                             signal_date = None
 

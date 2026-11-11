@@ -72,8 +72,11 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
     assert "const fibUpdatedAt = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10);" in html
     assert "历史强信号" in html
     assert "loadFibSignalHistory();" in html
-    assert "const eventDate = String(fl.signal_date || dataDate || '').slice(0, 10);" in html
-    assert "const dataDate = String(item.created_at || '').slice(0, 10);" in html
+    assert "const eventDate = String(fl.signal_date || '').slice(0, 10);" in html
+    assert "if (!eventDate) continue;" in html
+    history_loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
+    assert "const dataDate =" not in history_loader
+    assert "fl.signal_date || dataDate" not in history_loader
     assert 'class="fib-history-head"' in html
     assert "记录于" not in html
     assert "旧记录未保存信号发生日" not in html
@@ -93,3 +96,55 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
     assert 'fl.reaction_signal' in html
     assert 'fib-history-head,.fib-history-row' in html
     assert '@media (max-width:420px)' in html
+
+
+def _fibonacci_test_bars(lows, volumes):
+    import pandas as pd
+
+    dates = pd.date_range("2026-08-01", periods=len(lows), freq="D")
+    rows = []
+    for i, (low, volume) in enumerate(zip(lows, volumes)):
+        rows.append({
+            "date": dates[i],
+            "open": 86.0,
+            "high": 100.0,
+            "low": float(low),
+            "close": 85.0 if low < 90 else 96.0,
+            "volume": float(volume),
+        })
+    rows[0]["low"] = 80.0
+    rows[0]["close"] = 90.0
+    return pd.DataFrame(rows)
+
+
+def _get_fibonacci_0786(frame):
+    from trading_tool.strategy_engine import FujimotoStrategy
+
+    levels, *_ = FujimotoStrategy()._calc_fibonacci(frame, lookback=60)
+    return next(level for level in levels if level.level == 0.786)
+
+
+def test_fibonacci_confirmation_is_emitted_once_per_continuous_touch_episode():
+    frame = _fibonacci_test_bars(
+        lows=[80, 84.2, 84.2, 84.2, 95],
+        volumes=[100, 100, 130, 200, 100],
+    )
+
+    level = _get_fibonacci_0786(frame)
+
+    assert level.reacted is True
+    assert level.signal_date == "2026-08-03"
+    assert level.reaction_signal == "放量止跌"
+
+
+def test_fibonacci_can_emit_a_new_confirmation_after_price_leaves_and_retests():
+    frame = _fibonacci_test_bars(
+        lows=[80, 84.2, 84.2, 95, 84.2, 84.2, 84.2],
+        volumes=[100, 100, 130, 100, 100, 150, 300],
+    )
+
+    level = _get_fibonacci_0786(frame)
+
+    assert level.reacted is True
+    assert level.signal_date == "2026-08-06"
+    assert level.reaction_signal == "放量止跌"
