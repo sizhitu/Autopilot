@@ -46,29 +46,27 @@ def test_stock_advice_user_scenarios(symbol, scenario):
     assert isinstance(body, dict), f"{symbol}: response is not a JSON object"
     assert isinstance(body.get("success"), bool), f"{symbol}: missing boolean success: {body}"
     assert isinstance(body.get("timeline"), list), f"{symbol}: timeline must be a list: {body}"
-    advice = body.get("advice")
-    assert advice is None or isinstance(advice, dict), (
-        f"{symbol}: advice must be an object or null: {type(advice).__name__}"
-    )
-    if isinstance(advice, dict):
-        metric_type = advice.get("metric_type")
+    assert body.get("success") is True, f"{symbol}: API reported failure: {body}"
+    current = body.get("current")
+    assert isinstance(current, dict), f"{symbol}: current metrics must be an object: {body}"
+    metric_type = current.get("metric_type")
+    if metric_type is not None:
         assert metric_type in {
             "short_composite_score",
             "short_interest_incomplete",
             "volume_percentile",
             "volume",
-        }, f"{symbol}: unexpected metric_type={metric_type!r}; advice={advice}"
+        }, f"{symbol}: unexpected metric_type={metric_type!r}; current={current}"
         if metric_type == "short_composite_score":
-            assert advice.get("score") is not None, (
-                f"{symbol}: composite metric must include score: {advice}"
+            assert current.get("score") is not None, (
+                f"{symbol}: composite metric must include score: {current}"
             )
         if metric_type == "short_interest_incomplete":
-            assert advice.get("score") is None, (
-                f"{symbol}: incomplete short data must not fabricate composite score: {advice}"
+            assert current.get("score") is None, (
+                f"{symbol}: incomplete short data must not fabricate composite score: {current}"
             )
     print(
         f"SCENARIO symbol={symbol} case={scenario} "
-        f"success={body.get('success')} metric_type="
-        f"{(advice or {}).get('metric_type') if isinstance(advice, dict) else 'none'} "
+        f"success={body.get('success')} metric_type={metric_type or 'none'} "
         f"timeline={len(body.get('timeline') or [])}"
     )
