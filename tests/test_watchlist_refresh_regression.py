@@ -149,9 +149,10 @@ def test_successful_watchlist_api_response_exits_snapshot_mode_immediately():
     start = source.index("async function _loadWatchlistBody(forceRefresh)")
     end = source.index("// 编辑某只自选备注", start)
     block = source[start:end]
-    anchor = block.index("const json = await res.json();")
-    success = block.index("if (!json.success) throw new Error", anchor)
+    api_request = block.index("apiWithTimeout('/api/watchlist'")
+    response = block.index("const json = await res.json();", api_request)
+    success = block.index("if (!json.success) throw new Error", response)
     mark_up = block.index("markBackendUp();", success)
     leave = block.index("leaveSnapshotMode();", mark_up)
     computing = block.index("if (json.computing)", leave)
-    assert success < mark_up < leave < computing
+    assert response < success < mark_up < leave < computing
