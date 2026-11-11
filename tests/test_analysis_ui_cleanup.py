@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_analysis_panel_only_exposes_indicators_and_fibonacci():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     start = html.index("<!-- 分析结果面板")
-    end = html.index('<div class="footer-note">', start)
+    end = html.index("<!-- /分析模式视图 -->", start)
     panel = html[start:end]
 
     assert 'switchTab(\'indicators\'' in panel
