@@ -183,3 +183,15 @@ def test_late_snapshot_cannot_overwrite_successful_live_watchlist_response():
     revision_guard = body.index("_watchlistLiveRevision !== revisionAtStart", fallback)
     live_success = body.index("_watchlistLiveRevision += 1;", body.index("apiWithTimeout('/api/watchlist'"))
     assert fallback < revision_guard < live_success
+
+
+def test_local_snapshot_updates_initial_loading_state_before_overlay_decision():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+
+    restored = body.index("applyWatchlistSnapshot(localSnapshot);")
+    refresh_state = body.index("hasRows = !!(_lastWatchRows && _lastWatchRows.length);", restored)
+    loading_branch = body.index("if (hasRows)", refresh_state)
+    assert restored < refresh_state < loading_branch
