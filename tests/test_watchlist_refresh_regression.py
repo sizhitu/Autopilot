@@ -308,3 +308,38 @@ def test_watchlist_computing_partial_rows_never_overwrite_local_complete_cache()
     assert "persistWatchlistCache(" not in computing
     # Only the fully completed response persists the full merged rows.
     assert "persistWatchlistCache(merged" in body
+
+
+def test_watchlist_response_crowding_history_and_persistence_are_nonblocking():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("def _fill_crowding_if_missing(stocks: list) -> list:")
+    end = source.index("\ndef _annotate_and_maybe_refresh_dates", start)
+    body = source[start:end]
+    assert "_cached_pos_advice_history(code)" in body
+    assert "_persist_pos_advice_async(code, s)" in body
+    assert "_cache.get_position_advice(" not in body
+    assert "_cache.append_position_advice(" not in body
+    assert "_POS_ADVICE_IO.submit(" in source
+    assert "_POS_ADVICE_HISTORY_PENDING" in source
+    assert "_POS_ADVICE_WRITE_PENDING" in source
+
+
+def test_watchlist_crowding_history_loader_deduplicates_remote_reads():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("def _load_pos_advice_history_async")
+    end = source.index("\ndef _cached_pos_advice_history", start)
+    body = source[start:end]
+    assert "if key in _POS_ADVICE_HISTORY_PENDING" in body
+    assert "_cache.get_position_advice(key)" in body
+    assert "_POS_ADVICE_HISTORY_PENDING.discard(key)" in body
+
+
+def test_watchlist_crowding_persistence_deduplicates_same_symbol_day():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("def _persist_pos_advice_async")
+    end = source.index("\ndef _fill_crowding_if_missing", start)
+    body = source[start:end]
+    assert "marker = (key, day)" in body
+    assert "marker in _POS_ADVICE_WRITE_PENDING" in body
+    assert "_cache.append_position_advice(key, payload)" in body
+    assert "_POS_ADVICE_WRITE_RETRY" in body
