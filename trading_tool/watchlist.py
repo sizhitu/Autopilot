@@ -1229,6 +1229,40 @@ def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
             prev_5 = float(df['close'].iloc[-1 - lookback_5])
             status.change_5d = round((last_close - prev_5) / prev_5 * 100, 2)
 
+        # A股/港股在正常看板计算路径中使用成交量历史分位；不发起额外网络请求。
+        # 美股拥挤度由响应层的空头数据缓存异步补齐，不能混用成交量分位。
+        try:
+            if not _is_us_crowding_symbol(code, status.market) and 'volume' in df.columns:
+                vol = pd.to_numeric(df['volume'], errors='coerce').fillna(0).astype(float)
+                if len(vol) >= 20 and (vol > 0).sum() >= 20:
+                    recent = float(vol.tail(20).mean())
+                    hist = vol.tail(min(250, len(vol)))
+                    if float(hist.sum()) > 0 and recent > 0:
+                        pct = float((hist < recent).mean() * 100)
+                        status.crowding_pct = round(pct, 1)
+                        if pct >= 95:
+                            status.crowding_level = "极端"
+                        elif pct >= 80:
+                            status.crowding_level = "高"
+                        elif pct >= 60:
+                            status.crowding_level = "偏高"
+                        else:
+                            status.crowding_level = "正常"
+                        if len(vol) >= 40:
+                            prev = float(vol.iloc[-40:-20].mean())
+                            chg = (recent - prev) / prev * 100 if prev > 0 else 0
+                            if chg > 30:
+                                status.crowding_speed = "快速上升"
+                            elif chg > 10:
+                                status.crowding_speed = "上升"
+                            elif chg < -20:
+                                status.crowding_speed = "下降"
+                            else:
+                                status.crowding_speed = "平稳"
+                        status.crowding_source = "成交量历史分位"
+        except Exception:
+            pass
+
         strategy = FujimotoStrategy(total_capital=100000)
         result = strategy.analyze(df)
         status.trend = result.trend.value

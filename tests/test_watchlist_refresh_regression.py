@@ -85,3 +85,16 @@ def test_crowding_market_detection_handles_china_exchange_suffixes():
     assert 'is_us = _is_us_crowding_symbol(code, status.market)' in source
     assert 'is_us = _is_us_crowding_symbol(code, s.get("market"))' in source
 
+
+
+def test_a_share_crowding_is_computed_in_live_status_path():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:")
+    end = source.index("def _status_to_dict", start)
+    body = source[start:end]
+
+    assert "_is_us_crowding_symbol(code, status.market)" in body
+    assert "and 'volume' in df.columns" in body
+    assert "status.crowding_pct = round(pct, 1)" in body
+    assert 'status.crowding_source = "成交量历史分位"' in body
+    assert "_fetch_volume_only" not in body
