@@ -256,8 +256,9 @@ def test_watchlist_navigation_abort_is_silent_and_does_not_probe_backend():
     start = source.index("async function _loadWatchlistBody(forceRefresh)")
     end = source.index("// 编辑某只自选备注", start)
     body = source[start:end]
-    abort_branch = body.index("e.code === 'API_ABORTED'")
-    health_probe = body.index("await confirmBackendUnavailable()")
+    catch_block = body.index("} catch(e) {")
+    abort_branch = body.index("e.code === 'API_ABORTED'", catch_block)
+    health_probe = body.index("await confirmBackendUnavailable()", catch_block)
     assert abort_branch < health_probe
 
 
