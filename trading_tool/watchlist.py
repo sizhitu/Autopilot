@@ -2358,8 +2358,8 @@ def _fill_crowding_if_missing(stocks: list) -> list:
             out.append(s)
             continue
         is_us = _is_us_crowding_symbol(code, s.get("market"))
-        has_live = any(s.get(k) is not None for k in ("crowding_pct", "short_pct_float", "days_to_cover"))
-        if has_live:
+        has_primary_live = s.get("crowding_pct") is not None
+        if has_primary_live:
             _persist(code, s)
         else:
             saved = _history_row(code)
@@ -2370,13 +2370,17 @@ def _fill_crowding_if_missing(stocks: list) -> list:
                 )
                 s["crowding_level"] = saved.get("level") or ""
                 s["crowding_speed"] = saved.get("speed") or ""
-                s["short_pct_float"] = saved.get("short_pct_float")
-                s["days_to_cover"] = saved.get("days_to_cover")
+                if s.get("short_pct_float") is None:
+                    s["short_pct_float"] = saved.get("short_pct_float")
+                if s.get("days_to_cover") is None:
+                    s["days_to_cover"] = saved.get("days_to_cover")
                 s["crowding_source"] = (
                     f"历史回退（截至{str(saved.get('bar_date') or saved.get('as_of') or '')[:10]}） · "
                     f"{saved.get('source') or '已保存指标'}"
                 )
                 s["crowding_stale"] = True
+            elif any(s.get(k) is not None for k in ("short_pct_float", "days_to_cover")):
+                _persist(code, s)
 
         if not is_us:
             out.append(s)
