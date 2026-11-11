@@ -110,6 +110,8 @@ jobs:
             --out ../data-repo/data || echo "action logs archive skipped"
           PYTHONPATH=trading_tool python scripts/archive/archive_position_advice.py \
             --out ../data-repo/data || echo "action logs archive skipped"
+          PYTHONPATH=trading_tool python scripts/archive/archive_analysis_history.py \
+            --out ../data-repo/data
 
       - name: Commit and push to Autopilot-data
         if: ${{ github.event.inputs.target != 'self' }}
