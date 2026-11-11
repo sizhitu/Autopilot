@@ -28,7 +28,7 @@ def test_watchlist_rate_limit_does_not_fall_back_to_snapshot():
     body = source[start:end]
 
     rate_limit = body.index("限流是业务层明确拒绝")
-    snapshot_fallback = body.index("在线 API 确实失败")
+    snapshot_fallback = body.index("业务接口报错不等于整个后端不可用")
     assert rate_limit < snapshot_fallback
     assert body.count("throw new Error('429: '") == 2
 
