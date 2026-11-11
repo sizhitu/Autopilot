@@ -30,7 +30,9 @@ def test_watchlist_rate_limit_does_not_fall_back_to_snapshot():
     rate_limit = body.index("限流是业务层明确拒绝")
     snapshot_fallback = body.index("业务接口报错不等于整个后端不可用")
     assert rate_limit < snapshot_fallback
-    assert body.count("throw new Error('429: '") == 2
+    assert body.count("throw new Error('429: '") == 1
+    assert "if (!res.ok)" in body
+    assert "'HTTP ' + res.status" in body
 
 
 
