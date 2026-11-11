@@ -5462,13 +5462,37 @@ async function _loadWatchlistBody(forceRefresh) {
       _watchWasComputing = false;
       return;
     }
-    // 在线 API 确实失败（网络/超时/服务端错误）时，才尝试静态日更快照。
+    // 业务接口报错不等于整个后端不可用：先独立双探测。
+    // 若 /api/health 仍正常，保留现有数据并报告接口错误，禁止每次请求都切静态快照。
+    let backendUnavailable = false;
+    try {
+      backendUnavailable = await confirmBackendUnavailable();
+    } catch (eProbe) {
+      backendUnavailable = false; // 探测自身异常时采取保守策略，不切快照
+    }
+    if (!backendUnavailable) {
+      if (_lastWatchRows && _lastWatchRows.length) {
+        setWatchUpdatedLabel({ computing: false, updated_at: _lastWatchUpdatedAt || '' });
+        const el = document.getElementById('watchlistUpdated');
+        if (el && _lastWatchUpdatedAt) {
+          el.textContent = `更新于 ${_lastWatchUpdatedAt} · 接口异常，保留上次数据`;
+        }
+        try { showToast('看板接口请求失败，但后端仍可访问；已保留上次数据', 'info'); } catch (eKeep) {}
+      } else {
+        body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px;">看板接口请求失败，后端仍可访问，请稍后重试。</td></tr>`;
+        try { showToast('看板接口请求失败，未切换静态快照', 'info'); } catch (eKeep2) {}
+      }
+      _watchWasComputing = false;
+      return;
+    }
+
+    // 只有连续两次健康检查均失败，才允许静态快照兜底。
     let usedSnap = false;
     try {
       const snap = await fetchWatchlistSnapshot();
       applyWatchlistSnapshot(snap);
       usedSnap = true;
-      try { showToast('已切换为收盘快照（服务暂不可用）', 'info'); } catch (e0) {}
+      try { showToast('后端连续探测失败，已切换收盘快照', 'info'); } catch (e0) {}
     } catch (eSnap) {
       usedSnap = false;
     }
@@ -5759,7 +5783,7 @@ function renderWatchlist(stocks) {
             : '';
           return '<span style="color:' + c + ';font-weight:600;">' + (lv || '综合指标') + '</span>' + (hasPct ? '<div style="font-size:10px;color:var(--text-dim);">' + pctText + '</div>' : '');
         }
-        // 复合评分缺失时直接展示可用的原始空头指标，不额外添加“单项指标”标签。
+        // 复合评分缺失时直接展示可用的原始空头指标，不额外添加独立标签。
         if (hasShortPct || hasDtc) {
           return (hasShortPct ? '<div style="font-size:10px;">空头 ' + Number(shortPct).toFixed(1) + '%</div>' : '') +
             (hasDtc ? '<div style="font-size:10px;color:var(--text-dim);">回补 ' + Number(dtc).toFixed(1) + '天</div>' : '');

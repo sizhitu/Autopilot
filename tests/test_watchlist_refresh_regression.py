@@ -28,7 +28,7 @@ def test_watchlist_rate_limit_does_not_fall_back_to_snapshot():
     body = source[start:end]
 
     rate_limit = body.index("限流是业务层明确拒绝")
-    snapshot_fallback = body.index("在线 API 确实失败")
+    snapshot_fallback = body.index("业务接口报错不等于整个后端不可用")
     assert rate_limit < snapshot_fallback
     assert body.count("throw new Error('429: '") == 2
 
@@ -107,3 +107,29 @@ def test_a_share_crowding_dashboard_value_has_no_out_of_100_suffix():
     body = source[start:end]
     assert "s.market === '美股' ? '/100' : ''" in body
     assert "Number(pct).toFixed(1) + '/100'" not in body
+
+
+def test_watchlist_snapshot_fallback_requires_confirmed_backend_outage():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+
+    catch_start = body.index("// 业务接口报错不等于整个后端不可用")
+    catch_end = body.index("let usedSnap = false;", catch_start)
+    gate = body[catch_start:catch_end]
+    assert "await confirmBackendUnavailable()" in gate
+    assert "if (!backendUnavailable)" in gate
+    assert gate.index("if (!backendUnavailable)") < gate.index("return;")
+    assert "探测自身异常时采取保守策略，不切快照" in gate
+
+    snapshot = body.index("const snap = await fetchWatchlistSnapshot();", catch_end)
+    assert snapshot > catch_end
+
+
+def test_dashboard_crowding_comment_does_not_trip_single_metric_assertion():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("function renderWatchlist(stocks)")
+    end = source.index("function rememberActionSnap(s)", start)
+    body = source[start:end]
+    assert "单项指标" not in body

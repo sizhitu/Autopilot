@@ -11,6 +11,7 @@ on:
       - "scripts/archive/build_watchlist_snapshot.py"
       - "frontend/index.html"
       - "tests/test_crowding.py"
+      - "tests/test_watchlist_refresh_regression.py"
       - ".github/workflows/crowding-persistence-tests.yml"
 
 jobs:
@@ -32,3 +33,4 @@ jobs:
       - name: Run persistence and fallback regression tests
         run: |
           PYTHONPATH=trading_tool python -m pytest tests/test_crowding.py -q -k "watchlist_restores_persisted_crowding or position_advice_persists_raw_short_metrics"
+          python -m pytest tests/test_watchlist_refresh_regression.py -q
