@@ -395,7 +395,7 @@ def _fetch_float_shares(code: str):
             response = fetcher.session.get(
                 f"https://{domain}/v10/finance/quoteSummary/{code}",
                 params={"modules": "defaultKeyStatistics", "corsDomain": "finance.yahoo.com"},
-                headers=headers, timeout=10,
+                headers=headers, timeout=5,
             )
             if response.status_code != 200:
                 continue
@@ -536,7 +536,7 @@ def _get_finra_access_token() -> str:
         "https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token",
         params={"grant_type": "client_credentials"},
         auth=(client_id, client_secret),
-        timeout=20,
+        timeout=8,
     )
     if response.status_code != 200:
         raise RuntimeError(f"FINRA OAuth HTTP {response.status_code}")
@@ -569,7 +569,7 @@ def _fetch_finra_short_interest(code: str) -> dict:
     response = requests.post(
         url, json=body,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"},
-        timeout=30,
+        timeout=12,
     )
     if response.status_code == 204:
         rows = []
@@ -749,7 +749,7 @@ def _fetch_nasdaq_short_interest(code: str) -> dict:
     response = requests.get(
         url,
         headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-        timeout=12,
+        timeout=8,
     )
     if response.status_code != 200:
         return {"status": "provider_error", "source": "Nasdaq 官方空头报告",
@@ -800,15 +800,14 @@ def _fetch_us_short_interest(code: str) -> dict:
     if not code:
         return {"status": "invalid_symbol", "message": "股票代码为空。", "history": []}
 
-    venue = _fetch_listing_exchange(code)
+    # FINRA 是跨交易所合并源；先查 FINRA，成功时无需再扫描 Nasdaq 全市场股票列表。
+    # 交易所识别只在 FINRA 无结果时用于判断能否使用 Nasdaq 个股补充源。
+    venue = "UNKNOWN"
     finra_error = ""
     try:
-        # FINRA consolidatedShortInterest 覆盖交易所上市及 OTC 股票，
-        # 不应因 NYSE/AMEX 而跳过。注意这不是 Reg SHO 日度卖空成交量。
         result = _fetch_finra_short_interest(code)
         if result.get("status") == "ok":
             result["provider"] = "finra_consolidated"
-            result["listing_exchange"] = venue if venue != "UNKNOWN" else result.get("listing_exchange")
             result["metric_type"] = "days_to_cover"
             result["source"] = "FINRA 官方合并空头持仓"
             return result
@@ -816,6 +815,7 @@ def _fetch_us_short_interest(code: str) -> dict:
     except Exception as exc:
         finra_error = f"FINRA 查询失败：{type(exc).__name__}"
 
+    venue = _fetch_listing_exchange(code)
     # Nasdaq 的公开个股页面作为补充，不能把 Nasdaq 数据套到 NYSE/AMEX 股票。
     if venue == "NASDAQ":
         try:
