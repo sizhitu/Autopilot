@@ -461,7 +461,11 @@ def append_position_advice(symbol: str, row: dict) -> None:
                 break
             except ValueError:
                 continue
-    existing = [r for r in (get_position_advice(sym) or []) if isinstance(r, dict)]
+    # 写入路径只读热缓存，避免看板每只股票都先 SELECT 一次 Supabase；
+    # 持久历史由 get_position_advice() 在读取时与数据库合并。
+    raw_cached = get_json(f"posadvice:{sym}")
+    cached_rows = raw_cached.get("rows", []) if isinstance(raw_cached, dict) else raw_cached if isinstance(raw_cached, list) else []
+    existing = [r for r in cached_rows if isinstance(r, dict)]
     # 同一天覆盖
     existing = [r for r in existing if str(r.get("bar_date") or r.get("date") or "")[:10] != day]
     new_row = {
