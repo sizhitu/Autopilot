@@ -237,6 +237,16 @@ def result_to_dict(result) -> dict:
                 "detail": ind.detail
             } for ind in result.indicators
         ],
+        "fib_bearish_levels": [
+            {
+                "level": float(fl.level),
+                "price": round(float(fl.price), 2),
+                "tested": bool(fl.tested),
+                "reacted": bool(fl.reacted),
+                "reaction_signal": fl.reaction_signal,
+                "signal_date": getattr(fl, "signal_date", None)
+            } for fl in result.chart_data.get("fib_bearish_levels", [])
+        ],
         "fib_levels": [
             {
                 "level": float(fl.level),
@@ -257,6 +267,13 @@ def result_to_dict(result) -> dict:
                 {"level": float(fl.level), "price": round(float(fl.price), 2),
                  "reacted": bool(fl.reacted)}
                 for fl in result.fib_levels
+            ],
+            "fib_bearish_levels": [
+                {"level": float(fl.level), "price": round(float(fl.price), 2),
+                 "tested": bool(fl.tested), "reacted": bool(fl.reacted),
+                 "reaction_signal": fl.reaction_signal,
+                 "signal_date": getattr(fl, "signal_date", None)}
+                for fl in result.chart_data.get("fib_bearish_levels", [])
             ],
             "vwma": round(float(result.chart_data.get("vwma")), 2) if result.chart_data.get("vwma") else None,
             "volume_price_divergence": _to_jsonable(
