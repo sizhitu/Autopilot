@@ -66,7 +66,7 @@ class TestBearishFibonacciSignals:
             self.anchor(),
             *self.volume_warmup(),
             self.touch(108, 109, volume=100, high=111.5),
-            self.touch(109, 108, volume=121, high=112.0),
+            self.touch(109, 108, volume=121, high=112.0, low=106.0),
         ])
         level = self.get_0786(frame)
         assert level.reacted is True
@@ -78,8 +78,8 @@ class TestBearishFibonacciSignals:
             self.anchor(),
             *self.volume_warmup(),
             self.touch(108, 109, volume=100, high=111.5),
-            self.touch(109, 108, volume=130, high=112.0),
-            self.touch(109, 107, volume=250, high=112.0),
+            self.touch(109, 108, volume=130, high=112.0, low=106.0),
+            self.touch(109, 107, volume=250, high=112.0, low=106.0),
         ])
         level = self.get_0786(frame)
         assert level.reacted is True
