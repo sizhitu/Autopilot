@@ -9,10 +9,10 @@ import sys
 from pathlib import Path
 
 COPY_HEADER = re.compile(
-    r'^COPY\\s+'
-    r'(?P<schema>"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)\\.'
+    r'^COPY\s+'
+    r'(?P<schema>"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)\.'
     r'(?P<table>"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)'
-    r'\\s+\\(.*\\)\\s+FROM stdin;$'
+    r'\s+\(.*\)\s+FROM stdin;$'
 )
 
 
@@ -30,7 +30,7 @@ def copy_row_counts(paths: list[Path]) -> dict[tuple[str, str], int]:
             for line_number, line in enumerate(lines, start=1):
                 if not line.startswith("COPY "):
                     continue
-                match = COPY_HEADER.match(line.rstrip("\\r\\n"))
+                match = COPY_HEADER.match(line.rstrip("\r\n"))
                 if not match:
                     raise ValueError(f"Unrecognized COPY statement in {path}:{line_number}")
                 key = (
@@ -41,7 +41,7 @@ def copy_row_counts(paths: list[Path]) -> dict[tuple[str, str], int]:
                     raise ValueError(f"Duplicate COPY block for {key[0]}.{key[1]}")
                 row_count = 0
                 for data_line in lines:
-                    if data_line.rstrip("\\r\\n") == r"\\.":
+                    if data_line.rstrip("\r\n") == r"\.":
                         break
                     row_count += 1
                 else:
