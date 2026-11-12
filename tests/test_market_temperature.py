@@ -67,3 +67,18 @@ def test_us_breadth_uses_ad_line_change_not_percent_of_negative_index():
     result=mt._fetch_us_breadth(Fetcher())
     assert 50 < result["score"] <= 100
     assert result["series"]==2
+
+def test_position_page_contains_market_switch_and_missing_data_state():
+    html=(ROOT/"frontend/index.html").read_text(encoding="utf-8")
+    assert 'id="marketTemperatureCard"' in html
+    assert "selectMarketTemperature('cn')" in html and "selectMarketTemperature('us')" in html
+    assert 'id="temperatureCompare"' in html
+    assert "数据不足" in html
+    assert "loadMarketTemperature(false)" in html
+
+def test_temperature_api_persists_daily_idempotent_snapshots():
+    source=(ROOT/"trading_tool/web_app.py").read_text(encoding="utf-8")
+    assert '@app.get("/api/market-temperature")' in source
+    assert 'on_conflict="market,trade_date"' in source
+    assert '_market_temperature_history(market,30)' in source
+    assert 'MIN_COVERAGE' not in source  # API consumes score/coverage from the engine
