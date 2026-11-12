@@ -8,6 +8,7 @@ on:
       - "trading_tool/web_app.py"
       - "trading_tool/strategy_engine.py"
       - "tests/test_fibonacci_bearish.py"
+      - "tests/test_fibonacci_history.py"
       - "supabase/migrations/0008_crowding_persistence.sql"
       - "scripts/archive/archive_position_advice.py"
       - "scripts/archive/build_watchlist_snapshot.py"
@@ -39,3 +40,4 @@ jobs:
           python -m pytest tests/test_watchlist_refresh_regression.py -q
           python -m pytest tests/test_analysis_ui_cleanup.py -q
           python -m pytest tests/test_fibonacci_bearish.py -q
+          python -m pytest tests/test_fibonacci_history.py -q

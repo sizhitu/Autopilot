@@ -611,6 +611,57 @@ class FujimotoStrategy:
         target_prices = [swing_low - diff * (ext - 1) for ext in (1.272, 1.618)]
         return fib_levels, swing_high, swing_low, target_prices
 
+    def _build_fibonacci_signal_history(self, df: pd.DataFrame, lookback: int = 60) -> list:
+        """
+        从完整 K 线序列逐日重放原有 Fib 算法，重建每次独立确认事件。
+        每个交易日只使用当日及以前的数据，避免未来数据泄漏。
+        不改变当前 _calc_fibonacci / _calc_fibonacci_bearish 的任何交易决策。
+        """
+        events = []
+        if df is None or len(df) < 2:
+            return events
+
+        for end in range(1, len(df)):
+            prefix = df.iloc[:end + 1]
+            raw_date = (
+                prefix.iloc[-1]["date"] if "date" in prefix.columns
+                else prefix.index[-1]
+            )
+            if isinstance(raw_date, (int, float, np.integer, np.floating)):
+                continue
+            parsed = pd.to_datetime(raw_date, errors="coerce")
+            if pd.isna(parsed):
+                continue
+            event_date = parsed.strftime("%Y-%m-%d")
+
+            # 使用现有算法逐日重算锚点和信号；只收录当日首次确认。
+            bullish, _, _, _ = self._calc_fibonacci(prefix, lookback=lookback)
+            bearish, _, _, _ = self._calc_fibonacci_bearish(prefix, lookback=lookback)
+            for side, levels in (("bullish", bullish), ("bearish", bearish)):
+                for fl in levels:
+                    if not fl.reacted or not fl.reaction_signal:
+                        continue
+                    if str(fl.signal_date or "")[:10] != event_date:
+                        continue
+                    events.append({
+                        "side": side,
+                        "level": float(fl.level),
+                        "price": round(float(fl.price), 4),
+                        "signal": fl.reaction_signal,
+                        "signal_date": event_date,
+                    })
+
+        # 同一方向、Fib 位、交易日、信号类型只保留一条。
+        unique = {}
+        for event in events:
+            key = (event["side"], event["level"], event["signal_date"], event["signal"])
+            unique[key] = event
+        return sorted(
+            unique.values(),
+            key=lambda item: (item["signal_date"], item["side"], item["level"]),
+            reverse=True,
+        )
+
     def _find_fib_buy_point(self, fib_levels: list, close: float) -> Optional[FibLevel]:
         """找到有市场反应确认的斐波那契买点"""
         # 优先找有反应确认的
@@ -1014,6 +1065,7 @@ class FujimotoStrategy:
             "swing_low": swing_low,
             "fib_levels": fib_levels,
             "fib_bearish_levels": fib_bearish_levels,
+            "fib_signal_history": self._build_fibonacci_signal_history(df),
             "target_prices": target_prices,
             "mas": {p: v for p, v in mas.items() if v is not None},
             "vwma": vwma,
