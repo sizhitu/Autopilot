@@ -786,9 +786,8 @@ async def market_spread():
 
 # Market-wide sentiment temperature: separate CN/US snapshots and durable daily history.
 _MARKET_TEMPERATURE_CACHE = {"data": {}, "refreshing": set()}
-_MARKET_TEMPERATURE_TTL = 18 * 3600
+_MARKET_TEMPERATURE_TTL = 5 * 60
 _MARKET_TEMPERATURE_MEM_TTL = 5 * 60
-# One market-temperature refresh at a time; never fan out CN and US requests together.
 _MARKET_TEMPERATURE_REFRESH_LOCK = threading.Lock()
 
 def _persist_market_temperature(snapshot: dict) -> None:
@@ -797,10 +796,9 @@ def _persist_market_temperature(snapshot: dict) -> None:
         day=str(snapshot.get("as_of") or datetime.now().date().isoformat())[:10]
         supabase_client.get_service_client().table("market_temperature_daily").upsert({
             "market":snapshot["market"],"trade_date":day,"temperature":snapshot.get("temperature"),
-            "regime":snapshot.get("regime") or "数据不足","coverage":snapshot.get("coverage") or 0,
-            "method_version":snapshot.get("method_version") or "1.0.0",
-            "components":snapshot.get("components") or {},"snapshot":snapshot,
-            "calculated_at":snapshot.get("calculated_at"),"updated_at":datetime.now().isoformat()
+            "regime":snapshot.get("regime") or "暂无数据","coverage":100,"method_version":"provider-index-1.0",
+            "components":{},"snapshot":snapshot,"calculated_at":snapshot.get("fetched_at"),
+            "updated_at":datetime.now().isoformat()
         },on_conflict="market,trade_date").execute()
     except Exception as exc: print(f"[market-temperature] persistence failed: {type(exc).__name__}: {exc}")
 
@@ -815,48 +813,30 @@ def _market_temperature_history(market: str, limit: int = 30) -> list:
         print(f"[market-temperature] history read failed: {type(exc).__name__}: {exc}")
         return []
 
-def _market_temperature_session_open(market: str) -> bool:
-    """Avoid mixing intraday breadth with end-of-day indicators."""
-    try:
-        from zoneinfo import ZoneInfo
-        zone = "Asia/Shanghai" if market == "cn" else "America/New_York"
-        local = datetime.now(ZoneInfo(zone))
-        if local.weekday() >= 5:
-            return False
-        minute = local.hour * 60 + local.minute
-        start = 9 * 60 + 30
-        end = 15 * 60 if market == "cn" else 16 * 60
-        return start <= minute < end
-    except Exception:
-        # Fail closed: if timezone detection fails, do not refresh intraday.
-        return True
-
-
 def _refresh_market_temperature(market: str) -> None:
     state=_MARKET_TEMPERATURE_CACHE
-    if market in state["refreshing"]: return
-    # A single bounded worker prevents a tab switch or two simultaneous users from
-    # launching two full universes of ETF/index requests against shared providers.
-    if not _MARKET_TEMPERATURE_REFRESH_LOCK.acquire(blocking=False): return
+    if market in state["refreshing"] or not _MARKET_TEMPERATURE_REFRESH_LOCK.acquire(blocking=False): return
     state["refreshing"].add(market)
     def _run():
         try:
-            from market_temperature import build_market_temperature_snapshot
-            snap=build_market_temperature_snapshot(market,fetcher=DataFetcher())
+            from market_temperature import fetch_market_sentiment
+            snap=fetch_market_sentiment(market)
             _persist_market_temperature(snap)
-            snap["history"]=_market_temperature_history(market,30)
+            snap["history_db"]=_market_temperature_history(market,30)
             snap["stored_at"]=time.time()
-            snap["cache_source"]="live_refresh"
-            import cache as _cache
-            _cache.set_json(f"market_temperature_v3_{market}",snap,_MARKET_TEMPERATURE_TTL)
+            try:
+                import cache as _cache
+                _cache.set_json(f"market_temperature_v4_{market}",snap,_MARKET_TEMPERATURE_TTL)
+            except Exception as exc: print(f"[market-temperature] cache write failed: {type(exc).__name__}: {exc}")
             state["data"][market]=snap
         except Exception as exc:
-            print(f"[market-temperature] {market} refresh failed: {type(exc).__name__}: {exc}")
+            print(f"[market-temperature] {market} provider refresh failed: {type(exc).__name__}: {exc}")
+            # Never overwrite a last-known-good value with an error response.
         finally:
             state["refreshing"].discard(market)
             _MARKET_TEMPERATURE_REFRESH_LOCK.release()
     try:
-        threading.Thread(target=_run,daemon=True,name=f"market-temperature-{market}").start()
+        threading.Thread(target=_run,daemon=True,name=f"market-sentiment-{market}").start()
     except Exception:
         state["refreshing"].discard(market)
         _MARKET_TEMPERATURE_REFRESH_LOCK.release()
@@ -866,52 +846,34 @@ def _refresh_market_temperature(market: str) -> None:
 async def market_temperature(market: str = Query("cn", regex="^(cn|us)$")):
     import cache as _cache
     now=time.time()
-    session_open=_market_temperature_session_open(market)
     current=_MARKET_TEMPERATURE_CACHE["data"].get(market)
     if isinstance(current,dict):
         age=now-float(current.get("stored_at") or 0)
-        if age<_MARKET_TEMPERATURE_TTL or session_open:
-            if current.get("cold_backup") and not session_open:
-                _refresh_market_temperature(market)
-            out=dict(current); out["cached"]=True; out["stale_during_session"]=bool(session_open and age>=_MARKET_TEMPERATURE_TTL)
-            return JSONResponse(content=_to_jsonable(out),headers={"Cache-Control":"public, max-age=120"})
+        if age<_MARKET_TEMPERATURE_TTL:
+            out=dict(current); out["cached"]=True
+            return JSONResponse(content=_to_jsonable(out),headers={"Cache-Control":"public, max-age=60"})
+        _refresh_market_temperature(market)
+        out=dict(current); out.update({"cached":True,"stale":True})
+        return JSONResponse(content=_to_jsonable(out),headers={"Cache-Control":"no-store"})
     try:
-        hit=await asyncio.wait_for(asyncio.to_thread(_cache.get_json,f"market_temperature_v3_{market}"),timeout=2.0)
-    except Exception:
-        hit=None
-    if isinstance(hit,dict) and hit.get("market")==market:
-        hit=dict(hit); _MARKET_TEMPERATURE_CACHE["data"][market]=hit
-        age=now-float(hit.get("stored_at") or 0)
-        if age>=_MARKET_TEMPERATURE_TTL and not session_open:
-            _refresh_market_temperature(market)
-        hit["cached"]=True; hit["stale_during_session"]=bool(session_open and age>=_MARKET_TEMPERATURE_TTL)
-        return JSONResponse(content=_to_jsonable(hit),headers={"Cache-Control":"public, max-age=120"})
-    # Final fallback: restore the last archived snapshot from a local or remote
-    # JSON sidecar. The read is isolated in a worker and strictly time-bounded.
+        hit=await asyncio.wait_for(asyncio.to_thread(_cache.get_json,f"market_temperature_v4_{market}"),timeout=1.5)
+    except Exception: hit=None
+    if isinstance(hit,dict) and hit.get("market")==market and hit.get("temperature") is not None:
+        hit=dict(hit); _MARKET_TEMPERATURE_CACHE["data"][market]=hit; _refresh_market_temperature(market)
+        hit.update({"cached":True,"stale":True})
+        return JSONResponse(content=_to_jsonable(hit),headers={"Cache-Control":"no-store"})
     try:
         from market_temperature_cold_backup import read_cold_snapshot
         cold=await asyncio.wait_for(asyncio.to_thread(read_cold_snapshot,market),timeout=2.5)
-    except Exception:
-        cold=None
-    if isinstance(cold,dict) and cold.get("market")==market:
-        cold=dict(cold)
-        cold["stored_at"]=now
-        cold["cold_backup"]=True
-        cold["cached"]=True
-        cold["stale_during_session"]=bool(session_open)
-        cold["cold_backup_restored_at"]=datetime.utcnow().isoformat()+"Z"
-        _MARKET_TEMPERATURE_CACHE["data"][market]=cold
-        if not session_open:
-            _refresh_market_temperature(market)
-        return JSONResponse(content=_to_jsonable(cold),headers={"Cache-Control":"public, max-age=120"})
-    if session_open:
-        return JSONResponse(content={"market":market,"temperature":None,"regime":"等待收盘数据","coverage":0,
-          "components":{},"history":[],"status":"waiting_for_close","message":"交易时段不混用盘中宽度与收盘指标，正式温度将在收盘后生成"},
-          headers={"Cache-Control":"no-store"})
+    except Exception: cold=None
+    if isinstance(cold,dict) and cold.get("market")==market and cold.get("temperature") is not None:
+        cold=dict(cold); cold["stored_at"]=now; cold["cold_backup"]=True; cold["cached"]=True
+        _MARKET_TEMPERATURE_CACHE["data"][market]=cold; _refresh_market_temperature(market)
+        return JSONResponse(content=_to_jsonable(cold),headers={"Cache-Control":"no-store"})
     _refresh_market_temperature(market)
-    return JSONResponse(content={"market":market,"temperature":None,"regime":"数据更新中","coverage":0,
-      "components":{},"history":[],"status":"pending","message":"首次计算正在后台进行，请稍后刷新"},
-      headers={"Cache-Control":"no-store"})
+    return JSONResponse(content={"market":market,"temperature":None,"regime":"正在获取数据",
+      "source":"财联社市场情绪" if market=="cn" else "CNN Fear & Greed","status":"pending",
+      "message":"首次请求正在后台获取第三方市场情绪指数"},headers={"Cache-Control":"no-store"})
 
 @app.get("/api/config")
 async def public_config():
