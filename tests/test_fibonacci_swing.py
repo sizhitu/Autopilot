@@ -60,3 +60,24 @@ def test_latest_confirmed_swing_selects_only_its_direction():
     bear_levels, *_ = strategy._calc_fibonacci_bearish(bearish)
     assert bull_levels == []
     assert len(bear_levels) == 4
+
+def test_trend_context_distinguishes_with_trend_and_countertrend_reactions():
+    rising = _frame([100 + i for i in range(60)])
+    falling = _frame([160 - i for i in range(60)])
+
+    assert FujimotoStrategy._fib_trend_context(rising, "bullish") == {
+        "background_trend": "bullish", "signal_context": "顺势"
+    }
+    assert FujimotoStrategy._fib_trend_context(rising, "bearish") == {
+        "background_trend": "bullish", "signal_context": "逆势"
+    }
+    assert FujimotoStrategy._fib_trend_context(falling, "bearish") == {
+        "background_trend": "bearish", "signal_context": "顺势"
+    }
+
+
+def test_trend_context_does_not_force_a_direction_in_a_flat_market():
+    flat = _frame([100.0] * 60)
+    assert FujimotoStrategy._fib_trend_context(flat, "bullish") == {
+        "background_trend": "range_or_transition", "signal_context": "震荡/趋势转换"
+    }
