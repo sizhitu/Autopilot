@@ -70,3 +70,11 @@ def test_supabase_restore_is_used_before_cold_file_fallback():
     assert '_load_market_temperature_from_supabase,market' in route
     assert route.index('_load_market_temperature_from_supabase,market') < route.index('read_cold_snapshot')
     assert '"supabase_restored":True' in route
+
+def test_position_temperature_prefetches_on_initial_page_load():
+    html=(ROOT/"frontend"/"index.html").read_text(encoding="utf-8")
+    start=html.index("async function loadMarketTemperature(force,market)")
+    end=html.index("async function loadMarketSpread(force)",start)
+    loader=html[start:end]
+    assert "try { loadMarketTemperature(false); } catch (e) {}" in loader
+    assert "['cn','us']" in loader
