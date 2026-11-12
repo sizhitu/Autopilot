@@ -1,0 +1,233 @@
+name: Supabase weekly cold backup
+
+on:
+  schedule:
+    # Sunday 02:00 UTC = Sunday 10:00 China time
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-weekly-cold-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      AGE_RECIPIENT: ${{ vars.SUPABASE_BACKUP_AGE_RECIPIENT }}
+      AGE_IDENTITY: ${{ secrets.SUPABASE_BACKUP_AGE_IDENTITY }}
+      GH_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+      BACKUP_REPOSITORY: "sizhitu/Autopilot-data"
+      BACKUP_RETENTION_DAYS: "30"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate required configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$SUPABASE_DB_URL" ]] || { echo "::error::Missing Actions secret SUPABASE_DB_URL"; exit 1; }
+          [[ -n "$AGE_RECIPIENT" ]] || { echo "::error::Missing Actions variable SUPABASE_BACKUP_AGE_RECIPIENT"; exit 1; }
+          [[ "$AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]] || { echo "::error::SUPABASE_BACKUP_AGE_RECIPIENT is not a valid age public recipient"; exit 1; }
+          [[ -n "$AGE_IDENTITY" ]] || { echo "::error::Missing Actions secret SUPABASE_BACKUP_AGE_IDENTITY"; exit 1; }
+          [[ -n "$GH_TOKEN" ]] || { echo "::error::Missing Actions secret DATA_REPO_TOKEN"; exit 1; }
+          IS_PRIVATE="$(gh repo view "$BACKUP_REPOSITORY" --json isPrivate --jq .isPrivate)"
+          [[ "$IS_PRIVATE" == "true" ]] || { echo "::error::Backup destination must be a private GitHub repository"; exit 1; }
+
+      - name: Install backup and verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y age zstd postgresql-client jq python3-pip
+          python3 -m pip install --break-system-packages 'psycopg[binary]'
+
+      - name: Capture pre-backup database inventory report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/supabase-backup/reports"
+          python3 "$GITHUB_WORKSPACE/scripts/verify_supabase_restore.py" \
+            --database-url "$SUPABASE_DB_URL" \
+            --report-dir "$RUNNER_TEMP/supabase-backup/reports" \
+            --prefix before_backup
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Export Supabase database
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/supabase-backup"
+          cd "$RUNNER_TEMP/supabase-backup"
+
+          # Follow Supabase's documented logical backup format.
+          supabase db dump --remote="$SUPABASE_DB_URL" -f roles.sql --role-only
+          supabase db dump --remote="$SUPABASE_DB_URL" -f schema.sql
+          supabase db dump --remote="$SUPABASE_DB_URL" -f data.sql --data-only --use-copy \
+            -x "storage.buckets_vectors" \
+            -x "storage.vector_indexes"
+
+          # Supabase documents migration history as a separate optional export/restore.
+          supabase db dump --remote="$SUPABASE_DB_URL" -f migration_history_schema.sql --schema supabase_migrations
+          supabase db dump --remote="$SUPABASE_DB_URL" -f migration_history_data.sql --data-only --use-copy --schema supabase_migrations
+
+          for file in roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql; do
+            test -s "$file" || { echo "::error::Backup output is missing or empty: $file"; exit 1; }
+          done
+
+          SERVER_VERSION="$(psql "$SUPABASE_DB_URL" -X -A -t -c 'SHOW server_version' | tr -d '\r')"
+          cat > manifest.json <<EOF
+          {
+            "format": "supabase-cli-logical-dump",
+            "created_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "postgres_server_version": "$SERVER_VERSION",
+            "files": ["roles.sql", "schema.sql", "data.sql", "migration_history_schema.sql", "migration_history_data.sql"],
+            "retention_days": 30,
+            "includes": ["Supabase CLI-exportable database roles", "application schema and data", "separately exported Supabase migration history"],
+            "excludes": ["Supabase-managed auth and storage schemas", "Supabase Storage object bytes", "project-level Auth/OAuth/SMTP settings", "Edge Function source and secrets", "project API keys and settings"],
+            "notes": ["Auth users are not included by this CLI dump.", "Application tables may contain personal data; keep this archive encrypted and private."]
+          }
+          EOF
+
+          sha256sum roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+          tar --zstd -cf database-backup.tar.zst roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json SHA256SUMS reports
+          tar --zstd -tf database-backup.tar.zst >/dev/null
+          zstd -t database-backup.tar.zst
+
+          age -r "$AGE_RECIPIENT" -o database-backup.tar.zst.age database-backup.tar.zst
+          test -s database-backup.tar.zst.age
+          SIZE_BYTES="$(stat -c%s database-backup.tar.zst.age)"
+          echo "Encrypted backup size: $SIZE_BYTES bytes"
+          if (( SIZE_BYTES > 1900000000 )); then
+            echo "::error::Backup exceeds the 1.9 GB safety limit for a single GitHub Release asset."
+            exit 1
+          fi
+
+          echo "BACKUP_DIR=$RUNNER_TEMP/supabase-backup" >> "$GITHUB_ENV"
+          echo "BACKUP_TAG=supabase-db-$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_ENV"
+
+      - name: Decrypt, unpack and verify the exact upload artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          IDENTITY_FILE="$RUNNER_TEMP/age-identity.txt"
+          RESTORE_DIR="$RUNNER_TEMP/verified-backup"
+          install -m 600 /dev/null "$IDENTITY_FILE"
+          printf '%s\n' "$AGE_IDENTITY" > "$IDENTITY_FILE"
+          mkdir -p "$RESTORE_DIR"
+
+          age -d -i "$IDENTITY_FILE" "$BACKUP_DIR/database-backup.tar.zst.age" | tar --zstd -xf - -C "$RESTORE_DIR"
+          cd "$RESTORE_DIR"
+          sha256sum --check SHA256SUMS
+
+          for file in roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json; do
+            test -s "$file" || { echo "::error::Decrypted archive is missing $file"; exit 1; }
+          done
+
+          echo "VERIFIED_BACKUP_DIR=$RESTORE_DIR" >> "$GITHUB_ENV"
+
+      - name: Restore into an isolated local Supabase stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESTORE_DIR="$RUNNER_TEMP/restore-check"
+          mkdir -p "$RESTORE_DIR"
+          supabase init --workdir "$RESTORE_DIR"
+          supabase db start --workdir "$RESTORE_DIR"
+
+          cd "$VERIFIED_BACKUP_DIR"
+          LOCAL_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+
+          # Main restore follows Supabase's documented order.
+          psql "$LOCAL_DB_URL" -X \
+            --single-transaction \
+            --variable ON_ERROR_STOP=1 \
+            --file roles.sql \
+            --file schema.sql \
+            --command 'SET session_replication_role = replica' \
+            --file data.sql
+
+          # Migration history is a separate optional restore transaction in Supabase's guide.
+          psql "$LOCAL_DB_URL" -X \
+            --single-transaction \
+            --variable ON_ERROR_STOP=1 \
+            --file migration_history_schema.sql \
+            --file migration_history_data.sql
+
+          mkdir -p "$BACKUP_DIR/reports/after_restore"
+          python3 "$GITHUB_WORKSPACE/scripts/verify_supabase_restore.py" \
+            --database-url "$LOCAL_DB_URL" \
+            --data-file data.sql \
+            --data-file migration_history_data.sql \
+            --report-dir "$BACKUP_DIR/reports/after_restore" \
+            --prefix after_restore \
+            --baseline-json "$BACKUP_DIR/reports/before_backup.json"
+
+          python3 - "$BACKUP_DIR" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          files = ["roles.sql", "schema.sql", "data.sql", "migration_history_schema.sql",
+                   "migration_history_data.sql", "manifest.json", "SHA256SUMS",
+                   "database-backup.tar.zst", "database-backup.tar.zst.age"]
+          report = {name: (root / name).stat().st_size for name in files}
+          (root / "reports" / "artifact_sizes.json").write_text(
+              json.dumps(report, indent=2) + "\n", encoding="utf-8")
+          (root / "reports" / "artifact_sizes.md").write_text(
+              "# Backup artifact sizes\n\n" +
+              "| File | Bytes | MiB |\n|---|---:|---:|\n" +
+              "".join(f"| {name} | {size:,} | {size / 1048576:.2f} |\n"
+                      for name, size in report.items()), encoding="utf-8")
+          PY
+
+          psql "$LOCAL_DB_URL" -X -v ON_ERROR_STOP=1 -c \
+            "SELECT 'restore_check_ok' AS status, count(*) AS restored_user_tables FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema', 'auth', 'storage', 'realtime', 'extensions', 'vault', 'graphql', 'graphql_public', 'supabase_functions');"
+
+      - name: Publish encrypted backup and prune expired releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$BACKUP_DIR"
+
+          cat > release-notes.md <<EOF
+          Automated encrypted Supabase logical database backup.
+          Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          Retention: 30 days
+          Format: Supabase CLI roles/schema/data and migration-history SQL, zstd-compressed and age-encrypted.
+          Supabase-managed Auth/Storage schemas, Storage object bytes, and project settings are not included.
+          EOF
+
+          gh release create "$BACKUP_TAG" database-backup.tar.zst.age \
+            reports/before_backup.json reports/before_backup.csv reports/before_backup.md \
+            reports/after_restore/after_restore.json reports/after_restore/after_restore.csv \
+            reports/after_restore/after_restore.md reports/after_restore/restore_comparison.json \
+            reports/after_restore/restore_comparison.md reports/artifact_sizes.json reports/artifact_sizes.md \
+            --repo "$BACKUP_REPOSITORY" \
+            --title "$BACKUP_TAG" \
+            --notes-file release-notes.md
+
+          # Confirm the release asset exists before deleting any older backup.
+          gh release view "$BACKUP_TAG" --repo "$BACKUP_REPOSITORY" --json assets | \
+            jq -e '.assets[] | select(.name == "database-backup.tar.zst.age" and .size > 0)' >/dev/null
+
+          CUTOFF_EPOCH="$(date -u -d "$BACKUP_RETENTION_DAYS days ago" +%s)"
+          gh release list --repo "$BACKUP_REPOSITORY" --limit 100 --json tagName,publishedAt | \
+            jq -r '.[] | select(.tagName | startswith("supabase-db-")) | [.tagName, .publishedAt] | @tsv' | \
+            while IFS=$'\t' read -r tag published_at; do
+              [[ -n "$tag" && -n "$published_at" ]] || continue
+              PUBLISHED_EPOCH="$(date -u -d "$published_at" +%s)"
+              if (( PUBLISHED_EPOCH < CUTOFF_EPOCH )); then
+                echo "Deleting expired backup release: $tag ($published_at)"
+                gh release delete "$tag" --repo "$BACKUP_REPOSITORY" --yes --cleanup-tag
+              fi
+            done
+
+          echo "Backup published: $BACKUP_TAG"

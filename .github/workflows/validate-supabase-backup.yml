@@ -1,0 +1,42 @@
+name: Validate Supabase backup workflow
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/supabase-cold-backup.yml"
+      - ".github/workflows/validate-supabase-backup.yml"
+      - "scripts/verify_supabase_restore.py"
+      - "tests/test_backup_restore_verifier.py"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/supabase-cold-backup.yml"
+      - ".github/workflows/validate-supabase-backup.yml"
+      - "scripts/verify_supabase_restore.py"
+      - "tests/test_backup_restore_verifier.py"
+
+permissions:
+  contents: read
+  checks: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Validate workflow syntax
+        uses: reviewdog/action-actionlint@v1
+        with:
+          fail_level: error
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'psycopg[binary]' pytest
+      - name: Test COPY dump row-count parser
+        run: python -m pytest -q tests/test_backup_restore_verifier.py
