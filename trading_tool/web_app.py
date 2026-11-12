@@ -843,7 +843,7 @@ def _refresh_market_temperature(market: str) -> None:
             snap["history"]=_market_temperature_history(market,30)
             snap["stored_at"]=time.time()
             import cache as _cache
-            _cache.set_json(f"market_temperature_v1_{market}",snap,_MARKET_TEMPERATURE_TTL)
+            _cache.set_json(f"market_temperature_v2_{market}",snap,_MARKET_TEMPERATURE_TTL)
             state["data"][market]=snap
         except Exception as exc: print(f"[market-temperature] {market} refresh failed: {type(exc).__name__}: {exc}")
         finally: state["refreshing"].discard(market)
@@ -861,7 +861,7 @@ async def market_temperature(market: str = Query("cn", regex="^(cn|us)$")):
             out=dict(current); out["cached"]=True; out["stale_during_session"]=bool(session_open and age>=_MARKET_TEMPERATURE_TTL)
             return JSONResponse(content=_to_jsonable(out),headers={"Cache-Control":"public, max-age=120"})
     try:
-        hit=await asyncio.wait_for(asyncio.to_thread(_cache.get_json,f"market_temperature_v1_{market}"),timeout=2.0)
+        hit=await asyncio.wait_for(asyncio.to_thread(_cache.get_json,f"market_temperature_v2_{market}"),timeout=2.0)
     except Exception:
         hit=None
     if isinstance(hit,dict) and hit.get("market")==market:
