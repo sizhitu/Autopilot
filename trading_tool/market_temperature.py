@@ -1,6 +1,7 @@
 """Market temperature v2: market-wide temperature, style leadership and industry heat."""
 from __future__ import annotations
 import logging, math
+from collections import Counter
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import numpy as np
@@ -76,21 +77,39 @@ def _risk_score_us(frame):
  if len(c)<60:return None
  p=_rank_score(float(c.iloc[-1]),c.tail(250)); return None if p is None else round(100-p,1)
 
+def _eastmoney_quote_day(value):
+ if value is None:return None
+ raw=str(value).strip()
+ try:
+  if raw.isdigit() and len(raw) in (12,14):
+   fmt="%Y%m%d%H%M" if len(raw)==12 else "%Y%m%d%H%M%S"
+   return datetime.strptime(raw,fmt).date().isoformat()
+  stamp=float(raw)
+  if stamp>1e12:stamp/=1000
+  if stamp>1e9:return datetime.fromtimestamp(stamp,timezone.utc).astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+ except (TypeError,ValueError,OverflowError,OSError):
+  return None
+ return None
+
 def _fetch_cn_breadth():
  url="https://push2.eastmoney.com/api/qt/clist/get"
- params={"pn":1,"pz":6000,"po":1,"np":1,"fltt":2,"invt":2,"fid":"f3","fs":"m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048","fields":"f12,f14,f3,f124"}
+ params={"pn":1,"pz":6000,"po":1,"np":1,"fltt":2,"invt":2,"fid":"f3","fs":"m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048","fields":"f12,f14,f3,f86"}
  r=requests.get(url,params=params,headers={"User-Agent":"Mozilla/5.0","Referer":"https://quote.eastmoney.com/"},timeout=12); r.raise_for_status()
- data=(r.json() or {}).get("data") or {}; rows=data.get("diff") or []; total=int(data.get("total") or len(rows)); changes=[]; stamps=[]
+ data=(r.json() or {}).get("data") or {}; raw_rows=data.get("diff") or []
+ rows=list(raw_rows.values()) if isinstance(raw_rows,dict) else list(raw_rows)
+ total=int(data.get("total") or len(rows)); changes=[]; quote_days=[]
  for row in rows:
   try:
    x=float(row.get("f3"))
    if math.isfinite(x) and x>-1000:
-    changes.append(x); stamp=float(row.get("f124"))
-    if stamp>0:stamps.append(stamp/1000 if stamp>1e12 else stamp)
-  except (TypeError,ValueError):pass
+    changes.append(x)
+    day=_eastmoney_quote_day(row.get("f86"))
+    if day:quote_days.append(day)
+  except (AttributeError,TypeError,ValueError):pass
  if total<1000 or len(changes)<1000 or len(changes)<total*.75:raise ValueError(f"Eastmoney breadth coverage insufficient: {len(changes)}/{total}")
- if not stamps:raise ValueError("Eastmoney breadth quote timestamp missing")
- day=datetime.fromtimestamp(max(stamps),timezone.utc).astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+ if not quote_days:raise ValueError("Eastmoney breadth quote timestamp missing")
+ day,count=Counter(quote_days).most_common(1)[0]
+ if count < len(changes)*.75:raise ValueError("Eastmoney breadth quote dates inconsistent")
  adv=sum(x>0 for x in changes); dec=sum(x<0 for x in changes); unchanged=sum(x==0 for x in changes)
  return {"score":round(adv/(adv+dec)*100,1) if adv+dec else None,"advancers":adv,"decliners":dec,"unchanged":unchanged,"universe":len(changes),"source":"Eastmoney A股全市场实时涨跌家数","data_date":day}
 
