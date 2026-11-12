@@ -151,7 +151,7 @@ class TestFibonacciDirectionalVolumeConfirmation:
         assert not FujimotoStrategy._is_directional_volume_confirmation(frame, 2, "bullish")
 
 
-    def test_history_calculates_causal_10_trading_day_win_rate(self, monkeypatch):
+    def test_history_calculates_causal_5_trading_day_win_rate(self, monkeypatch):
         dates = pd.date_range("2026-08-01", periods=13, freq="B")
         closes = [100.0] * 13
         closes[11] = 110.0  # first event: +10% after 10 trading bars
@@ -178,13 +178,13 @@ class TestFibonacciDirectionalVolumeConfirmation:
         monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci_bearish", lambda self, prefix, lookback=60: ([], 101, 99, []))
         events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
         assert len(events) == 2
-        assert {event["forward_10d_status"] for event in events} == {"matured"}
-        assert sorted(event["forward_10d_win"] for event in events) == [False, True]
-        assert all(event["forward_10d_win_rate"] == 0.5 for event in events)
-        assert all(event["forward_10d_sample_size"] == 2 for event in events)
+        assert {event["forward_5d_status"] for event in events} == {"matured"}
+        assert sorted(event["forward_5d_win"] for event in events) == [False, True]
+        assert all(event["forward_5d_win_rate"] == 0.5 for event in events)
+        assert all(event["forward_5d_sample_size"] == 2 for event in events)
 
-    def test_history_marks_last_ten_trading_days_as_pending(self, monkeypatch):
-        dates = pd.date_range("2026-08-01", periods=8, freq="B")
+    def test_history_marks_last_five_trading_days_as_pending(self, monkeypatch):
+        dates = pd.date_range("2026-08-01", periods=5, freq="B")
         frame = pd.DataFrame({
             "date": dates, "open": [100.0] * 8, "high": [101.0] * 8,
             "low": [99.0] * 8, "close": [100.0] * 8, "volume": [100.0] * 8,
@@ -201,8 +201,8 @@ class TestFibonacciDirectionalVolumeConfirmation:
         monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci_bearish", lambda self, prefix, lookback=60: ([], 101, 99, []))
         events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
         assert len(events) == 1
-        assert events[0]["forward_10d_status"] == "pending"
-        assert events[0]["forward_10d_win_rate"] is None
+        assert events[0]["forward_5d_status"] == "pending"
+        assert events[0]["forward_5d_win_rate"] is None
 
 
     def test_one_confirmation_candle_is_assigned_to_nearest_touched_fib_level(self):
@@ -262,7 +262,7 @@ class TestFibonacciDirectionalVolumeConfirmation:
 
         events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
         by_signal = {event["signal"]: event for event in events}
-        assert by_signal["放量止跌"]["forward_10d_sample_size"] == 1
-        assert by_signal["放量止跌"]["forward_10d_win_rate"] == 1.0
-        assert by_signal["阳线反包"]["forward_10d_sample_size"] == 1
-        assert by_signal["阳线反包"]["forward_10d_win_rate"] == 0.0
+        assert by_signal["放量止跌"]["forward_5d_sample_size"] == 1
+        assert by_signal["放量止跌"]["forward_5d_win_rate"] == 1.0
+        assert by_signal["阳线反包"]["forward_5d_sample_size"] == 1
+        assert by_signal["阳线反包"]["forward_5d_win_rate"] == 0.0
