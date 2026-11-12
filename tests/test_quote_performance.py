@@ -78,6 +78,16 @@ def test_fibonacci_history_expands_for_mixed_legacy_and_archive_snapshots():
     assert "break;" not in loader
 
 
+def test_fibonacci_legacy_migration_reads_both_bullish_and_bearish_levels():
+    source = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    loader = source[source.index("async function loadFibSignalHistory()"):
+                    source.index("function updateResults(data, meta, nineTurn)")]
+    assert "['bullish', 'fib_levels']" in loader
+    assert "['bearish', 'fib_bearish_levels']" in loader
+    assert "for (const [side, field] of" in loader
+    assert "side, level: fl.level, price: fl.price" in loader
+
+
 def test_fibonacci_history_deduplicates_archive_and_legacy_events_with_same_key():
     source = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
     loader = source[source.index("async function loadFibSignalHistory()"):
