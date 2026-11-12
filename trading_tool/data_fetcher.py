@@ -293,34 +293,37 @@ def _is_market_closed(d, market: str = "us") -> bool:
     return key in hol
 
 
-def _expected_session_date(market: str = "us"):
-    """最近应有收盘日：跳过周末和该市场假期。盘中未收盘则用上一交易日。"""
+def _expected_session_date(market: str = "us", now=None):
+    """最近应有收盘日；美股使用 IANA 时区自动处理夏令时。"""
     from datetime import datetime, timedelta, timezone, date
     try:
         if market == "cn":
-            now = datetime.now(timezone(timedelta(hours=8)))
-            d = now.date()
-            if now.hour < 15:
-                d = d - timedelta(days=1)
+            tz = timezone(timedelta(hours=8))
+            current = now.astimezone(tz) if now is not None and now.tzinfo else (now.replace(tzinfo=tz) if now is not None else datetime.now(tz))
+            d = current.date()
+            if current.hour < 15:
+                d -= timedelta(days=1)
         else:
-            now = datetime.now(timezone(timedelta(hours=-4)))
-            d = now.date()
-            if now.hour < 16:
-                d = d - timedelta(days=1)
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("America/New_York")
+            current = now.astimezone(tz) if now is not None and now.tzinfo else (now.replace(tzinfo=tz) if now is not None else datetime.now(tz))
+            d = current.date()
+            if current.hour < 16:
+                d -= timedelta(days=1)
         for _ in range(14):
             if not _is_market_closed(d, market):
                 return d
-            d = d - timedelta(days=1)
+            d -= timedelta(days=1)
         return d
     except Exception:
         d = date.today()
-        while d.weekday() >= 5:
-            d = d - timedelta(days=1)
+        while _is_market_closed(d, market):
+            d -= timedelta(days=1)
         return d
 
 
-def _bar_is_stale(last_date, market: str = "us", grace_days: int = 1) -> bool:
-    """最后一根 K 是否落后于该市场最近收盘日。假期（如 A 股国庆）不算延后。"""
+def _bar_is_stale(last_date, market: str = "us", grace_days: int = 0) -> bool:
+    """最后一根 K 是否落后于最近应有交易日；默认不容忍漏掉一个交易日。"""
     if last_date is None:
         return True
     try:
@@ -328,9 +331,9 @@ def _bar_is_stale(last_date, market: str = "us", grace_days: int = 1) -> bool:
         if last_date >= exp:
             return False
         delta = (exp - last_date).days
-        return delta > grace_days
+        return delta > max(0, int(grace_days or 0))
     except Exception:
-        return False
+        return True
 
 
 def _pick_freshest(frames):
@@ -652,25 +655,56 @@ class DataFetcher:
         last_d = _df_last_date(parsed) if parsed is not None else None
         exp_d = _expected_session_date("us")
         behind = bool(last_d and exp_d and last_d < exp_d)
-        if parsed is not None and len(parsed) >= 90:
+        if parsed is not None and len(parsed) >= 90 and not behind:
             _clear_yahoo_cooldown()
-        if parsed is not None and len(parsed) >= 90:
-            best = parsed
-            return best
-        if not candidates:
+            return parsed
+
+        if parsed is None:
             _trigger_yahoo_cooldown()
-        # Yahoo 完全失败才用 Nasdaq：至少让看板有现价，避免长期「--」
-        if not candidates:
+
+        # Yahoo 有长历史但日期落后时，也必须查询备用源；只把 Yahoo 缺失日期追加，
+        # 避免短备用序列覆盖长历史，也避免同日未复权价格覆盖 Yahoo 复权价格。
+        fallback_frames = []
+        if behind or not candidates:
             try:
                 df_n = self._fetch_us_stock_nasdaq(symbol, days)
                 if df_n is not None and len(df_n) > 0:
-                    candidates.append(df_n)
+                    fallback_frames.append(df_n)
             except Exception as ne:
                 last_error = f"{last_error}；Nasdaq: {ne}"
-        best = _merge_ohlc_frames(candidates)
-        if best is None or len(best) == 0:
-            best = _pick_freshest(candidates)
+
+            # Nasdaq 已补到预期交易日就不再请求 Stooq，控制每只股票的外部请求量。
+            nasdaq_last = _df_last_date(fallback_frames[0]) if fallback_frames else None
+            if exp_d is None or nasdaq_last is None or nasdaq_last < exp_d:
+                try:
+                    df_s = self._fetch_stooq(symbol, days)
+                    if df_s is not None and len(df_s) > 0:
+                        fallback_frames.append(df_s)
+                except Exception as se:
+                    last_error = f"{last_error}；Stooq: {se}"
+
+        best = parsed.copy() if parsed is not None and len(parsed) > 0 else None
+        if best is not None and fallback_frames:
+            import pandas as pd
+            base_last = _df_last_date(best)
+            newer = []
+            for frame in fallback_frames:
+                if frame is None or len(frame) == 0:
+                    continue
+                part = frame.copy()
+                part["date"] = pd.to_datetime(part["date"])
+                if base_last is not None:
+                    part = part[part["date"].dt.date > base_last]
+                if len(part):
+                    newer.append(part)
+            if newer:
+                best = _merge_ohlc_frames([best] + newer)
+        elif best is None and fallback_frames:
+            best = _merge_ohlc_frames(fallback_frames)
+
         if best is not None and len(best) > 0:
+            if _df_last_date(best) and _expected_session_date("us") <= _df_last_date(best):
+                _clear_yahoo_cooldown()
             return best
 
         raise ValueError(f"Yahoo/Nasdaq 均失败: {last_error}")

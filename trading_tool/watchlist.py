@@ -1805,8 +1805,13 @@ def _session_close_epoch(code: str, bar_date: str = "") -> float:
     from datetime import datetime, timezone, timedelta
     c = str(code or "")
     cn = c.isdigit() or c[:2].upper() in ("SH", "SZ", "BJ")
-    tz = timezone(timedelta(hours=8 if cn else -4))
-    close_h = 15 if cn else 16
+    if cn:
+        tz = timezone(timedelta(hours=8))
+        close_h = 15
+    else:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/New_York")
+        close_h = 16
     bd = (bar_date or "")[:10]
     if len(bd) < 10:
         bd = datetime.now(tz).strftime("%Y-%m-%d")
@@ -1998,7 +2003,7 @@ def _patch_row_price_date(row: dict, code: str, name: str = "") -> dict:
             _time.sleep(0.15)
             continue
         last_d = _df_last_date(df)
-        if last_d is not None and not _bar_is_stale(last_d, market=mkt, grace_days=1):
+        if last_d is not None and not _bar_is_stale(last_d, market=mkt):
             break
         _time.sleep(0.15)
     if df is None or len(df) < 1:
@@ -2015,7 +2020,7 @@ def _patch_row_price_date(row: dict, code: str, name: str = "") -> dict:
             last_d = _df_last_date(df)
         if last_d is not None:
             out["bar_date"] = last_d.strftime("%Y-%m-%d") if hasattr(last_d, "strftime") else str(last_d)[:10]
-        out["bar_stale"] = bool(_bar_is_stale(last_d, market=mkt, grace_days=1))
+        out["bar_stale"] = bool(_bar_is_stale(last_d, market=mkt))
         out["data_source"] = "price_date_only"
         out["pending"] = False
     except Exception as e:
