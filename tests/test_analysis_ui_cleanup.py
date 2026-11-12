@@ -211,3 +211,13 @@ def test_current_fibonacci_reference_rows_show_latest_signal_and_its_own_wave_st
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
     assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null)" in update_results
     assert "fib-wave-expired" in html
+
+
+def test_fibonacci_history_has_ten_trading_day_win_rate_column():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
+    assert '<span>10日胜率</span>' in loader
+    assert "forward_10d_win_rate" in loader
+    assert "forward_10d_sample_size" in loader
+    assert "样本不足" in loader
+    assert "10个交易日尚未走完" in loader
