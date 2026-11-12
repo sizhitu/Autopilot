@@ -87,3 +87,61 @@ class TestFibonacciSignalHistory:
         frame.index = [100, 101, 102]
         events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
         assert events == []
+
+
+class TestFibonacciHistoryExactOptimization:
+    def test_optimized_history_matches_reference_for_randomized_unique_date_series(self):
+        import numpy as np
+
+        rng = np.random.default_rng(20261112)
+        strategy = FujimotoStrategy()
+        for seed in range(12):
+            count = 75 + seed * 7
+            close = 100 + np.cumsum(rng.normal(0, 2, count))
+            spread = rng.uniform(0.2, 4.0, count)
+            frame = pd.DataFrame({
+                "date": pd.date_range("2025-01-01", periods=count, freq="B"),
+                "open": close + rng.normal(0, 1.2, count),
+                "high": close + spread,
+                "low": close - spread,
+                "close": close,
+                "volume": rng.uniform(100, 1000, count),
+            })
+            # Inject both bullish/bearish engulfing and volume spikes, plus long touch runs.
+            for i in range(2, count, 11):
+                frame.loc[i, "volume"] = frame.loc[i - 1, "volume"] * 1.35
+            optimized = strategy._build_fibonacci_signal_history(frame, lookback=60)
+            reference = strategy._build_fibonacci_signal_history_reference(frame, lookback=60)
+            assert optimized == reference, f"history mismatch for deterministic seed {seed}"
+
+    def test_optimized_history_does_not_call_prefix_fibonacci_calculators(self, monkeypatch):
+        frame = _fibonacci_test_bars(
+            lows=[80, 84.2, 84.2, 95, 84.2, 84.2, 84.2],
+            volumes=[100, 100, 130, 100, 100, 150, 300],
+        )
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("optimized replay must not re-run prefix Fib calculators")
+
+        monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci", forbidden)
+        monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci_bearish", forbidden)
+        strategy = FujimotoStrategy()
+        optimized = strategy._build_fibonacci_signal_history(frame)
+        assert isinstance(optimized, list)
+
+    def test_duplicate_calendar_dates_use_exact_legacy_compatibility_path(self, monkeypatch):
+        frame = _fibonacci_test_bars(
+            lows=[80, 84.2, 84.2, 95],
+            volumes=[100, 100, 130, 100],
+        )
+        frame.loc[2, "date"] = frame.loc[1, "date"]
+        calls = []
+        original = FujimotoStrategy._build_fibonacci_signal_history_reference
+
+        def tracked(self, df, lookback=60):
+            calls.append(True)
+            return original(self, df, lookback=lookback)
+
+        monkeypatch.setattr(FujimotoStrategy, "_build_fibonacci_signal_history_reference", tracked)
+        FujimotoStrategy()._build_fibonacci_signal_history(frame)
+        assert calls == [True]
