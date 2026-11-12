@@ -21,8 +21,16 @@ class TestBearishFibonacciSignals:
         # Establish a fixed 120 -> 80 swing; 0.786 rebound resistance is 111.44.
         return {
             "open": 110.0, "high": 120.0, "low": 80.0,
-            "close": 100.0, "volume": 1000.0,
+            "close": 100.0, "volume": 100.0,
         }
+
+    @staticmethod
+    def volume_warmup():
+        # Three valid prior observations are required by directional volume confirmation.
+        return [
+            {"open": 100.0, "high": 105.0, "low": 95.0, "close": 100.0, "volume": 100.0},
+            {"open": 100.0, "high": 105.0, "low": 95.0, "close": 100.0, "volume": 100.0},
+        ]
 
     @staticmethod
     def touch(open_, close, volume=100.0, high=111.5, low=100.0):
@@ -56,24 +64,26 @@ class TestBearishFibonacciSignals:
     def test_volume_rejection_confirms_once_using_same_1_2_threshold(self):
         frame = self.bars([
             self.anchor(),
+            *self.volume_warmup(),
             self.touch(108, 109, volume=100, high=111.5),
             self.touch(109, 108, volume=121, high=112.0),
         ])
         level = self.get_0786(frame)
         assert level.reacted is True
         assert level.reaction_signal == "放量受阻"
-        assert level.signal_date == "2026-08-03"
+        assert level.signal_date == "2026-08-06"
 
     def test_continuous_resistance_touches_emit_only_first_confirmation(self):
         frame = self.bars([
             self.anchor(),
+            *self.volume_warmup(),
             self.touch(108, 109, volume=100, high=111.5),
             self.touch(109, 108, volume=130, high=112.0),
             self.touch(109, 107, volume=250, high=112.0),
         ])
         level = self.get_0786(frame)
         assert level.reacted is True
-        assert level.signal_date == "2026-08-03"
+        assert level.signal_date == "2026-08-06"
 
     def test_new_confirmation_can_appear_after_price_leaves_and_retests(self):
         frame = self.bars([
