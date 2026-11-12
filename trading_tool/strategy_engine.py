@@ -992,13 +992,13 @@ class FujimotoStrategy:
                 "forward_10d_return_pct": round(float(forward_return), 4),
                 "forward_10d_win": bool(won),
             })
-            bucket = (event["side"], round(float(event["level"]), 3))
+            bucket = (event["side"], round(float(event["level"]), 3), event["signal"])
             stats = bucket_stats.setdefault(bucket, {"wins": 0, "samples": 0})
             stats["wins"] += int(won)
             stats["samples"] += 1
 
         for event in result:
-            stats = bucket_stats.get((event["side"], round(float(event["level"]), 3)))
+            stats = bucket_stats.get((event["side"], round(float(event["level"]), 3), event["signal"]))
             samples = int(stats["samples"]) if stats else 0
             event["forward_10d_sample_size"] = samples
             event["forward_10d_win_rate"] = (
