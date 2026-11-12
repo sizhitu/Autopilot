@@ -903,7 +903,6 @@ async def market_temperature(market: str = Query("cn", regex="^(cn|us)$")):
         restored=await asyncio.wait_for(asyncio.to_thread(_load_market_temperature_from_supabase,market),timeout=1.25)
     except Exception: restored=None
     if isinstance(restored,dict) and restored.get("temperature") is not None:
-        restored["history_db"]=_market_temperature_history(market,30)
         _MARKET_TEMPERATURE_CACHE["data"][market]=restored
         _refresh_market_temperature(market)
         restored.update({"cached":True,"stale":True,"supabase_restored":True})
