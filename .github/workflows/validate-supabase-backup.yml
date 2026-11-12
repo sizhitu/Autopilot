@@ -33,6 +33,9 @@ jobs:
       - name: Validate workflow syntax
         uses: reviewdog/action-actionlint@v1
         with:
+          # Validate only the backup workflows touched by this check. The
+          # repository-wide scan otherwise fails on unrelated legacy workflows.
+          actionlint_flags: ".github/workflows/supabase-cold-backup.yml .github/workflows/validate-supabase-backup.yml"
           fail_level: error
       - name: Install test dependencies
         run: |
