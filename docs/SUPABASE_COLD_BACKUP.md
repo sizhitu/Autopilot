@@ -7,9 +7,9 @@ This workflow creates one encrypted logical database backup every Sunday at 02:0
 Each private GitHub Release contains one asset:
 
 - `database-backup.tar.zst.age`: an age-encrypted zstd tar archive.
-- Inside the archive: `roles.sql`, `schema.sql`, `data.sql`, `manifest.json`, and `SHA256SUMS`.
+- Inside the archive: `roles.sql`, `schema.sql`, `data.sql`, `migration_history_schema.sql`, `migration_history_data.sql`, `manifest.json`, and `SHA256SUMS`.
 
-The Supabase CLI is used rather than raw `pg_dump`. It filters Supabase-managed/internal schemas and produces separate role, schema, and data exports. The data export excludes `storage.buckets_vectors` and `storage.vector_indexes` as recommended by Supabase.
+The Supabase CLI is used rather than raw `pg_dump`. It filters Supabase-managed/internal schemas and produces separate role, schema, and data exports. The data export excludes `storage.buckets_vectors` and `storage.vector_indexes` as recommended by Supabase. The `supabase_migrations` schema and its rows are exported separately so migration history can be preserved.
 
 **This is a logical PostgreSQL database backup, not a complete Supabase project export.** It does not contain the bytes of files stored in Supabase Storage, Edge Function source/secrets, Auth provider configuration, SMTP settings, API keys, or project-level settings. Storage object bytes and Edge Functions need a separate backup plan if they become part of the recovery requirement.
 
@@ -68,6 +68,8 @@ For a new Supabase project, follow the current Supabase Backup and Restore guide
 1. `roles.sql`
 2. `schema.sql`
 3. `data.sql`
+4. `migration_history_schema.sql`
+5. `migration_history_data.sql`
 
 Use the target project's Session pooler connection string with `psql`. Review Supabase's current restore guidance for role/privilege and extension differences before restoring. Project-level Auth settings, Storage object bytes, Edge Functions, and secrets must be restored separately.
 
