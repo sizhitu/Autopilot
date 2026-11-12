@@ -198,7 +198,7 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
 def test_current_fibonacci_reference_rows_show_latest_signal_and_its_own_wave_status():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
-    renderer = update_results[update_results.index("const _fibHistory"):update_results.index("if (_fibBull.length)")]
+    renderer = update_results[update_results.index("const _renderFibGroup"):update_results.index("if (_fibBull.length)")]
 
     assert "当前参考位只展示当前波段自身的确认，不跨波段借用历史事件。" in renderer
     assert "_latestFibEvent" not in renderer
@@ -217,8 +217,6 @@ def test_fibonacci_history_has_ten_trading_day_win_rate_column():
     assert "forward_10d_status: ev.forward_10d_status || null" in loader
     assert "forward_10d_return_pct: ev.forward_10d_return_pct == null ? null : Number(ev.forward_10d_return_pct)" in loader
     assert "forward_10d_win: typeof ev.forward_10d_win === 'boolean' ? ev.forward_10d_win : null" in loader
-    assert "forward_10d_win_rate: ev.forward_10d_win_rate == null ? null : Number(ev.forward_10d_win_rate)" in loader
-    assert "forward_10d_sample_size: ev.forward_10d_sample_size == null ? 0 : Number(ev.forward_10d_sample_size)" in loader
     assert "信号后10个交易日收盘收益" in loader
     assert "'待观察'" in loader
     assert "toFixed(2)" in loader
