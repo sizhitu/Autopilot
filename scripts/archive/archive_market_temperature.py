@@ -7,7 +7,7 @@ import pandas as pd
 
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument("--out",default="data"); args=ap.parse_args()
-    from trading_tool import supabase_client
+    import supabase_client
     if not supabase_client.using_supabase(): raise SystemExit("Supabase is not configured; refusing empty archive")
     rows=(supabase_client.get_service_client().table("market_temperature_daily").select("*")
           .order("trade_date",desc=True).limit(1000).execute().data or [])
