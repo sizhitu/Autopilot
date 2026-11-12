@@ -12,7 +12,7 @@ def test_temperature_weights_and_missing_data_gate():
 
 def test_temperature_score_and_regime(monkeypatch):
     import market_temperature as mt
-    monkeypatch.setattr(mt,"_fetch_frames",lambda f,s:([],[]))
+    monkeypatch.setattr(mt,"_fetch_frames",lambda f,s:({},[]))
     monkeypatch.setattr(mt,"_trend_score",lambda f:(70.,"2026-11-11"))
     monkeypatch.setattr(mt,"_activity_score",lambda f:60.)
     monkeypatch.setattr(mt,"_risk_score_cn",lambda f:80.)
@@ -23,7 +23,7 @@ def test_temperature_score_and_regime(monkeypatch):
 
 def test_temperature_is_withheld_when_breadth_missing(monkeypatch):
     import market_temperature as mt
-    monkeypatch.setattr(mt,"_fetch_frames",lambda f,s:([],[]))
+    monkeypatch.setattr(mt,"_fetch_frames",lambda f,s:({},[]))
     monkeypatch.setattr(mt,"_trend_score",lambda f:(70.,"2026-11-11"))
     monkeypatch.setattr(mt,"_activity_score",lambda f:60.)
     monkeypatch.setattr(mt,"_risk_score_cn",lambda f:80.)
