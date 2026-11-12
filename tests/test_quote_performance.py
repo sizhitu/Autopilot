@@ -94,5 +94,5 @@ def test_fibonacci_history_deduplicates_archive_and_legacy_events_with_same_key(
                     source.index("function updateResults(data, meta, nineTurn)")]
     assert "const key = [normalized.side, normalized.level, normalized.date, normalized.signal].join('|');" in loader
     assert "if (!existing) archivedEvents.set(key, normalized);" in loader
-    assert "else if (normalized.forward_10d_sample_size > 0)" in loader
+    assert "else if (normalized.forward_5d_sample_size > 0)" in loader
     assert "for (const item of items) collectSnapshot(parseRecord(item));" in loader
