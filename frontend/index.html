@@ -6327,7 +6327,7 @@ function updateResults(data, meta, nineTurn) {
     fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish');
   } else {
     // 沿用原版四段位价格展示：以分析窗口高低点计算参考回撤位。
-    // 这是价格参考，不代表已确认波段；只有上面的有效波段数据才可能出现★。
+    // 这是当前参考价格，不代表已确认波段；历史信号只显示其原始波段状态，不代表当前有效买点。
     const _chartData = (data && data.chart_data) || {};
     const _high = Number(_chartData.swing_high);
     const _low = Number(_chartData.swing_low);
