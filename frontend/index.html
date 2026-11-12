@@ -6313,7 +6313,7 @@ function updateResults(data, meta, nineTurn) {
       const signalDate = event ? event.signal_date : (fallbackSignal ? fl.signal_date : '');
       const signalSide = event ? event.side : side;
       const direction = !side && signalSide ? (signalSide === 'bearish' ? '↓ ' : '↑ ') : '';
-      const star = hasSignal ? '<span class="fib-star">★</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '—');
+      const star = hasSignal ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '—');
       const rx = hasSignal ? `<span class="fib-reaction">${direction}${signal}</span>` : '';
       const status = event ? _fibWaveStatus(event) : (fallbackSignal ? '无法追溯' : '—');
       const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
