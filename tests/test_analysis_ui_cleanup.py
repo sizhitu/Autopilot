@@ -110,7 +110,7 @@ def _fibonacci_test_bars(lows, volumes):
             "open": 86.0,
             "high": 100.0,
             "low": float(low),
-            "close": 85.0 if low < 90 else 96.0,
+            "close": (95.0 + i * 0.1) if low < 90 else 96.0,
             "volume": float(volume),
         })
     rows[0]["low"] = 80.0
@@ -134,7 +134,7 @@ def test_fibonacci_confirmation_is_emitted_once_per_continuous_touch_episode():
     level = _get_fibonacci_0786(frame)
 
     assert level.reacted is True
-    assert level.signal_date == "2026-08-03"
+    assert level.signal_date == "2026-08-04"
     assert level.reaction_signal == "放量止跌"
 
 

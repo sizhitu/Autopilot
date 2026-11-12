@@ -87,3 +87,65 @@ class TestFibonacciSignalHistory:
         frame.index = [100, 101, 102]
         events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
         assert events == []
+
+
+
+class TestFibonacciDirectionalVolumeConfirmation:
+    @staticmethod
+    def _bars(last):
+        rows = [
+            {"open": 100, "high": 102, "low": 98, "close": 100, "volume": 100},
+            {"open": 100, "high": 102, "low": 98, "close": 101, "volume": 110},
+            {"open": 101, "high": 103, "low": 99, "close": 100, "volume": 90},
+            {"open": 100, "high": 102, "low": 98, "close": 101, "volume": 100},
+            {"open": 101, "high": 103, "low": 99, "close": 100, "volume": 100},
+        ]
+        rows.append(last)
+        frame = pd.DataFrame(rows)
+        frame["date"] = pd.date_range("2026-10-01", periods=len(frame), freq="D")
+        return frame
+
+    def test_bullish_volume_confirmation_requires_bullish_price_action(self):
+        frame = self._bars({
+            "open": 100, "high": 105, "low": 99, "close": 104,
+            "volume": 150,
+        })
+        assert FujimotoStrategy._is_directional_volume_confirmation(frame, 5, "bullish")
+        assert not FujimotoStrategy._is_directional_volume_confirmation(frame, 5, "bearish")
+
+    def test_bearish_volume_confirmation_requires_bearish_price_action(self):
+        frame = self._bars({
+            "open": 104, "high": 105, "low": 98, "close": 99,
+            "volume": 150,
+        })
+        assert FujimotoStrategy._is_directional_volume_confirmation(frame, 5, "bearish")
+        assert not FujimotoStrategy._is_directional_volume_confirmation(frame, 5, "bullish")
+
+    def test_volume_spike_without_directional_close_is_not_a_confirmation(self):
+        cases = [
+            {"open": 100, "high": 105, "low": 99, "close": 100, "volume": 150},
+            {"open": 101, "high": 105, "low": 99, "close": 100, "volume": 150},
+            {"open": 100, "high": 105, "low": 99, "close": 104, "volume": 110},
+        ]
+        for candle in cases:
+            frame = self._bars(candle)
+            assert not FujimotoStrategy._is_directional_volume_confirmation(frame, 5, "bullish")
+            assert not FujimotoStrategy._is_directional_volume_confirmation(frame, 5, "bearish")
+
+    def test_bullish_and_bearish_volume_confirmations_are_mutually_exclusive(self):
+        bullish = self._bars({
+            "open": 100, "high": 105, "low": 99, "close": 104, "volume": 150,
+        })
+        bearish = self._bars({
+            "open": 104, "high": 105, "low": 98, "close": 99, "volume": 150,
+        })
+        assert FujimotoStrategy._is_directional_volume_confirmation(bullish, 5, "bullish")
+        assert not FujimotoStrategy._is_directional_volume_confirmation(bullish, 5, "bearish")
+        assert FujimotoStrategy._is_directional_volume_confirmation(bearish, 5, "bearish")
+        assert not FujimotoStrategy._is_directional_volume_confirmation(bearish, 5, "bullish")
+
+    def test_requires_at_least_three_prior_volume_observations(self):
+        frame = self._bars({
+            "open": 100, "high": 105, "low": 99, "close": 104, "volume": 150,
+        }).iloc[:3].copy()
+        assert not FujimotoStrategy._is_directional_volume_confirmation(frame, 2, "bullish")

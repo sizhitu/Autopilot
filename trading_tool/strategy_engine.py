@@ -420,6 +420,52 @@ class FujimotoStrategy:
     #  工具层：斐波那契
     # ================================================================
 
+    @staticmethod
+    def _is_directional_volume_confirmation(df: pd.DataFrame, idx: int, side: str) -> bool:
+        """
+        放量确认必须同时具备量能与价格方向证据，不能仅凭单日成交量跳升定性。
+        - 量能：当日成交量 > 前 5 根（不含当日）均量的 1.2 倍；
+        - 多侧：阳线、收盘高于前收，且收盘位于当日振幅上方 60%；
+        - 空侧：阴线、收盘低于前收，且收盘位于当日振幅下方 40%。
+        多空条件互斥；数据不足、零振幅或无效数值均不确认。
+        """
+        if side not in ("bullish", "bearish") or idx <= 0 or idx >= len(df):
+            return False
+        required = {"open", "high", "low", "close", "volume"}
+        if not required.issubset(df.columns):
+            return False
+
+        candle = df.iloc[idx]
+        prev = df.iloc[idx - 1]
+        prior_volume = pd.to_numeric(
+            df["volume"].iloc[max(0, idx - 5):idx], errors="coerce"
+        ).dropna()
+        values = [
+            candle["open"], candle["high"], candle["low"],
+            candle["close"], candle["volume"], prev["close"]
+        ]
+        if len(prior_volume) < 3 or not np.isfinite(np.asarray(values, dtype=float)).all():
+            return False
+        baseline = float(prior_volume.mean())
+        day_range = float(candle["high"] - candle["low"])
+        if baseline <= 0 or day_range <= 0:
+            return False
+        if float(candle["volume"]) <= baseline * 1.2:
+            return False
+
+        close_location = (float(candle["close"]) - float(candle["low"])) / day_range
+        if side == "bullish":
+            return (
+                candle["close"] > candle["open"]
+                and candle["close"] > prev["close"]
+                and close_location >= 0.60
+            )
+        return (
+            candle["close"] < candle["open"]
+            and candle["close"] < prev["close"]
+            and close_location <= 0.40
+        )
+
     def _calc_fibonacci(self, df: pd.DataFrame, lookback: int = 60) -> tuple:
         """
         计算斐波那契回撤与扩展位
@@ -483,8 +529,8 @@ class FujimotoStrategy:
                                 candle['open'] < prev['close']):
                             episode_confirmation = (idx, "阳线反包确认")
                             break
-                        # 放量止跌：同一轮触及过程中首次出现量能明显放大
-                        if df['volume'].iloc[idx] > df['volume'].iloc[idx - 1] * 1.2:
+                        # 放量止跌：放量 + 阳线收复前收 + 收盘位于当日振幅上部
+                        if self._is_directional_volume_confirmation(df, idx, "bullish"):
                             episode_confirmation = (idx, "放量止跌")
                             break
 
@@ -578,8 +624,8 @@ class FujimotoStrategy:
                                 candle['open'] > prev['close']):
                             episode_confirmation = (idx, "阴线反包受阻")
                             break
-                        # 与上涨侧保持一致：同一轮触及中首次出现量能较前一日放大20%。
-                        if df['volume'].iloc[idx] > df['volume'].iloc[idx - 1] * 1.2:
+                        # 放量受阻：放量 + 阴线跌破前收 + 收盘位于当日振幅下部
+                        if self._is_directional_volume_confirmation(df, idx, "bearish"):
                             episode_confirmation = (idx, "放量受阻")
                             break
 
