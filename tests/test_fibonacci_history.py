@@ -115,7 +115,7 @@ class TestFibonacciDirectionalVolumeConfirmation:
 
     def test_bearish_volume_confirmation_requires_bearish_price_action(self):
         frame = self._bars({
-            "open": 104, "high": 105, "low": 99, "close": 100,
+            "open": 104, "high": 105, "low": 98, "close": 99,
             "volume": 150,
         })
         assert FujimotoStrategy._is_directional_volume_confirmation(frame, 5, "bearish")
@@ -137,7 +137,7 @@ class TestFibonacciDirectionalVolumeConfirmation:
             "open": 100, "high": 105, "low": 99, "close": 104, "volume": 150,
         })
         bearish = self._bars({
-            "open": 104, "high": 105, "low": 99, "close": 100, "volume": 150,
+            "open": 104, "high": 105, "low": 98, "close": 99, "volume": 150,
         })
         assert FujimotoStrategy._is_directional_volume_confirmation(bullish, 5, "bullish")
         assert not FujimotoStrategy._is_directional_volume_confirmation(bullish, 5, "bearish")
