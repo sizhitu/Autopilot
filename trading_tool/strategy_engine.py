@@ -659,7 +659,6 @@ class FujimotoStrategy:
         for fl in fib_levels:
             if fl.reacted and fl.signal_date:
                 by_date.setdefault(str(fl.signal_date)[:10], []).append(fl)
-        date_to_close = {}
         if "date" in df.columns:
             dates = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
         else:
