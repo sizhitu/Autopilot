@@ -96,7 +96,7 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
     assert "aria-label=\"强信号\"" in html
     assert "data.fib_signal_history" in html
     assert 'class="fib-history-date"' in html
-    assert 'class="fib-star">★确认</span>' in html
+    assert 'class="fib-star">★</span>' in html
     assert '.fib-history-bullish .fib-history-direction { color:var(--green); }' in html
     assert '.fib-history-bearish .fib-history-direction { color:var(--red); }' in html
     assert '.fib-history-row { padding:7px 0; border-bottom:1px solid var(--border); font-size:11px; }' in html
