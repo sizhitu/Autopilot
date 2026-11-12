@@ -40,7 +40,7 @@ def _clean_frame(frame):
  if frame is None or not isinstance(frame,pd.DataFrame) or frame.empty or not {"date","close"}.issubset(frame.columns): return None
  df=frame.copy(); df["date"]=pd.to_datetime(df["date"],errors="coerce").dt.tz_localize(None); df["close"]=pd.to_numeric(df["close"],errors="coerce")
  if "volume" in df: df["volume"]=pd.to_numeric(df["volume"],errors="coerce")
- df=df.dropna(subset=["date","close"]); df=df[df["close"]>0].sort_values("date").drop_duplicates("date")
+ df=df.dropna(subset=["date","close"]).sort_values("date").drop_duplicates("date")
  return df.reset_index(drop=True) if len(df)>=60 else None
 
 def _rank_score(value,history):
@@ -138,6 +138,7 @@ def _industry_score(frame,benchmark):
  if frame is None or benchmark is None or len(frame)<220 or len(benchmark)<220:return None
  joined=pd.merge(frame[["date","close"]],benchmark[["date","close"]],on="date",suffixes=("_asset","_market"),how="inner").dropna()
  if len(joined)<61 or not _fresh(frame,benchmark["date"].iloc[-1]):return None
+ if (joined["close_asset"]<=0).any() or (joined["close_market"]<=0).any():return None
  a=joined["close_asset"].astype(float); m=joined["close_market"].astype(float)
  rel60=(float(a.iloc[-1]/a.iloc[-61]))/(float(m.iloc[-1]/m.iloc[-61]))-1; rel_score=50+50*math.tanh(rel60*5)
  c=frame["close"].astype(float); last=float(c.iloc[-1]); ma50=float(c.tail(50).mean()); ma200=float(c.tail(200).mean())
