@@ -2,7 +2,10 @@
 """Calculate, persist, and cold-archive daily CN/US market temperature snapshots."""
 from __future__ import annotations
 import argparse
+import json
+import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 import pandas as pd
@@ -40,7 +43,24 @@ def main():
             import cache
             snap["stored_at"]=time.time()
             cache.set_json(f"market_temperature_v3_{market}",snap,18*3600)
-            print(f"{market}: {snap.get('temperature')} / {snap.get('regime')} / coverage={snap.get('coverage')}% / {day}")
+            # Small JSON sidecar is the API's last-resort display cache; Parquet
+            # remains the historical cold archive. Write atomically to avoid
+            # readers observing a partially written file.
+            sidecar_dir=Path(args.out)/"market"/"temperature"
+            sidecar_dir.mkdir(parents=True,exist_ok=True)
+            parquet_file=f"market/temperature/{day[:4]}/{day[5:7]}/{day[8:10]}.parquet"
+            sidecar={"market":market,"trade_date":day,"parquet_file":parquet_file,"snapshot":snap}
+            fd,tmp_name=tempfile.mkstemp(prefix=f".latest_{market}.",suffix=".tmp",dir=sidecar_dir)
+            try:
+                with os.fdopen(fd,"w",encoding="utf-8") as fp:
+                    json.dump(sidecar,fp,ensure_ascii=False,separators=(",",":"),default=str)
+                    fp.flush(); os.fsync(fp.fileno())
+                os.replace(tmp_name,sidecar_dir/f"latest_{market}.json")
+            finally:
+                try:
+                    if os.path.exists(tmp_name):os.unlink(tmp_name)
+                except OSError:pass
+            print(f"{market}: {snap.get('temperature')} / {snap.get('regime')} / coverage={snap.get('coverage')}% / {day}; cold sidecar written")
         except Exception as exc:
             print(f"{market}: snapshot failed: {type(exc).__name__}: {exc}")
     rows=(client.table("market_temperature_daily").select("*")
