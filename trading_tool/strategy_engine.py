@@ -1057,7 +1057,8 @@ class FujimotoStrategy:
     # ================================================================
 
     def analyze(self, df: pd.DataFrame, current_position_pct: float = 0,
-                _no_copy: bool = False, _lite: bool = False) -> StrategyResult:
+                _no_copy: bool = False, _lite: bool = False,
+                include_fib_history: bool = True) -> StrategyResult:
         """
         完整三层分析
 
@@ -1066,6 +1067,7 @@ class FujimotoStrategy:
             current_position_pct: 当前持仓比例
             _no_copy: 回测热路径可 True（只读、调用方保证不共享可变状态）
             _lite: 回测加速：跳过周/月量能重采样与价格三角（最耗时，对阶梯成交影响很小）
+            include_fib_history: 是否构建逐日斐波那契历史事件；看板只需当前信号时应关闭
         Returns:
             StrategyResult
         """
@@ -1419,7 +1421,10 @@ class FujimotoStrategy:
             "swing_low": swing_low,
             "fib_levels": fib_levels,
             "fib_bearish_levels": fib_bearish_levels,
-            "fib_signal_history": [] if _lite else self._build_fibonacci_signal_history(df),
+            "fib_signal_history": (
+                self._build_fibonacci_signal_history(df)
+                if include_fib_history and not _lite else []
+            ),
             "fib_swing": fib_swing,
             "target_prices": target_prices,
             "mas": {p: v for p, v in mas.items() if v is not None},

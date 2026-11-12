@@ -357,3 +357,23 @@ def test_watchlist_cold_start_does_not_read_persisted_status_serially_in_request
     compute_end = source.index("\nif __name__ == \"__main__\"", compute_start)
     compute = source[compute_start:compute_end]
     assert "persisted = _load_persisted_status(cu)" in compute
+
+
+def test_watchlist_strategy_skips_full_fibonacci_history_replay():
+    strategy_source = Path("trading_tool/strategy_engine.py").read_text(encoding="utf-8")
+    watchlist_source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+
+    assert "include_fib_history: bool = True" in strategy_source
+    assert "if include_fib_history and not _lite else []" in strategy_source
+    assert watchlist_source.count("strategy.analyze(df, include_fib_history=False)") == 2
+
+
+def test_watchlist_user_rows_are_loaded_once_and_offloaded_from_event_loop():
+    source = Path("trading_tool/web_app.py").read_text(encoding="utf-8")
+    start = source.index('@app.get("/api/watchlist")')
+    end = source.index('\n\n@app.', start + 1)
+    body = source[start:end]
+
+    assert "await asyncio.to_thread(watchlist_store.get_all, user_id, token or None)" in body
+    assert "watchlist_items=items" in body
+    assert body.count("watchlist_store.get_all(") == 0

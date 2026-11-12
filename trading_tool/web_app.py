@@ -1913,11 +1913,22 @@ async def get_watchlist(refresh: bool = False, hard: bool = False,
         if user and not is_admin:
             try:
                 import user_store
-                p = user_store.get_or_create_profile(user["id"], user.get("email") or "")
+                p = await asyncio.to_thread(
+                    user_store.get_or_create_profile,
+                    user["id"],
+                    user.get("email") or "",
+                )
                 is_admin = bool(p.get("is_admin"))
             except Exception:
                 pass
         token = _bearer(authorization) if authorization else ""
+        # 一次读取同时供看板计算、排序和备注使用，避免重复访问 Supabase。
+        items = None
+        if user_id:
+            try:
+                items = await asyncio.to_thread(watchlist_store.get_all, user_id, token or None)
+            except Exception:
+                items = None
         data = await asyncio.to_thread(
             get_watchlist_status,
             user_id,
@@ -1925,15 +1936,16 @@ async def get_watchlist(refresh: bool = False, hard: bool = False,
             is_admin=is_admin,
             access_token=token or None,
             hard=bool(hard),
+            watchlist_items=items,
         )
         data["user_scoped"] = user_id is not None
         if not isinstance(data.get("stocks"), list):
             data["stocks"] = []
         if user_id:
             try:
-                items = watchlist_store.get_all(user_id, token or None)
-                order = [i["symbol"] for i in items]
-                notes = {i["symbol"]: (i.get("note") or "") for i in items}
+                rows = items if items is not None else []
+                order = [i["symbol"] for i in rows if i.get("symbol")]
+                notes = {i["symbol"]: (i.get("note") or "") for i in rows if i.get("symbol")}
                 if order and data["stocks"]:
                     rank = {s: i for i, s in enumerate(order)}
                     data["stocks"].sort(key=lambda x: rank.get(x.get("code"), 1 << 30))

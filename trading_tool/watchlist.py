@@ -978,7 +978,8 @@ def compute_stock_status_from_df(code: str, name: str, df) -> StockStatus:
             pass
 
         strategy = FujimotoStrategy(total_capital=100000)
-        result = strategy.analyze(df)
+        # 看板只展示当前 Fib 位与当前信号；逐日历史重放由分析页单独负责。
+        result = strategy.analyze(df, include_fib_history=False)
         status.trend = result.trend.value
         nt_signal = result.signal.value
         nt = calc_nine_turn_display(df)
@@ -1270,7 +1271,7 @@ def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
             pass
 
         strategy = FujimotoStrategy(total_capital=100000)
-        result = strategy.analyze(df)
+        result = strategy.analyze(df, include_fib_history=False)
         status.trend = result.trend.value
         nt_signal = result.signal.value  # 策略原始信号：买入/卖出/持有/加仓/观望
         nt = calc_nine_turn_display(df)
@@ -2854,7 +2855,8 @@ def _background_refresh(key, items, user_id, bust_status_cache: bool = False):
 
 
 def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = False,
-                         access_token: str = None, hard: bool = False) -> dict:
+                         access_token: str = None, hard: bool = False,
+                         watchlist_items: list = None) -> dict:
     """
     获取关注股票看板状态（接口永远秒回）。
       - 已登录且有自选 → 计算该用户看板
@@ -2868,7 +2870,14 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
         user_items = None
         read_err = None
         try:
-            user_items = get_user_watchlist_symbols(user_id, access_token)
+            if watchlist_items is None:
+                user_items = get_user_watchlist_symbols(user_id, access_token)
+            else:
+                user_items = [
+                    (str(row.get("symbol") or "").strip().upper(), str(row.get("name") or ""))
+                    for row in watchlist_items
+                    if isinstance(row, dict) and str(row.get("symbol") or "").strip()
+                ]
         except Exception as e:
             read_err = str(e)[:120]
             user_items = None
