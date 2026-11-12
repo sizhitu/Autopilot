@@ -628,7 +628,7 @@ class FujimotoStrategy:
             return [], window_high, window_low, []
         swing_low = float(swing["start_price"])
         swing_high = float(swing["end_price"])
-        anchor_end_idx = int(swing["end_idx"])
+        anchor_confirmation_idx = int(swing["confirmation_idx"])
         diff = swing_high - swing_low
 
         if diff <= 0:
@@ -658,7 +658,7 @@ class FujimotoStrategy:
                 # 因成交量较前一日增加 20% 而反复生成同一条“放量止跌”信号。
                 near_mask = ((df['low'] <= price * 1.01) &
                              (df['low'] >= price * 0.99)).to_numpy()
-                near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_end_idx))
+                near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_confirmation_idx))
                 episodes = []
                 for pos in near_positions:
                     if not episodes or pos > episodes[-1][-1] + 1:
@@ -734,7 +734,7 @@ class FujimotoStrategy:
             return [], window_high, window_low, []
         swing_high = float(swing["start_price"])
         swing_low = float(swing["end_price"])
-        anchor_end_idx = int(swing["end_idx"])
+        anchor_confirmation_idx = int(swing["confirmation_idx"])
         diff = swing_high - swing_low
 
         if diff <= 0:
@@ -760,7 +760,7 @@ class FujimotoStrategy:
                 # 对称于上涨侧：用 K 线高点判断触及阻力区。
                 near_mask = ((df['high'] <= price * 1.01) &
                              (df['high'] >= price * 0.99)).to_numpy()
-                near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_end_idx))
+                near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_confirmation_idx))
                 episodes = []
                 for pos in near_positions:
                     if not episodes or pos > episodes[-1][-1] + 1:
