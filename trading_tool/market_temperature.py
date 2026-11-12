@@ -27,10 +27,10 @@ def _rank_score(value, history):
 def _trend_score(frames):
     scores=[]; dates=[]
     for df in frames:
-        if df is None or len(df)<60: continue
-        c=df["close"].astype(float); last=float(c.iloc[-1]); ma20=float(c.tail(20).mean()); ma50=float(c.tail(50).mean())
+        if df is None or len(df)<220: continue
+        c=df["close"].astype(float); last=float(c.iloc[-1]); ma50=float(c.tail(50).mean()); ma200=float(c.tail(200).mean())
         ret20=last/float(c.iloc[-21])-1 if c.iloc[-21] else 0
-        structure=(int(last>ma20)+int(last>ma50)+int(ma20>ma50))/3*70
+        structure=(int(last>ma50)+int(last>ma200)+int(ma50>ma200))/3*70
         momentum=max(0.,min(30.,15.+ret20*300))
         scores.append(structure+momentum); dates.append(str(df["date"].iloc[-1].date()))
     return (round(float(np.mean(scores)),1),max(dates)) if scores else (None,None)
@@ -134,7 +134,7 @@ def build_market_temperature_snapshot(market,fetcher=None):
     risk_date=str(risk_frame["date"].iloc[-1].date()) if risk_frame is not None else None
     components={
       "breadth":{"score":breadth_score,"weight":WEIGHTS["breadth"],"source":breadth.get("source"),"data_date":breadth_date,"detail":breadth},
-      "trend":{"score":trend,"weight":WEIGHTS["trend"],"source":"宽基指数MA20/MA50结构与20日动量","data_date":trend_date,"samples":len(frames)},
+      "trend":{"score":trend,"weight":WEIGHTS["trend"],"source":"宽基指数MA50/MA200结构与20日动量","data_date":trend_date,"samples":len(frames)},
       "activity":{"score":activity,"weight":WEIGHTS["activity"],"source":f"{activity_symbol}近20日均量的250日历史分位","data_date":str(activity_frame["date"].iloc[-1].date()) if activity_frame is not None else None},
       "risk":{"score":risk,"weight":WEIGHTS["risk"],"source":risk_source,"data_date":risk_date}}
     coverage=round(sum(x["weight"] for x in components.values() if x["score"] is not None),1)
