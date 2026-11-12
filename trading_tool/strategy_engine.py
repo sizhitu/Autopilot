@@ -678,6 +678,31 @@ class FujimotoStrategy:
                     fl.signal_date = None
         return fib_levels
 
+    @staticmethod
+    def _fib_touch_episodes(df: pd.DataFrame, price: float, anchor_confirmation_idx: int) -> list:
+        """
+        Return consecutive-row Fib touch episodes strictly after the confirmed
+        swing anchor. Restricting the scan to this suffix is exactly equivalent
+        to masking the full prefix, while avoiding rescanning rows before the
+        anchor during every historical replay step.
+        """
+        scan_start = int(anchor_confirmation_idx) + 1
+        if scan_start >= len(df):
+            return []
+        scan = df.iloc[scan_start:]
+        near_mask = (
+            (scan["low"] <= price * 1.01)
+            & (scan["high"] >= price * 0.99)
+        ).to_numpy()
+        near_positions = np.flatnonzero(near_mask) + scan_start
+        episodes = []
+        for pos in near_positions:
+            if not episodes or pos > episodes[-1][-1] + 1:
+                episodes.append([int(pos)])
+            else:
+                episodes[-1].append(int(pos))
+        return episodes
+
     def _calc_fibonacci(self, df: pd.DataFrame, lookback: int = 60) -> tuple:
         """
         计算斐波那契回撤与扩展位
@@ -722,15 +747,7 @@ class FujimotoStrategy:
                 # 同一轮测试中只记录首次满足确认条件的交易日，避免每天重复
                 # 因成交量较前一日增加 20% 而反复生成同一条“放量止跌”信号。
                 # K线完整振幅与Fib容差带相交即视为触及，不能要求low本身落在窄带内。
-                near_mask = ((df['low'] <= price * 1.01) &
-                             (df['high'] >= price * 0.99)).to_numpy()
-                near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_confirmation_idx))
-                episodes = []
-                for pos in near_positions:
-                    if not episodes or pos > episodes[-1][-1] + 1:
-                        episodes.append([int(pos)])
-                    else:
-                        episodes[-1].append(int(pos))
+                episodes = self._fib_touch_episodes(df, price, anchor_confirmation_idx)
 
                 # 若历史上有多轮触及，只保留最近一轮中首次确认的信号。
                 # 若最近一轮尚未确认，则沿用最近一轮已有确认事件，避免旧信号消失。
