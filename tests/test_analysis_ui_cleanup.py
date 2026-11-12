@@ -219,6 +219,11 @@ def test_fibonacci_history_has_ten_trading_day_win_rate_column():
     assert '<span>10日胜率</span>' in loader
     assert "forward_10d_win_rate" in loader
     assert "forward_10d_sample_size" in loader
+    assert "forward_10d_status: ev.forward_10d_status || null" in loader
+    assert "forward_10d_return_pct: ev.forward_10d_return_pct == null ? null : Number(ev.forward_10d_return_pct)" in loader
+    assert "forward_10d_win: typeof ev.forward_10d_win === 'boolean' ? ev.forward_10d_win : null" in loader
+    assert "forward_10d_win_rate: ev.forward_10d_win_rate == null ? null : Number(ev.forward_10d_win_rate)" in loader
+    assert "forward_10d_sample_size: ev.forward_10d_sample_size == null ? 0 : Number(ev.forward_10d_sample_size)" in loader
     assert "样本不足" in loader
     assert "10个交易日尚未走完" in loader
 
