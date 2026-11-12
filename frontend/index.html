@@ -6170,13 +6170,13 @@ async function loadFibSignalHistory() {
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span><span>10日胜率</span></div>' + events.slice(0,50).map(ev => {
+    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span><span>10日表现</span></div>' + events.slice(0,50).map(ev => {
       const bearish = ev.side === 'bearish';
       const sideClass = bearish ? 'fib-history-bearish' : 'fib-history-bullish';
       const direction = bearish ? '↓' : '↑';
       const sideLabel = bearish ? '下跌侧' : '上涨侧';
       return '<div class="fib-history-row ' + sideClass + '"><span class="fib-history-signal" title="' + sideLabel + '"><span class="fib-history-direction" aria-label="' + sideLabel + '">' + direction + '</span><span class="fib-history-star" aria-label="强信号">★</span><span class="fib-history-signal-text">' + esc(ev.signal) + '</span></span>' +
-        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-win-rate" title="' + esc(ev.forward_10d_return_pct == null ? '10个交易日尚未走完' : ('信号后10个交易日收益 ' + ev.forward_10d_return_pct + '%')) + '">' + (Number.isFinite(Number(ev.forward_10d_win_rate)) && Number(ev.forward_10d_sample_size) > 0 ? (Number(ev.forward_10d_win_rate) * 100).toFixed(0) + '%·' + esc(ev.forward_10d_sample_size) : '样本不足') + '</span></div>';
+        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-win-rate" title="' + esc(ev.forward_10d_return_pct == null ? '信号后第10个交易日收盘收益，尚未成熟则继续观察' : ('信号后10个交易日收盘收益 ' + ev.forward_10d_return_pct + '%')) + '">' + (ev.forward_10d_status === 'matured' && Number.isFinite(Number(ev.forward_10d_return_pct)) ? ((Number(ev.forward_10d_return_pct) > 0 ? '+' : '') + Number(ev.forward_10d_return_pct).toFixed(2) + '%') : '待观察') + '</span></div>';
     }).join('');
   } catch(e) {
     if (previousHTML && previousHTML.indexOf('fib-history-row') >= 0) { box.innerHTML=previousHTML; box.insertAdjacentHTML('afterbegin','<div class="fib-history-warning">历史更新失败，保留上次数据</div>'); }
@@ -6298,42 +6298,20 @@ function updateResults(data, meta, nineTurn) {
   // 但参考价位不参与信号判断，也绝不显示确认星号。
   const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];
   const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];
-  const _fibHistory = Array.isArray(data && data.fib_signal_history) ? data.fib_signal_history : [];
-  const _fibAsOf = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10);
-  const _latestFibEvent = (level, side) => {
-    const matches = _fibHistory.filter(ev => {
-      if (!ev || !ev.signal_date || !ev.signal || !ev.side) return false;
-      if (side && ev.side !== side) return false;
-      return Math.abs(Number(ev.level) - Number(level)) < 0.0005;
-    });
-    matches.sort((a, b) => String(b.signal_date).localeCompare(String(a.signal_date)));
-    return matches[0] || null;
-  };
-  const _fibWaveStatus = ev => {
-    const confirmed = String((ev && ev.swing_confirmation_date) || '').slice(0, 10);
-    if (!confirmed || !_fibAsOf) return '无法追溯';
-    const confirmedAt = Date.parse(confirmed + 'T00:00:00Z');
-    const asOfAt = Date.parse(_fibAsOf + 'T00:00:00Z');
-    if (!Number.isFinite(confirmedAt) || !Number.isFinite(asOfAt) || asOfAt < confirmedAt) return '无法追溯';
-    return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';
-  };
   const _renderFibGroup = (title, levels, side) => {
     if (!levels.length) return '';
     let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
     html += '<div class="fib-table-head"><span>Fib</span><span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span></div>';
     for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      const event = _latestFibEvent(fl.level, side);
-      const fallbackSignal = !!(fl.reacted && fl.reaction_signal);
-      const hasSignal = !!event || fallbackSignal;
-      const signal = event ? event.signal : (fallbackSignal ? fl.reaction_signal : '');
-      const signalDate = event ? event.signal_date : (fallbackSignal ? fl.signal_date : '');
-      const signalSide = event ? event.side : side;
+      // 当前参考位只展示当前波段自身的确认，不跨波段借用历史事件。
+      const hasSignal = !!(fl.reacted && fl.reaction_signal);
+      const signal = hasSignal ? fl.reaction_signal : '';
+      const signalDate = hasSignal ? fl.signal_date : '';
       const star = hasSignal ? '<span class="fib-star">★</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '—');
       const rx = hasSignal ? `<span class="fib-reaction">${signal}</span>` : '';
-      const status = event ? _fibWaveStatus(event) : (fallbackSignal ? '无法追溯' : '—');
-      const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
-      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${signalDate || '—'}</span><span class="fib-wave-status ${statusClass}">${status}</span></div>`;
+      const status = hasSignal ? '当前波段' : '—';
+      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${signalDate || '—'}</span><span class="fib-wave-status fib-wave-valid">${status}</span></div>`;
     }
     return html;
   };
