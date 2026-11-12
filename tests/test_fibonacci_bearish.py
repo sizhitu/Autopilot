@@ -96,7 +96,7 @@ class TestBearishFibonacciSignals:
     def test_new_confirmation_can_appear_after_price_leaves_and_retests(self):
         frame = self.bars([
             self.anchor(),
-            self.touch(108, 109, volume=100, high=111.5),
+            self.touch(108, 109, volume=100, high=111.5, low=106.0),
             self.touch(109, 108, volume=100, high=112.0, low=106.0),
             self.touch(100, 101, volume=100, high=105.0),  # leaves resistance zone
             self.touch(108, 109, volume=100, high=111.5),
@@ -135,7 +135,7 @@ class TestBearishFibonacciSignals:
         frame = self.bars([
             self.anchor(),
             self.touch(108, 109, volume=100, high=111.5),
-            self.touch(111, 107, volume=100, high=112.0),
+            self.touch(111, 107, volume=100, high=112.0, low=106.0),
         ], dates=False)
         frame.index = [100, 101, 102]
         level = self.get_0786(frame)
