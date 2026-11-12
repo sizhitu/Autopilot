@@ -232,8 +232,9 @@ class TestFibonacciDirectionalVolumeConfirmation:
     def test_win_rate_cohorts_separate_signal_types_at_same_fib_level(self, monkeypatch):
         dates = pd.date_range("2026-08-03", periods=24, freq="B")
         closes = [100.0] * 24
-        closes[11] = 110.0
-        closes[12] = 90.0
+        # Five subsequent trading bars are used, not ten.
+        closes[6] = 110.0
+        closes[7] = 90.0
         frame = pd.DataFrame({
             "date": dates, "open": closes,
             "high": [value + 1 for value in closes],
