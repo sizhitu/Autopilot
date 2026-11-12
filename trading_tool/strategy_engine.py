@@ -1065,7 +1065,7 @@ class FujimotoStrategy:
             "swing_low": swing_low,
             "fib_levels": fib_levels,
             "fib_bearish_levels": fib_bearish_levels,
-            "fib_signal_history": self._build_fibonacci_signal_history(df),
+            "fib_signal_history": [] if _lite else self._build_fibonacci_signal_history(df),
             "target_prices": target_prices,
             "mas": {p: v for p, v in mas.items() if v is not None},
             "vwma": vwma,
