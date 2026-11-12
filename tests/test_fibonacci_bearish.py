@@ -46,6 +46,7 @@ class TestBearishFibonacciSignals:
         strategy._detect_valid_fib_swing = lambda df, lookback=120: {
             "direction": "bearish", "start_idx": 0, "end_idx": 0,
             "start_price": 120.0, "end_price": 80.0,
+            "confirmation_idx": 0,
         }
         levels, high, low, targets = strategy._calc_fibonacci_bearish(
             frame, lookback=60
@@ -181,6 +182,7 @@ class TestBearishFibonacciSignals:
         strategy._detect_valid_fib_swing = lambda df, lookback=120: {
             "direction": "bullish", "start_idx": 0, "end_idx": 0,
             "start_price": 80.0, "end_price": 100.0,
+            "confirmation_idx": 0,
         }
         bullish, *_ = strategy._calc_fibonacci(frame, lookback=60)
         bearish, *_ = strategy._calc_fibonacci_bearish(frame, lookback=60)
