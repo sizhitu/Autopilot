@@ -6114,17 +6114,17 @@ async function loadFibSignalHistory() {
         side: ev.side, level: ev.level, price: ev.price,
         date: String(ev.signal_date).slice(0,10), signal: ev.signal,
         // 保留后端按完整历史K线计算的10日统计；旧快照缺少这些字段时保持为空。
-        forward_10d_status: ev.forward_10d_status || null,
-        forward_10d_return_pct: ev.forward_10d_return_pct == null ? null : Number(ev.forward_10d_return_pct),
-        forward_10d_win: typeof ev.forward_10d_win === 'boolean' ? ev.forward_10d_win : null,
-        forward_10d_win_rate: ev.forward_10d_win_rate == null ? null : Number(ev.forward_10d_win_rate),
-        forward_10d_sample_size: ev.forward_10d_sample_size == null ? 0 : Number(ev.forward_10d_sample_size)
+        forward_5d_status: ev.forward_5d_status || null,
+        forward_5d_return_pct: ev.forward_5d_return_pct == null ? null : Number(ev.forward_5d_return_pct),
+        forward_5d_win: typeof ev.forward_5d_win === 'boolean' ? ev.forward_5d_win : null,
+        forward_5d_win_rate: ev.forward_5d_win_rate == null ? null : Number(ev.forward_5d_win_rate),
+        forward_5d_sample_size: ev.forward_5d_sample_size == null ? 0 : Number(ev.forward_5d_sample_size)
       };
       const key = [normalized.side, normalized.level, normalized.date, normalized.signal].join('|');
       const existing = archivedEvents.get(key);
       if (!existing) archivedEvents.set(key, normalized);
       // 最新快照优先；若旧快照先到，也允许有统计字段的新快照补齐。
-      else if (normalized.forward_10d_sample_size > 0) {
+      else if (normalized.forward_5d_sample_size > 0) {
         Object.assign(existing, normalized);
       }
     };
@@ -6170,13 +6170,13 @@ async function loadFibSignalHistory() {
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span><span>10日表现</span></div>' + events.slice(0,50).map(ev => {
+    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span><span>5日表现</span></div>' + events.slice(0,50).map(ev => {
       const bearish = ev.side === 'bearish';
       const sideClass = bearish ? 'fib-history-bearish' : 'fib-history-bullish';
       const direction = bearish ? '↓' : '↑';
       const sideLabel = bearish ? '下跌侧' : '上涨侧';
       return '<div class="fib-history-row ' + sideClass + '"><span class="fib-history-signal" title="' + sideLabel + '"><span class="fib-history-direction" aria-label="' + sideLabel + '">' + direction + '</span><span class="fib-history-star" aria-label="强信号">★</span><span class="fib-history-signal-text">' + esc(ev.signal) + '</span></span>' +
-        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-win-rate" title="' + esc(ev.forward_10d_return_pct == null ? '信号后第10个交易日收盘收益，尚未成熟则继续观察' : ('信号后10个交易日收盘收益 ' + ev.forward_10d_return_pct + '%')) + '">' + (ev.forward_10d_status === 'matured' && Number.isFinite(Number(ev.forward_10d_return_pct)) ? ((Number(ev.forward_10d_return_pct) > 0 ? '+' : '') + Number(ev.forward_10d_return_pct).toFixed(2) + '%') : '待观察') + '</span></div>';
+        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-win-rate" title="' + esc(ev.forward_5d_return_pct == null ? '信号后第5个交易日收盘收益，尚未成熟则继续观察' : ('信号后5个交易日收盘收益 ' + ev.forward_5d_return_pct + '%')) + '">' + (ev.forward_5d_status === 'matured' && Number.isFinite(Number(ev.forward_5d_return_pct)) ? ((Number(ev.forward_5d_return_pct) > 0 ? '+' : '') + Number(ev.forward_5d_return_pct).toFixed(2) + '%') : '待观察') + '</span></div>';
     }).join('');
   } catch(e) {
     if (previousHTML && previousHTML.indexOf('fib-history-row') >= 0) { box.innerHTML=previousHTML; box.insertAdjacentHTML('afterbegin','<div class="fib-history-warning">历史更新失败，保留上次数据</div>'); }
