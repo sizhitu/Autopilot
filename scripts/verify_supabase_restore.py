@@ -12,10 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 COPY_HEADER = re.compile(
-    r'^COPY\\s+'
-    r'(?P<schema>"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)\\.'
+    r'^COPY\s+'
+    r'(?P<schema>"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)\.'
     r'(?P<table>"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)'
-    r'\\s+\\(.*\\)\\s+FROM stdin;$'
+    r'\s+\(.*\)\s+FROM stdin;$'
 )
 EXCLUDED_SCHEMAS = (
     "pg_catalog", "information_schema", "auth", "storage", "realtime",
@@ -37,7 +37,7 @@ def copy_row_counts(paths: list[Path]) -> dict[tuple[str, str], int]:
             for line_number, line in enumerate(lines, start=1):
                 if not line.startswith("COPY "):
                     continue
-                match = COPY_HEADER.match(line.rstrip("\\r\\n"))
+                match = COPY_HEADER.match(line.rstrip("\r\n"))
                 if not match:
                     raise ValueError(f"Unrecognized COPY statement in {path}:{line_number}")
                 key = (unquote_identifier(match.group("schema")), unquote_identifier(match.group("table")))
@@ -45,7 +45,7 @@ def copy_row_counts(paths: list[Path]) -> dict[tuple[str, str], int]:
                     raise ValueError(f"Duplicate COPY block for {key[0]}.{key[1]}")
                 row_count = 0
                 for data_line in lines:
-                    if data_line.rstrip("\\r\\n") == r"\\.":
+                    if data_line.rstrip("\r\n") == r"\.":
                         break
                     row_count += 1
                 else:
@@ -110,7 +110,7 @@ def write_report(report: dict, output_dir: Path, prefix: str) -> None:
     json_path = output_dir / f"{prefix}.json"
     csv_path = output_dir / f"{prefix}.csv"
     md_path = output_dir / f"{prefix}.md"
-    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
+    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     fields = ["schema", "table", "row_count", "index_count", "table_bytes", "index_bytes", "total_bytes"]
     with csv_path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
@@ -134,7 +134,7 @@ def write_report(report: dict, output_dir: Path, prefix: str) -> None:
             f"{item['table_bytes'] / 1048576:.2f} | {item['index_bytes'] / 1048576:.2f} | "
             f"{item['total_bytes'] / 1048576:.2f} |"
         )
-    md_path.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def compare_reports(baseline: dict, restored: dict) -> list[str]:
@@ -206,7 +206,7 @@ def main() -> int:
         }
         if args.report_dir:
             (args.report_dir / "restore_comparison.json").write_text(
-                json.dumps(result, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8"
+                json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
             )
             lines = [
                 "# Backup / restore validation",
@@ -222,7 +222,7 @@ def main() -> int:
             lines += ["", "## Differences"]
             lines += [f"- {error}" for error in errors] if errors else ["- No table, index-count, or row-count differences."]
             lines += ["", "Storage sizes are informational and are not required to match byte-for-byte."]
-            (args.report_dir / "restore_comparison.md").write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+            (args.report_dir / "restore_comparison.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
         if errors:
             for error in errors:
                 print(f"ERROR: {error}", file=sys.stderr)
