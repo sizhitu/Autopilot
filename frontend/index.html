@@ -1331,10 +1331,10 @@ body.landing-locked #freeBanner { display: none !important; }
       <div id="temperatureCoverage" style="font-size:10px;color:var(--text-dim);margin-top:5px;">数据覆盖 --</div><div id="temperatureAsOf" style="font-size:10px;color:var(--text-dim);margin-top:3px;">数据日期 --</div></div>
   </div>
   <div id="temperatureComponents" style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px;"></div>
-  <div style="margin-top:12px;padding-top:9px;border-top:1px solid var(--border);"><div style="font-size:12px;font-weight:650;margin-bottom:7px;">市场风格 <span style="font-size:10px;color:var(--text-dim);font-weight:400;">大盘50% · 中小盘25% · 科技成长25%</span></div><div id="temperatureStyles" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;"></div></div>
+  <div style="margin-top:12px;padding-top:9px;border-top:1px solid var(--border);"><div style="font-size:12px;font-weight:650;margin-bottom:7px;">市场风格 <span style="font-size:10px;color:var(--text-dim);font-weight:400;">大盘50% · 中小盘25% · 科技成长25%</span></div><div id="temperatureStyles" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;"></div><div id="temperatureCapEffect" style="font-size:10px;color:var(--text-dim);margin-top:6px;"></div></div>
   <div style="margin-top:11px;padding-top:9px;border-top:1px solid var(--border);"><div style="font-size:12px;font-weight:650;margin-bottom:6px;">七大产业热度 <span style="font-size:10px;color:var(--text-dim);font-weight:400;">相对大盘强度 · 趋势 · 动量</span></div><div id="temperatureIndustries" style="display:grid;gap:5px;"></div></div>
   <div style="display:flex;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:10px;color:var(--text-dim);"><span id="temperatureCompare">A股 -- · 美股 --</span><span id="temperatureUpdated">每日收盘更新</span></div>
-  <div style="font-size:10px;color:var(--text-dim);line-height:1.45;margin-top:6px;">宽度40% · 趋势25% · 活跃度15% · 风险20%；风格与产业仅作分化观察，不重复计入温度。</div>
+  <div style="font-size:10px;color:var(--text-dim);line-height:1.45;margin-top:6px;">宽度/参与度40% · 趋势25% · 活跃度15% · 风险20%；风格与产业仅作分化观察，不重复计入温度。</div>
 </div>
   <div class="card" style="margin-bottom:10px;">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
@@ -7513,6 +7513,18 @@ const _temperatureStyleLabels={large_cap:'大盘',small_mid:'中小盘',technolo
 function paintTemperatureStructure(d){
  const styles=document.getElementById('temperatureStyles'),industries=document.getElementById('temperatureIndustries'),st=d&&d.styles?d.styles:{};
  if(styles)styles.innerHTML=Object.keys(_temperatureStyleLabels).map(k=>{const x=st[k]||{},v=x.score==null?null:Number(x.score);return '<div title="'+escapeHtml(String(x.symbol||''))+' · '+escapeHtml(String(x.data_date||'数据不足'))+'" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 5px;text-align:center;"><div style="font-size:10px;color:var(--text-dim);">'+_temperatureStyleLabels[k]+'</div><div style="font-size:17px;font-weight:700;margin-top:3px;">'+(v==null?'--':v.toFixed(0))+'</div></div>';}).join('');
+ const capEl=document.getElementById('temperatureCapEffect');
+ if(capEl){
+  if(d&&d.market==='us'){
+   const detail=d.components&&d.components.breadth&&d.components.breadth.detail||{},spread=Number(detail.cap_weighted_spread_pct);
+   if(Number.isFinite(spread)){const label=spread>.5?'市值加权领先（巨头主导）':spread<-.5?'等权指数领先（参与面更广）':'两者接近';capEl.textContent='权重效应：'+label+' '+(spread>0?'+':'')+spread.toFixed(1)+'个百分点';}
+   else capEl.textContent='权重效应：数据不足';
+  }else{
+   const large=st.large_cap&&st.large_cap.score,small=st.small_mid&&st.small_mid.score;
+   if(large!=null&&small!=null){const gap=Number(large)-Number(small),label=gap>1?'大盘领先':gap< -1?'中小盘领先':'大盘与中小盘接近';capEl.textContent='风格分化：'+label+' '+(gap>0?'+':'')+gap.toFixed(0)+'分';}
+   else capEl.textContent='风格分化：数据不足';
+  }
+ }
  if(industries){const rows=d&&d.industries&&Array.isArray(d.industries.items)?d.industries.items:[];industries.innerHTML=rows.map(x=>{const v=x.score==null?null:Number(x.score),w=v==null?0:Math.max(0,Math.min(100,v)),sub=(x.proxy||x.symbol||'')+(x.relative_60d==null?'':' · 相对大盘 '+(x.relative_60d>0?'+':'')+Number(x.relative_60d).toFixed(1)+'%');return '<div title="'+escapeHtml(String(x.reason||x.data_date||''))+'" style="display:grid;grid-template-columns:82px 1fr 34px;gap:7px;align-items:center;font-size:10px;"><div style="white-space:nowrap;">'+escapeHtml(String(x.label||''))+'</div><div><div style="height:5px;background:var(--border);border-radius:5px;overflow:hidden;"><div style="height:5px;width:'+w+'%;background:var(--blue);"></div></div><div style="font-size:9px;color:var(--text-dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+escapeHtml(sub)+'</div></div><div style="text-align:right;font-weight:650;">'+(v==null?'--':v.toFixed(0))+'</div></div>';}).join('')||'<div style="font-size:10px;color:var(--text-dim);">行业数据暂不可用</div>';}
 }
 function selectMarketTemperature(market){
@@ -7530,7 +7542,7 @@ function paintMarketTemperature(){
   const ch=document.getElementById('temperatureChange');if(ch)ch.textContent='5日 '+delta(5)+' · 20日 '+delta(20);
   const cov=document.getElementById('temperatureCoverage');if(cov)cov.textContent='数据覆盖 '+Number(d.coverage||0).toFixed(0)+'%（最低要求 '+Number(d.min_coverage||80).toFixed(0)+'%）';
   const as=document.getElementById('temperatureAsOf');if(as)as.textContent='数据日期 '+(d.as_of||'--');
-  if(root){const c=d.components||{};root.innerHTML=Object.keys(_temperatureLabels).map(k=>{const x=c[k]||{},n=x.score==null?null:Number(x.score);return '<div title="'+String(x.source||'')+' · '+String(x.data_date||'日期未知')+'" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px;"><div style="display:flex;justify-content:space-between;gap:5px;font-size:10px;color:var(--text-dim);"><span>'+_temperatureLabels[k]+'</span><b>'+(n==null?'数据不足':n.toFixed(0)+'分')+'</b></div><div style="height:4px;background:var(--border);border-radius:4px;margin-top:5px;overflow:hidden;"><div style="height:4px;width:'+(n==null?0:Math.max(0,Math.min(100,n)))+'%;background:var(--blue);"></div></div></div>';}).join('');}
+  if(root){const c=d.components||{};root.innerHTML=Object.keys(_temperatureLabels).map(k=>{const x=c[k]||{},n=x.score==null?null:Number(x.score);return '<div title="'+String(x.source||'')+' · '+String(x.data_date||'日期未知')+'" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px;"><div style="display:flex;justify-content:space-between;gap:5px;font-size:10px;color:var(--text-dim);"><span>'+(k==='breadth'&&d.market==='us'?'等权参与度':_temperatureLabels[k])+'</span><b>'+(n==null?'数据不足':n.toFixed(0)+'分')+'</b></div><div style="height:4px;background:var(--border);border-radius:4px;margin-top:5px;overflow:hidden;"><div style="height:4px;width:'+(n==null?0:Math.max(0,Math.min(100,n)))+'%;background:var(--blue);"></div></div></div>';}).join('');}
   const up=document.getElementById('temperatureUpdated');if(up)up.textContent=(d.status==='pending'||d.status==='waiting_for_close')?'等待收盘':(d.stale_during_session?'沿用上个收盘快照':(d.cached?'缓存数据':'已更新'));
   const cp=document.getElementById('temperatureCompare');if(cp)cp.textContent=['cn','us'].map(k=>{const x=_marketTemperatureData[k];return(k==='cn'?'A股 ':'美股 ')+(x&&x.temperature!=null?Number(x.temperature).toFixed(1)+'°':'--');}).join(' · ');
 }

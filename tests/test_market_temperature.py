@@ -57,16 +57,30 @@ def test_cn_breadth_parser_requires_market_coverage(monkeypatch):
     assert result["advancers"]==334 and result["decliners"]==334
     assert result["score"]==50.0
 
-def test_us_breadth_uses_ad_line_change_not_percent_of_negative_index():
+def test_us_breadth_uses_equal_weight_vs_cap_weighted_etfs():
     import pandas as pd
     import market_temperature as mt
-    dates=pd.date_range("2026-01-01",periods=100,freq="B")
-    frame=pd.DataFrame({"date":dates,"close":[-500+i*3+(i%5)*0.5 for i in range(100)]})
+    dates=pd.date_range("2025-01-01",periods=260,freq="B")
+    def frame(rate):
+        return pd.DataFrame({"date":dates,"close":[100*(1+rate)**i for i in range(260)]})
+    frames={"RSP":frame(.002),"SPY":frame(.001),"QQEW":frame(.0025),"QQQ":frame(.0015)}
+    class Fetcher:
+        def fetch(self,symbol,days): return frames[symbol]
+    result=mt._fetch_us_breadth(Fetcher())
+    assert result["score"]>50 and result["series"]==2
+    assert result["cap_weighted_spread_pct"]<0
+    assert result["cap_weight_effect"]=="equal_weight_lead"
+    assert result["data_date"]==str(dates[-1].date())
+
+
+def test_us_breadth_requires_220_bars_for_both_weighting_pairs():
+    import pandas as pd, pytest
+    import market_temperature as mt
+    dates=pd.date_range("2026-01-01",periods=180,freq="B")
+    frame=pd.DataFrame({"date":dates,"close":[100+i for i in range(180)]})
     class Fetcher:
         def fetch(self,symbol,days): return frame
-    result=mt._fetch_us_breadth(Fetcher())
-    assert 50 < result["score"] <= 100
-    assert result["series"]==2
+    with pytest.raises(ValueError): mt._fetch_us_breadth(Fetcher())
 
 def test_position_page_contains_market_switch_and_missing_data_state():
     html=(ROOT/"frontend/index.html").read_text(encoding="utf-8")
@@ -129,7 +143,7 @@ def test_industry_stale_quote_is_not_scored():
     assert mt._industry_score(asset,market) is None
 
 
-def test_us_breadth_requires_61_real_observations():
+def test_us_breadth_requires_220_real_observations():
     import pandas as pd, pytest
     import market_temperature as mt
     dates=pd.date_range("2026-01-01",periods=60,freq="B")
@@ -139,7 +153,9 @@ def test_us_breadth_requires_61_real_observations():
     with pytest.raises(ValueError): mt._fetch_us_breadth(Fetcher())
 
 
-def test_position_temperature_ui_contains_style_and_industry_sections():
+def test_position_temperature_ui_contains_style_industry_and_weight_effect_sections():
     html=(ROOT/"frontend/index.html").read_text(encoding="utf-8")
     assert 'id="temperatureStyles"' in html and 'id="temperatureIndustries"' in html
+    assert 'id="temperatureCapEffect"' in html
+    assert "等权参与度" in html
     assert "市场风格" in html and "七大产业热度" in html

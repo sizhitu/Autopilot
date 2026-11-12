@@ -11,7 +11,7 @@ import requests
 logger=logging.getLogger("market_temperature")
 WEIGHTS={"breadth":40.0,"trend":25.0,"activity":15.0,"risk":20.0}
 MIN_COVERAGE=80.0
-METHOD_VERSION="2.0.0"
+METHOD_VERSION="2.1.0"
 CN_INDEXES=["sh000001","sz399001","sz399006","sh000300","sh000905"]
 US_INDEXES=["SPY","QQQ","IWM","DIA"]
 STYLE_CONFIG={
@@ -113,20 +113,40 @@ def _fetch_cn_breadth():
  adv=sum(x>0 for x in changes); dec=sum(x<0 for x in changes); unchanged=sum(x==0 for x in changes)
  return {"score":round(adv/(adv+dec)*100,1) if adv+dec else None,"advancers":adv,"decliners":dec,"unchanged":unchanged,"universe":len(changes),"source":"Eastmoney A股全市场实时涨跌家数","data_date":day}
 
-def _fetch_us_breadth(fetcher):
- scores=[]; dates=[]
- for symbol in ("^NYAD","^NAAD"):
+def _fetch_us_breadth(fetcher,base_frames=None):
+ """Equal-weight ETFs versus cap-weighted benchmarks; a transparent breadth proxy."""
+ base_frames=base_frames or {}
+ pairs=[("RSP","SPY","S&P 500"),("QQEW","QQQ","Nasdaq-100")]
+ scores=[]; dates=[]; spreads=[]; details=[]
+ for equal_symbol,cap_symbol,label in pairs:
   try:
-   df=_clean_frame(fetcher.fetch(symbol,300))
-   if df is None or len(df)<61:continue
-   c=df["close"].astype(float); daily=c.diff().dropna(); sigma=float(daily.tail(250).std())*math.sqrt(20)
-   if not math.isfinite(sigma) or sigma<=0:continue
-   z20=float(c.iloc[-1]-c.iloc[-21])/sigma; z60=float(c.iloc[-1]-c.iloc[-61])/(sigma*math.sqrt(3))
-   scores.append(max(0.,min(100.,50+25*math.tanh(z20/2)*.65+25*math.tanh(z60/2)*.35)))
-   dates.append(str(df["date"].iloc[-1].date()))
-  except Exception as exc:logger.info("US breadth %s unavailable: %s",symbol,exc)
- if not scores:raise ValueError("NYSE/Nasdaq advance-decline line unavailable")
- return {"score":round(float(np.mean(scores)),1),"series":len(scores),"source":"NYSE/Nasdaq cumulative advance-decline line","data_date":min(dates)}
+   equal=base_frames.get(equal_symbol)
+   if equal is None:equal=_clean_frame(fetcher.fetch(equal_symbol,300))
+   cap=base_frames.get(cap_symbol)
+   if cap is None:cap=_clean_frame(fetcher.fetch(cap_symbol,300))
+   if equal is None or cap is None or len(equal)<220 or len(cap)<220:
+    raise ValueError("insufficient 220-bar history")
+   joined=pd.merge(equal[["date","close"]],cap[["date","close"]],on="date",suffixes=("_equal","_cap"),how="inner").dropna()
+   if len(joined)<61 or not _fresh(equal,cap["date"].iloc[-1]):
+    raise ValueError("stale or insufficient common trading dates")
+   eq=joined["close_equal"].astype(float); cw=joined["close_cap"].astype(float)
+   if (eq<=0).any() or (cw<=0).any():raise ValueError("invalid ETF price")
+   eq_ret=float(eq.iloc[-1]/eq.iloc[-61]-1); cap_ret=float(cw.iloc[-1]/cw.iloc[-61]-1)
+   relative=(1+eq_ret)/(1+cap_ret)-1
+   score=max(0.,min(100.,50+50*math.tanh(relative*5)))
+   scores.append(score); spreads.append((cap_ret-eq_ret)*100)
+   day=str(joined["date"].iloc[-1].date()); dates.append(day)
+   details.append({"pair":label,"equal_weight":equal_symbol,"cap_weighted":cap_symbol,
+                   "equal_return_60d":round(eq_ret*100,2),"cap_weighted_return_60d":round(cap_ret*100,2),
+                   "relative_60d":round(relative*100,2),"score":round(score,1),"data_date":day})
+  except Exception as exc:
+   logger.info("US equal-weight breadth %s/%s unavailable: %s",equal_symbol,cap_symbol,exc)
+ if len(scores)!=2:raise ValueError("RSP/SPY and QQEW/QQQ equal-weight breadth proxies both required")
+ spread=round(float(np.mean(spreads)),2)
+ return {"score":round(float(np.mean(scores)),1),"series":len(scores),
+         "source":"RSP/SPY、QQEW/QQQ等权相对市值加权表现（市场参与度代理）",
+         "data_date":min(dates),"pairs":details,"cap_weighted_spread_pct":spread,
+         "cap_weight_effect":"mega_cap_lead" if spread>0.5 else "equal_weight_lead" if spread< -0.5 else "balanced"}
 
 def _fetch_frames(fetcher,symbols):
  frames={}; errors=[]
@@ -196,8 +216,8 @@ def build_market_temperature_snapshot(market,fetcher=None):
   except Exception:risk_frame=None
   risk,risk_source=_risk_score_cn(risk_frame),"上证指数20日实现波动率历史分位（反向）"
  else:
-  try:breadth=_fetch_us_breadth(fetcher);breadth_score,breadth_date=breadth["score"],breadth["data_date"]
-  except Exception as exc:breadth={"source":"NYSE/Nasdaq cumulative advance-decline line","error":str(exc)[:180]};breadth_score=breadth_date=None
+  try:breadth=_fetch_us_breadth(fetcher,frames);breadth_score,breadth_date=breadth["score"],breadth["data_date"]
+  except Exception as exc:breadth={"source":"RSP/SPY、QQEW/QQQ等权相对市值加权表现（市场参与度代理）","error":str(exc)[:180]};breadth_score=breadth_date=None
   try:risk_frame=_clean_frame(fetcher.fetch("^VIX",300))
   except Exception:risk_frame=None
   risk,risk_source=_risk_score_us(risk_frame),"VIX历史分位（反向）"
