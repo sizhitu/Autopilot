@@ -86,7 +86,7 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
 
 def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
-    assert 'grid-template-columns:minmax(0,1.5fr) 54px minmax(64px,.8fr) 88px' in html
+    assert 'grid-template-columns:minmax(0,1.5fr) 44px minmax(58px,.7fr) 78px 70px' in html
     assert 'fib-history-head span:last-child,.fib-history-date { text-align:right; }' in html
     assert "const bearish = ev.side === 'bearish';" in html
     assert "fib-history-bullish" in html
@@ -132,9 +132,9 @@ def _fibonacci_test_bars(lows, volumes):
         rows.append({
             "date": dates[i],
             "open": 86.0,
-            "high": 100.0,
+            "high": 87.0 if 84.0 <= low < 90.0 else 100.0,
             "low": float(low),
-            "close": (95.0 + i * 0.1) if low < 90 else 96.0,
+            "close": (86.3 + (i - 1) * 0.1) if 84.0 <= low < 90.0 else (90.0 if i == 0 else 96.0),
             "volume": float(volume),
         })
     rows[0]["low"] = 80.0
