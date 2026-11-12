@@ -35,13 +35,35 @@ def test_temperature_is_withheld_when_breadth_missing(monkeypatch):
 def test_trend_score_uses_multiple_indices():
     import pandas as pd
     import market_temperature as mt
-    dates=pd.date_range("2025-01-01",periods=100,freq="B")
-    frames=[pd.DataFrame({"date":dates,"close":[100+i for i in range(100)]}) for _ in range(3)]
+    dates=pd.date_range("2025-01-01",periods=260,freq="B")
+    frames=[pd.DataFrame({"date":dates,"close":[100+i for i in range(260)]}) for _ in range(3)]
     score,day=mt._trend_score(frames)
-    assert score is not None and score>70 and day=="2025-05-20"
+    assert score is not None and score>70 and day=="2025-12-30"
 
 def test_activity_and_risk_require_history():
     import pandas as pd
     import market_temperature as mt
     df=pd.DataFrame({"date":pd.date_range("2026-01-01",periods=30),"close":range(100,130),"volume":range(1000,1030)})
     assert mt._activity_score(df) is None and mt._risk_score_cn(df) is None
+
+def test_cn_breadth_parser_requires_market_coverage(monkeypatch):
+    import market_temperature as mt
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"data":{"total":1000,"diff":[{"f3":2},{"f3":-1},{"f3":0}]*334}}
+    monkeypatch.setattr(mt.requests,"get",lambda *a,**k:Response())
+    result=mt._fetch_cn_breadth()
+    assert result["advancers"]==334 and result["decliners"]==334
+    assert result["score"]==33.3
+
+def test_us_breadth_uses_ad_line_change_not_percent_of_negative_index():
+    import pandas as pd
+    import market_temperature as mt
+    dates=pd.date_range("2026-01-01",periods=100,freq="B")
+    frame=pd.DataFrame({"date":dates,"close":[-500+i*3 for i in range(100)]})
+    class Fetcher:
+        def fetch(self,symbol,days): return frame
+    result=mt._fetch_us_breadth(Fetcher())
+    assert 50 < result["score"] <= 100
+    assert result["series"]==2
