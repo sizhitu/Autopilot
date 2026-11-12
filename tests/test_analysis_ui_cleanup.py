@@ -99,6 +99,17 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
     assert '@media (max-width:420px)' in html
 
 
+
+def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
+
+    assert "const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];" in update_results
+    assert "const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];" in update_results
+    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull)" in update_results
+    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear)" in update_results
+    assert "当前没有达到确认条件的有效 Fib 波段（历史强信号仍单独保留）" in update_results
+
 def _fibonacci_test_bars(lows, volumes):
     import pandas as pd
 
