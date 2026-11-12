@@ -960,7 +960,7 @@ class FujimotoStrategy:
             unique[key] = event
         result = list(unique.values())
 
-        # 5 日表现只使用信号日之后第 5 根交易 K 线；未走满 10 根时不计入分母。
+        # 5 日表现只使用信号日之后第 5 根交易 K 线；未走满 5 根时不计入分母。
         date_values = (
             pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
             if "date" in df.columns
