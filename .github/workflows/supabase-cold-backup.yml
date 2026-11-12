@@ -180,11 +180,11 @@ jobs:
                    "database-backup.tar.zst", "database-backup.tar.zst.age"]
           report = {name: (root / name).stat().st_size for name in files}
           (root / "reports" / "artifact_sizes.json").write_text(
-              json.dumps(report, indent=2) + "\\n", encoding="utf-8")
+              json.dumps(report, indent=2) + "\n", encoding="utf-8")
           (root / "reports" / "artifact_sizes.md").write_text(
-              "# Backup artifact sizes\\n\\n" +
-              "| File | Bytes | MiB |\\n|---|---:|---:|\\n" +
-              "".join(f"| {name} | {size:,} | {size / 1048576:.2f} |\\n"
+              "# Backup artifact sizes\n\n" +
+              "| File | Bytes | MiB |\n|---|---:|---:|\n" +
+              "".join(f"| {name} | {size:,} | {size / 1048576:.2f} |\n"
                       for name, size in report.items()), encoding="utf-8")
           PY
 
