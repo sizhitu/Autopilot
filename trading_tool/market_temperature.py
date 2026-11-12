@@ -33,7 +33,7 @@ def _trend_score(frames):
         structure=(int(last>ma50)+int(last>ma200)+int(ma50>ma200))/3*70
         momentum=max(0.,min(30.,15.+ret20*300))
         scores.append(structure+momentum); dates.append(str(df["date"].iloc[-1].date()))
-    return (round(float(np.mean(scores)),1),max(dates)) if scores else (None,None)
+    return (round(float(np.mean(scores)),1),min(dates)) if scores else (None,None)
 
 def _activity_score(frame):
     if frame is None or "volume" not in frame: return None
@@ -95,7 +95,7 @@ def _fetch_us_breadth(fetcher):
             scores.append(max(0.,min(100.,s))); dates.append(str(df["date"].iloc[-1].date()))
         except Exception as exc: logger.info("US breadth %s unavailable: %s",symbol,exc)
     if not scores: raise ValueError("NYSE/Nasdaq advance-decline line unavailable")
-    return {"score":round(float(np.mean(scores)),1),"series":len(scores),"source":"NYSE/Nasdaq advance-decline line","data_date":max(dates)}
+    return {"score":round(float(np.mean(scores)),1),"series":len(scores),"source":"NYSE/Nasdaq advance-decline line","data_date":min(dates)}
 
 def _fetch_frames(fetcher,symbols):
     frames=[]; errors=[]
