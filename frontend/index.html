@@ -483,7 +483,7 @@ body.help-open { overflow: hidden; touch-action: none; }
 .ind-detail { font-size:10px; color:var(--text-dim); flex:1; text-align:right; margin-right:6px; }
 
 /* 斐波那契 */
-.fib-table-head,.fib-row { display:grid; grid-template-columns:48px minmax(58px,.8fr) minmax(112px,1.5fr) 82px; align-items:center; column-gap:8px; }
+.fib-table-head,.fib-row { display:grid; grid-template-columns:42px minmax(54px,.75fr) minmax(88px,1.2fr) 72px 64px; align-items:center; column-gap:6px; }
 .fib-table-head { padding:4px 0 5px; color:var(--text-dim); font-size:10px; border-bottom:1px solid var(--border); }
 .fib-table-head span:last-child,.fib-signal-date { text-align:right; }
 .fib-row { padding:5px 0; border-bottom:1px solid var(--border); }
@@ -494,6 +494,10 @@ body.help-open { overflow: hidden; touch-action: none; }
 .fib-status { display:flex; align-items:center; justify-content:flex-start; gap:6px; font-size:10px; white-space:nowrap; min-width:0; }
 .fib-reaction { color:var(--gold); }
 .fib-signal-date { color:var(--text-dim); font-size:10px; white-space:nowrap; }
+.fib-wave-status { font-size:10px; text-align:right; white-space:nowrap; }
+.fib-wave-valid { color:var(--green); }
+.fib-wave-expired { color:var(--orange); }
+.fib-wave-unknown { color:var(--text-dim); }
 .fib-history-head,.fib-history-row {
   display:grid;
   grid-template-columns:minmax(0,1.5fr) 54px minmax(64px,.8fr) 88px;
@@ -512,7 +516,9 @@ body.help-open { overflow: hidden; touch-action: none; }
 .fib-history-price { font-family:monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .fib-history-date { color:var(--text-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
 @media (max-width:420px) {
-  .fib-table-head,.fib-row { grid-template-columns:42px minmax(50px,.7fr) minmax(100px,1.4fr) 74px; column-gap:5px; }
+  .fib-table-head,.fib-row { grid-template-columns:36px minmax(42px,.65fr) minmax(68px,1fr) 62px 54px; column-gap:4px; }
+  .fib-table-head { font-size:9px; }
+  .fib-wave-status,.fib-signal-date { font-size:9px; }
   .fib-history-head,.fib-history-row { grid-template-columns:minmax(0,1.25fr) 42px minmax(54px,.7fr) 76px; column-gap:6px; }
   .fib-history-row { font-size:10px; }
   .fib-history-signal { font-size:10px; }
@@ -6275,27 +6281,53 @@ function updateResults(data, meta, nineTurn) {
   // 但参考价位不参与信号判断，也绝不显示确认星号。
   const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];
   const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];
-  const _renderFibGroup = (title, levels) => {
+  const _fibHistory = Array.isArray(data && data.fib_signal_history) ? data.fib_signal_history : [];
+  const _fibAsOf = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10);
+  const _latestFibEvent = (level, side) => {
+    const matches = _fibHistory.filter(ev => {
+      if (!ev || !ev.signal_date || !ev.signal || !ev.side) return false;
+      if (side && ev.side !== side) return false;
+      return Math.abs(Number(ev.level) - Number(level)) < 0.0005;
+    });
+    matches.sort((a, b) => String(b.signal_date).localeCompare(String(a.signal_date)));
+    return matches[0] || null;
+  };
+  const _fibWaveStatus = ev => {
+    const confirmed = String((ev && ev.swing_confirmation_date) || '').slice(0, 10);
+    if (!confirmed || !_fibAsOf) return '无法追溯';
+    const confirmedAt = Date.parse(confirmed + 'T00:00:00Z');
+    const asOfAt = Date.parse(_fibAsOf + 'T00:00:00Z');
+    if (!Number.isFinite(confirmedAt) || !Number.isFinite(asOfAt) || asOfAt < confirmedAt) return '无法追溯';
+    return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';
+  };
+  const _renderFibGroup = (title, levels, side) => {
     if (!levels.length) return '';
     let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
-    html += '<div class="fib-table-head"><span>Fib</span><span>价格</span><span>信号</span><span>最近确认</span></div>';
+    html += '<div class="fib-table-head"><span>Fib</span><span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span></div>';
     for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      const hasStrongSignal = !!(fl.reacted && fl.reaction_signal);
-      const star = hasStrongSignal ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '');
-      const rx = hasStrongSignal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
-      const dateText = hasStrongSignal && fl.signal_date ? fl.signal_date : '—';
-      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${dateText}</span></div>`;
+      const event = _latestFibEvent(fl.level, side);
+      const fallbackSignal = !!(fl.reacted && fl.reaction_signal);
+      const hasSignal = !!event || fallbackSignal;
+      const signal = event ? event.signal : (fallbackSignal ? fl.reaction_signal : '');
+      const signalDate = event ? event.signal_date : (fallbackSignal ? fl.signal_date : '');
+      const signalSide = event ? event.side : side;
+      const direction = !side && signalSide ? (signalSide === 'bearish' ? '↓ ' : '↑ ') : '';
+      const star = hasSignal ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '—');
+      const rx = hasSignal ? `<span class="fib-reaction">${direction}${signal}</span>` : '';
+      const status = event ? _fibWaveStatus(event) : (fallbackSignal ? '无法追溯' : '—');
+      const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
+      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${signalDate || '—'}</span><span class="fib-wave-status ${statusClass}">${status}</span></div>`;
     }
     return html;
   };
   if (_fibBull.length) {
-    fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull);
+    fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish');
   } else if (_fibBear.length) {
-    fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear);
+    fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish');
   } else {
     // 沿用原版四段位价格展示：以分析窗口高低点计算参考回撤位。
-    // 这是价格参考，不代表已确认波段；只有上面的有效波段数据才可能出现★。
+    // 这是当前参考价格，不代表已确认波段；历史信号只显示其原始波段状态，不代表当前有效买点。
     const _chartData = (data && data.chart_data) || {};
     const _high = Number(_chartData.swing_high);
     const _low = Number(_chartData.swing_low);
@@ -6313,7 +6345,7 @@ function updateResults(data, meta, nineTurn) {
         reacted: false,
         reaction_signal: ''
       }));
-      fh += _renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels);
+      fh += _renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null);
     }
   }
   // 最新状态按Fib位置展示最近一次确认；历史列表展示逐日重建的全部独立事件。
