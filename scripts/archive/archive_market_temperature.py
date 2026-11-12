@@ -32,6 +32,14 @@ def main():
                 "components":snap.get("components") or {},"snapshot":snap,
                 "calculated_at":snap.get("calculated_at"),"updated_at":datetime.now(timezone.utc).isoformat()
             },on_conflict="market,trade_date").execute()
+            history=(client.table("market_temperature_daily")
+                     .select("trade_date,temperature,regime,coverage,components,method_version")
+                     .eq("market",market).order("trade_date",desc=True).limit(30).execute().data or [])
+            snap["history"]=list(reversed(history))
+            import time
+            import cache
+            snap["stored_at"]=time.time()
+            cache.set_json(f"market_temperature_v1_{market}",snap,18*3600)
             print(f"{market}: {snap.get('temperature')} / {snap.get('regime')} / coverage={snap.get('coverage')}% / {day}")
         except Exception as exc:
             print(f"{market}: snapshot failed: {type(exc).__name__}: {exc}")
