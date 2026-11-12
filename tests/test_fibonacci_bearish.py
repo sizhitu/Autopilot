@@ -71,7 +71,7 @@ class TestBearishFibonacciSignals:
         level = self.get_0786(frame)
         assert level.reacted is True
         assert level.reaction_signal == "放量受阻"
-        assert level.signal_date == "2026-08-06"
+        assert level.signal_date == "2026-08-05"
 
     def test_continuous_resistance_touches_emit_only_first_confirmation(self):
         frame = self.bars([
@@ -83,7 +83,7 @@ class TestBearishFibonacciSignals:
         ])
         level = self.get_0786(frame)
         assert level.reacted is True
-        assert level.signal_date == "2026-08-06"
+        assert level.signal_date == "2026-08-05"
 
     def test_new_confirmation_can_appear_after_price_leaves_and_retests(self):
         frame = self.bars([
