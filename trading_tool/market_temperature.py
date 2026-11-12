@@ -83,9 +83,15 @@ def _fetch_us_breadth(fetcher):
         try:
             df=_clean_frame(fetcher.fetch(symbol,300))
             if df is None or len(df)<60: continue
-            c=df["close"].astype(float); r20=float(c.iloc[-1]/c.iloc[-21]-1) if c.iloc[-21] else 0
-            r60=float(c.iloc[-1]/c.iloc[-61]-1) if len(c)>=61 and c.iloc[-61] else r20
-            s=50+max(-25,min(25,r20*250))*.65+max(-25,min(25,r60*100))*.35
+            c=df["close"].astype(float)
+            daily=c.diff().dropna()
+            if len(daily)<60: continue
+            sigma=float(daily.tail(250).std())*math.sqrt(20)
+            if not math.isfinite(sigma) or sigma<=0: continue
+            d20=float(c.iloc[-1]-c.iloc[-21])
+            d60=float(c.iloc[-1]-c.iloc[-61]) if len(c)>=61 else d20*3
+            z20=d20/sigma; z60=d60/(sigma*math.sqrt(3))
+            s=50+25*math.tanh(z20/2)*.65+25*math.tanh(z60/2)*.35
             scores.append(max(0.,min(100.,s))); dates.append(str(df["date"].iloc[-1].date()))
         except Exception as exc: logger.info("US breadth %s unavailable: %s",symbol,exc)
     if not scores: raise ValueError("NYSE/Nasdaq advance-decline line unavailable")
@@ -114,9 +120,11 @@ def build_market_temperature_snapshot(market,fetcher=None):
     except Exception: activity_frame=None
     activity=_activity_score(activity_frame)
     if market=="cn":
-        try: breadth=_fetch_cn_breadth(); breadth_score=breadth["score"]; breadth_date=breadth["data_date"]
+        try: breadth=_fetch_cn_breadth(); breadth_score=breadth["score"]; breadth_date=trend_date
         except Exception as exc: breadth={"source":"Eastmoney A股全市场涨跌家数","error":str(exc)[:180]}; breadth_score=breadth_date=None
-        risk_frame=frames[0] if frames else None; risk=_risk_score_cn(risk_frame); risk_source="上证指数20日实现波动率历史分位（反向）"
+        try: risk_frame=_clean_frame(fetcher.fetch("000001",300))
+        except Exception: risk_frame=None
+        risk=_risk_score_cn(risk_frame); risk_source="上证指数20日实现波动率历史分位（反向）"
     else:
         try: breadth=_fetch_us_breadth(fetcher); breadth_score=breadth["score"]; breadth_date=breadth["data_date"]
         except Exception as exc: breadth={"source":"NYSE/Nasdaq advance-decline line","error":str(exc)[:180]}; breadth_score=breadth_date=None
