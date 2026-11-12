@@ -575,6 +575,39 @@ class FujimotoStrategy:
         }
 
     @staticmethod
+    def _is_fib_swing_fresh(
+        df: pd.DataFrame,
+        swing: Optional[dict],
+        max_age_days: int = 90,
+    ) -> bool:
+        """
+        Keep a confirmed Fib swing current for at most 90 calendar days.
+        Prefer the explicit trading-date column, then a datetime-like index.
+        If the input has no usable dates (e.g. synthetic unit-test frames),
+        preserve the existing behavior rather than guessing from row counts.
+        """
+        if not swing or df is None or df.empty:
+            return False
+        try:
+            confirmation_idx = int(swing["confirmation_idx"])
+            if confirmation_idx < 0 or confirmation_idx >= len(df):
+                return False
+            if "date" in df.columns:
+                dates = pd.to_datetime(df["date"], errors="coerce", utc=True)
+                confirmed_at = dates.iloc[confirmation_idx]
+                latest_at = dates.iloc[-1]
+            else:
+                dates = pd.to_datetime(pd.Index(df.index), errors="coerce", utc=True)
+                confirmed_at = dates[confirmation_idx]
+                latest_at = dates[-1]
+            if pd.isna(confirmed_at) or pd.isna(latest_at):
+                return True
+            age_days = (latest_at.normalize() - confirmed_at.normalize()).days
+            return 0 <= age_days <= max_age_days
+        except (KeyError, TypeError, ValueError, IndexError, OverflowError):
+            return False
+
+    @staticmethod
     def _fib_trend_context(df: pd.DataFrame, swing_direction: str) -> dict:
         """
         Classify a Fib reaction as with-trend, counter-trend, or range/transition.
@@ -624,7 +657,8 @@ class FujimotoStrategy:
         window_high = float(recent["high"].max())
         window_low = float(recent["low"].min())
         swing = self._detect_valid_fib_swing(df, lookback=max(lookback, 120))
-        if not swing or swing["direction"] != "bullish":
+        if (not swing or swing["direction"] != "bullish"
+                or not self._is_fib_swing_fresh(df, swing)):
             return [], window_high, window_low, []
         swing_low = float(swing["start_price"])
         swing_high = float(swing["end_price"])
@@ -730,7 +764,8 @@ class FujimotoStrategy:
         window_high = float(recent["high"].max())
         window_low = float(recent["low"].min())
         swing = self._detect_valid_fib_swing(df, lookback=max(lookback, 120))
-        if not swing or swing["direction"] != "bearish":
+        if (not swing or swing["direction"] != "bearish"
+                or not self._is_fib_swing_fresh(df, swing)):
             return [], window_high, window_low, []
         swing_high = float(swing["start_price"])
         swing_low = float(swing["end_price"])
@@ -1291,8 +1326,10 @@ class FujimotoStrategy:
 
         # 图表数据：保留有效波段锚点，并附加顺势/逆势背景，不参与交易门槛。
         fib_swing = self._detect_valid_fib_swing(df)
-        if fib_swing:
+        if fib_swing and self._is_fib_swing_fresh(df, fib_swing):
             fib_swing.update(self._fib_trend_context(df, fib_swing["direction"]))
+        else:
+            fib_swing = None
         chart_data = {
             "swing_high": swing_high,
             "swing_low": swing_low,
