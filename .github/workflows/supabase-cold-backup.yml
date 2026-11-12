@@ -45,6 +45,16 @@ jobs:
           sudo apt-get install -y age zstd postgresql-client jq python3-pip
           python3 -m pip install --break-system-packages 'psycopg[binary]'
 
+      - name: Capture pre-backup database inventory report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/supabase-backup/reports"
+          python3 "$GITHUB_WORKSPACE/scripts/verify_supabase_restore.py" \
+            --database-url "$SUPABASE_DB_URL" \
+            --report-dir "$RUNNER_TEMP/supabase-backup/reports" \
+            --prefix before_backup
+
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@v1
         with:
@@ -89,7 +99,7 @@ jobs:
           sha256sum roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json > SHA256SUMS
           sha256sum --check SHA256SUMS
 
-          tar --zstd -cf database-backup.tar.zst roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json SHA256SUMS
+          tar --zstd -cf database-backup.tar.zst roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json SHA256SUMS reports
           tar --zstd -tf database-backup.tar.zst >/dev/null
           zstd -t database-backup.tar.zst
 
@@ -153,10 +163,30 @@ jobs:
             --file migration_history_schema.sql \
             --file migration_history_data.sql
 
+          mkdir -p "$BACKUP_DIR/reports/after_restore"
           python3 "$GITHUB_WORKSPACE/scripts/verify_supabase_restore.py" \
             --database-url "$LOCAL_DB_URL" \
             --data-file data.sql \
-            --data-file migration_history_data.sql
+            --data-file migration_history_data.sql \
+            --report-dir "$BACKUP_DIR/reports/after_restore" \
+            --prefix after_restore \
+            --baseline-json "$BACKUP_DIR/reports/before_backup.json"
+
+          python3 - "$BACKUP_DIR" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          files = ["roles.sql", "schema.sql", "data.sql", "migration_history_schema.sql",
+                   "migration_history_data.sql", "manifest.json", "SHA256SUMS",
+                   "database-backup.tar.zst", "database-backup.tar.zst.age"]
+          report = {name: (root / name).stat().st_size for name in files}
+          (root / "reports" / "artifact_sizes.json").write_text(
+              json.dumps(report, indent=2) + "\\n", encoding="utf-8")
+          (root / "reports" / "artifact_sizes.md").write_text(
+              "# Backup artifact sizes\\n\\n" +
+              "| File | Bytes | MiB |\\n|---|---:|---:|\\n" +
+              "".join(f"| {name} | {size:,} | {size / 1048576:.2f} |\\n"
+                      for name, size in report.items()), encoding="utf-8")
+          PY
 
           psql "$LOCAL_DB_URL" -X -v ON_ERROR_STOP=1 -c \
             "SELECT 'restore_check_ok' AS status, count(*) AS restored_user_tables FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema', 'auth', 'storage', 'realtime', 'extensions', 'vault', 'graphql', 'graphql_public', 'supabase_functions');"
@@ -176,6 +206,10 @@ jobs:
           EOF
 
           gh release create "$BACKUP_TAG" database-backup.tar.zst.age \
+            reports/before_backup.json reports/before_backup.csv reports/before_backup.md \
+            reports/after_restore/after_restore.json reports/after_restore/after_restore.csv \
+            reports/after_restore/after_restore.md reports/after_restore/restore_comparison.json \
+            reports/after_restore/restore_comparison.md reports/artifact_sizes.json reports/artifact_sizes.md \
             --repo "$BACKUP_REPOSITORY" \
             --title "$BACKUP_TAG" \
             --notes-file release-notes.md
