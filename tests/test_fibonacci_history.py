@@ -149,3 +149,57 @@ class TestFibonacciDirectionalVolumeConfirmation:
             "open": 100, "high": 105, "low": 99, "close": 104, "volume": 150,
         }).iloc[:3].copy()
         assert not FujimotoStrategy._is_directional_volume_confirmation(frame, 2, "bullish")
+
+
+    def test_history_calculates_causal_10_trading_day_win_rate(self, monkeypatch):
+        dates = pd.date_range("2026-08-01", periods=13, freq="B")
+        closes = [100.0] * 13
+        closes[11] = 110.0  # first event: +10% after 10 trading bars
+        closes[12] = 90.0   # second event: -10% after 10 trading bars
+        frame = pd.DataFrame({
+            "date": dates,
+            "open": closes,
+            "high": [value + 1 for value in closes],
+            "low": [value - 1 for value in closes],
+            "close": closes,
+            "volume": [100.0] * 13,
+        })
+        signal_dates = {dates[1].strftime("%Y-%m-%d"), dates[2].strftime("%Y-%m-%d")}
+
+        def fake_bullish(self, prefix, lookback=60):
+            day = prefix.iloc[-1]["date"].strftime("%Y-%m-%d")
+            levels = [FibLevel(
+                level=0.618, price=100.0, tested=True, reacted=True,
+                reaction_signal="放量止跌", signal_date=day
+            )] if day in signal_dates else []
+            return levels, 101.0, 99.0, []
+
+        monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci", fake_bullish)
+        monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci_bearish", lambda self, prefix, lookback=60: ([], 101, 99, []))
+        events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
+        assert len(events) == 2
+        assert {event["forward_10d_status"] for event in events} == {"matured"}
+        assert sorted(event["forward_10d_win"] for event in events) == [False, True]
+        assert all(event["forward_10d_win_rate"] == 0.5 for event in events)
+        assert all(event["forward_10d_sample_size"] == 2 for event in events)
+
+    def test_history_marks_last_ten_trading_days_as_pending(self, monkeypatch):
+        dates = pd.date_range("2026-08-01", periods=8, freq="B")
+        frame = pd.DataFrame({
+            "date": dates, "open": [100.0] * 8, "high": [101.0] * 8,
+            "low": [99.0] * 8, "close": [100.0] * 8, "volume": [100.0] * 8,
+        })
+        day = dates[1].strftime("%Y-%m-%d")
+        monkeypatch.setattr(
+            FujimotoStrategy, "_calc_fibonacci",
+            lambda self, prefix, lookback=60: (
+                [FibLevel(level=0.5, price=100, tested=True, reacted=True,
+                          reaction_signal="放量止跌", signal_date=day)] if prefix.iloc[-1]["date"].strftime("%Y-%m-%d") == day else [],
+                101, 99, []
+            )
+        )
+        monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci_bearish", lambda self, prefix, lookback=60: ([], 101, 99, []))
+        events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
+        assert len(events) == 1
+        assert events[0]["forward_10d_status"] == "pending"
+        assert events[0]["forward_10d_win_rate"] is None
