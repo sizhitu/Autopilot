@@ -117,7 +117,9 @@ def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
     assert "const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];" in update_results
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish')" in update_results
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
-    assert "const hasSignal = !!event || fallbackSignal;" in update_results
+    assert "当前参考位只展示当前波段自身的确认，不跨波段借用历史事件。" in update_results
+    assert "const hasSignal = !!(fl.reacted && fl.reaction_signal);" in update_results
+    assert "_latestFibEvent" not in update_results
     assert "const _chartData = (data && data.chart_data) || {};" in update_results
     assert "const _fallbackLevels = [" in update_results
     assert "'参考区间 · Fib 回撤位'" in update_results
