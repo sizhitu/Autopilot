@@ -73,7 +73,7 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
     assert "历史强信号" in html
     assert "loadFibSignalHistory();" in html
     assert "const date = String(fl.signal_date || '').slice(0,10);" in html
-    assert "if (!eventDate) continue;" in html
+    assert "if (!date) continue;" in html
     history_loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
     assert "const dataDate =" not in history_loader
     assert "fl.signal_date || dataDate" not in history_loader
