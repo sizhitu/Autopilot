@@ -120,8 +120,10 @@ def _fetch_us_breadth(fetcher,base_frames=None):
  scores=[]; dates=[]; spreads=[]; details=[]
  for equal_symbol,cap_symbol,label in pairs:
   try:
-   equal=base_frames.get(equal_symbol) or _clean_frame(fetcher.fetch(equal_symbol,300))
-   cap=base_frames.get(cap_symbol) or _clean_frame(fetcher.fetch(cap_symbol,300))
+   equal=base_frames.get(equal_symbol)
+   if equal is None:equal=_clean_frame(fetcher.fetch(equal_symbol,300))
+   cap=base_frames.get(cap_symbol)
+   if cap is None:cap=_clean_frame(fetcher.fetch(cap_symbol,300))
    if equal is None or cap is None or len(equal)<220 or len(cap)<220:
     raise ValueError("insufficient 220-bar history")
    joined=pd.merge(equal[["date","close"]],cap[["date","close"]],on="date",suffixes=("_equal","_cap"),how="inner").dropna()
