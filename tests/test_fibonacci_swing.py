@@ -89,6 +89,83 @@ def test_bearish_reaction_before_swing_confirmation_is_not_recorded():
     assert level_50.reacted is False
     assert level_50.signal_date is None
 
+
+def test_bullish_signal_scan_ignores_current_close_gate_and_uses_full_candle_range():
+    frame = _frame([100, 99, 101, 90, 82])
+    frame["date"] = pd.date_range("2026-11-01", periods=len(frame), freq="D")
+    # 0.618 retracement = 95.28; reaction candles span the whole tolerance band.
+    frame.loc[0, ["open", "high", "low", "close"]] = [110, 120, 80, 100]
+    frame.loc[1, ["open", "high", "low", "close"]] = [100, 100, 90, 98]
+    frame.loc[2, ["open", "high", "low", "close"]] = [97, 102, 90, 101]
+    frame.loc[3, ["open", "high", "low", "close"]] = [88, 92, 86, 90]
+    frame.loc[4, ["open", "high", "low", "close"]] = [82, 84, 78, 80]
+
+    strategy = FujimotoStrategy()
+    swing = {
+        "direction": "bullish", "start_idx": 0, "end_idx": 0,
+        "start_price": 80.0, "end_price": 120.0, "confirmation_idx": 0,
+    }
+    strategy._detect_valid_fib_swing = lambda df, lookback=120: swing
+    levels, *_ = strategy._calc_fibonacci(frame)
+    level = next(item for item in levels if item.level == 0.618)
+
+    assert level.tested is False
+    assert level.reacted is True
+    assert level.reaction_signal == "阳线反包确认"
+    assert level.signal_date == "2026-11-03"
+
+
+def test_bearish_signal_scan_ignores_current_close_gate_and_uses_full_candle_range():
+    frame = _frame([100, 108, 99, 112, 110])
+    frame["date"] = pd.date_range("2026-11-01", periods=len(frame), freq="D")
+    # 0.618 rebound = 104.72; reaction candles span the whole resistance band.
+    frame.loc[0, ["open", "high", "low", "close"]] = [110, 120, 80, 100]
+    frame.loc[1, ["open", "high", "low", "close"]] = [100, 110, 100, 108]
+    frame.loc[2, ["open", "high", "low", "close"]] = [109, 110, 98, 99]
+    frame.loc[3, ["open", "high", "low", "close"]] = [112, 115, 110, 112]
+    frame.loc[4, ["open", "high", "low", "close"]] = [110, 112, 108, 110]
+
+    strategy = FujimotoStrategy()
+    swing = {
+        "direction": "bearish", "start_idx": 0, "end_idx": 0,
+        "start_price": 120.0, "end_price": 80.0, "confirmation_idx": 0,
+    }
+    strategy._detect_valid_fib_swing = lambda df, lookback=120: swing
+    levels, *_ = strategy._calc_fibonacci_bearish(frame)
+    level = next(item for item in levels if item.level == 0.618)
+
+    assert level.tested is False
+    assert level.reacted is True
+    assert level.reaction_signal == "阴线反包受阻"
+    assert level.signal_date == "2026-11-03"
+
+
+def test_current_fib_level_matches_its_replayed_history_event():
+    frame = _frame([100, 99, 101, 90, 82])
+    frame["date"] = pd.date_range("2026-11-01", periods=len(frame), freq="D")
+    frame.loc[0, ["open", "high", "low", "close"]] = [110, 120, 80, 100]
+    frame.loc[1, ["open", "high", "low", "close"]] = [100, 100, 90, 98]
+    frame.loc[2, ["open", "high", "low", "close"]] = [97, 102, 90, 101]
+    frame.loc[3, ["open", "high", "low", "close"]] = [88, 92, 86, 90]
+    frame.loc[4, ["open", "high", "low", "close"]] = [82, 84, 78, 80]
+
+    strategy = FujimotoStrategy()
+    swing = {
+        "direction": "bullish", "start_idx": 0, "end_idx": 0,
+        "start_price": 80.0, "end_price": 120.0, "confirmation_idx": 0,
+    }
+    strategy._detect_valid_fib_swing = lambda df, lookback=120: swing
+    current, *_ = strategy._calc_fibonacci(frame)
+    history = strategy._build_fibonacci_signal_history(frame)
+    current_event = next(item for item in current if item.level == 0.618 and item.reacted)
+    matching = [
+        event for event in history
+        if event["side"] == "bullish" and event["level"] == 0.618
+        and event["signal_date"] == current_event.signal_date
+        and event["signal"] == current_event.reaction_signal
+    ]
+    assert len(matching) == 1
+
 def test_trend_context_distinguishes_with_trend_and_countertrend_reactions():
     rising = _frame([100 + i for i in range(60)])
     falling = _frame([160 - i for i in range(60)])
