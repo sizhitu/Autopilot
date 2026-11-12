@@ -466,18 +466,173 @@ class FujimotoStrategy:
             and close_location <= 0.40
         )
 
+    @staticmethod
+    def _detect_valid_fib_swing(
+        df: pd.DataFrame,
+        lookback: int = 120,
+        left_bars: int = 3,
+        right_bars: int = 3,
+        min_bars: int = 5,
+        min_move_pct: float = 0.05,
+        min_atr_multiple: float = 2.0,
+    ) -> Optional[dict]:
+        """
+        Detect the latest *confirmed* impulse swing from alternating fractal pivots.
+
+        A pivot is only knowable after right_bars have elapsed. The returned
+        endpoint is therefore always confirmed using data available at the
+        current row; this same function can safely be replayed on historical
+        prefixes without look-ahead bias.
+
+        Consecutive pivots of the same type are compressed to the more extreme
+        one. Only the latest adjacent low->high or high->low pair is eligible.
+        The move must span min_bars and exceed max(5% of its origin, 2 ATR).
+        """
+        required = {"high", "low", "close"}
+        if df is None or not required.issubset(df.columns):
+            return None
+        recent = df.tail(max(int(lookback), left_bars + right_bars + 2)).copy()
+        if len(recent) < left_bars + right_bars + 1:
+            return None
+
+        highs = pd.to_numeric(recent["high"], errors="coerce").to_numpy(dtype=float)
+        lows = pd.to_numeric(recent["low"], errors="coerce").to_numpy(dtype=float)
+        closes = pd.to_numeric(recent["close"], errors="coerce").to_numpy(dtype=float)
+        if not (np.isfinite(highs).all() and np.isfinite(lows).all() and np.isfinite(closes).all()):
+            return None
+        if np.any(highs < lows) or np.any(closes <= 0):
+            return None
+
+        pivots = []
+        start = left_bars
+        stop = len(recent) - right_bars
+        for i in range(start, stop):
+            left_h = highs[i-left_bars:i]
+            right_h = highs[i+1:i+right_bars+1]
+            left_l = lows[i-left_bars:i]
+            right_l = lows[i+1:i+right_bars+1]
+            is_high = highs[i] > np.max(left_h) and highs[i] >= np.max(right_h)
+            is_low = lows[i] < np.min(left_l) and lows[i] <= np.min(right_l)
+            if is_high == is_low:
+                continue
+            pivot = {
+                "type": "high" if is_high else "low",
+                "idx": int(i + (len(df) - len(recent))),
+                "price": float(highs[i] if is_high else lows[i]),
+            }
+            if pivots and pivots[-1]["type"] == pivot["type"]:
+                more_extreme = (
+                    pivot["price"] > pivots[-1]["price"]
+                    if pivot["type"] == "high"
+                    else pivot["price"] < pivots[-1]["price"]
+                )
+                if more_extreme:
+                    pivots[-1] = pivot
+            else:
+                pivots.append(pivot)
+
+        if len(pivots) < 2:
+            return None
+        first, last = pivots[-2], pivots[-1]
+        bars = last["idx"] - first["idx"]
+        if bars < min_bars:
+            return None
+
+        move = abs(last["price"] - first["price"])
+        origin = first["price"]
+        if origin <= 0:
+            return None
+
+        # ATR is calculated only from observations available at the pivot origin.
+        origin_local = first["idx"]
+        hist_start = max(1, origin_local - 13)
+        hist = df.iloc[hist_start:origin_local + 1]
+        if len(hist) >= 2:
+            prev_close = pd.to_numeric(df["close"].iloc[hist_start-1:origin_local], errors="coerce").to_numpy(dtype=float)
+            h = pd.to_numeric(hist["high"], errors="coerce").to_numpy(dtype=float)
+            l = pd.to_numeric(hist["low"], errors="coerce").to_numpy(dtype=float)
+            tr = np.maximum(h - l, np.maximum(np.abs(h - prev_close), np.abs(l - prev_close)))
+            atr = float(np.nanmean(tr)) if len(tr) else 0.0
+        else:
+            atr = 0.0
+        min_move = max(origin * min_move_pct, atr * min_atr_multiple)
+        if move < min_move:
+            return None
+
+        direction = "bullish" if first["type"] == "low" and last["type"] == "high" else "bearish"
+        return {
+            "direction": direction,
+            "start_idx": first["idx"],
+            "end_idx": last["idx"],
+            "start_type": first["type"],
+            "end_type": last["type"],
+            "start_price": first["price"],
+            "end_price": last["price"],
+            "bars": bars,
+            "move_pct": move / origin,
+            "atr_at_start": atr,
+            "confirmation_idx": last["idx"] + right_bars,
+        }
+
+    @staticmethod
+    def _fib_trend_context(df: pd.DataFrame, swing_direction: str) -> dict:
+        """
+        Classify a Fib reaction as with-trend, counter-trend, or range/transition.
+        This is descriptive context only; it never suppresses a valid local reaction.
+        """
+        if df is None or len(df) < 55 or swing_direction not in ("bullish", "bearish"):
+            return {
+                "background_trend": "insufficient_data",
+                "signal_context": "趋势未确认",
+            }
+        close = pd.to_numeric(df["close"], errors="coerce")
+        ma20 = close.rolling(20, min_periods=20).mean()
+        ma50 = close.rolling(50, min_periods=50).mean()
+        if close.isna().iloc[-1] or ma20.isna().iloc[-1] or ma50.isna().iloc[-1] or ma20.isna().iloc[-6]:
+            return {
+                "background_trend": "insufficient_data",
+                "signal_context": "趋势未确认",
+            }
+
+        last_close = float(close.iloc[-1])
+        last_ma20 = float(ma20.iloc[-1])
+        last_ma50 = float(ma50.iloc[-1])
+        ma20_rising = last_ma20 > float(ma20.iloc[-6])
+        ma20_falling = last_ma20 < float(ma20.iloc[-6])
+
+        if last_close > last_ma20 > last_ma50 and ma20_rising:
+            background = "bullish"
+        elif last_close < last_ma20 < last_ma50 and ma20_falling:
+            background = "bearish"
+        else:
+            background = "range_or_transition"
+
+        if background == "range_or_transition":
+            context = "震荡/趋势转换"
+        elif background == swing_direction:
+            context = "顺势"
+        else:
+            context = "逆势"
+        return {"background_trend": background, "signal_context": context}
+
     def _calc_fibonacci(self, df: pd.DataFrame, lookback: int = 60) -> tuple:
         """
         计算斐波那契回撤与扩展位
         返回: (fib_levels列表, swing_high, swing_low)
         """
         recent = df.tail(lookback) if len(df) >= lookback else df
-        swing_high = recent['high'].max()
-        swing_low = recent['low'].min()
+        window_high = float(recent["high"].max())
+        window_low = float(recent["low"].min())
+        swing = self._detect_valid_fib_swing(df, lookback=max(lookback, 120))
+        if not swing or swing["direction"] != "bullish":
+            return [], window_high, window_low, []
+        swing_low = float(swing["start_price"])
+        swing_high = float(swing["end_price"])
+        anchor_confirmation_idx = int(swing["confirmation_idx"])
         diff = swing_high - swing_low
 
         if diff <= 0:
-            return [], swing_high, swing_low
+            return [], swing_high, swing_low, []
 
         levels_config = [
             (0.786, "极深回调"),
@@ -503,7 +658,7 @@ class FujimotoStrategy:
                 # 因成交量较前一日增加 20% 而反复生成同一条“放量止跌”信号。
                 near_mask = ((df['low'] <= price * 1.01) &
                              (df['low'] >= price * 0.99)).to_numpy()
-                near_positions = np.flatnonzero(near_mask)
+                near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_confirmation_idx))
                 episodes = []
                 for pos in near_positions:
                     if not episodes or pos > episodes[-1][-1] + 1:
@@ -572,8 +727,14 @@ class FujimotoStrategy:
         返回: (fib_levels列表, swing_high, swing_low, target_prices)
         """
         recent = df.tail(lookback) if len(df) >= lookback else df
-        swing_high = recent['high'].max()
-        swing_low = recent['low'].min()
+        window_high = float(recent["high"].max())
+        window_low = float(recent["low"].min())
+        swing = self._detect_valid_fib_swing(df, lookback=max(lookback, 120))
+        if not swing or swing["direction"] != "bearish":
+            return [], window_high, window_low, []
+        swing_high = float(swing["start_price"])
+        swing_low = float(swing["end_price"])
+        anchor_confirmation_idx = int(swing["confirmation_idx"])
         diff = swing_high - swing_low
 
         if diff <= 0:
@@ -599,7 +760,7 @@ class FujimotoStrategy:
                 # 对称于上涨侧：用 K 线高点判断触及阻力区。
                 near_mask = ((df['high'] <= price * 1.01) &
                              (df['high'] >= price * 0.99)).to_numpy()
-                near_positions = np.flatnonzero(near_mask)
+                near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_confirmation_idx))
                 episodes = []
                 for pos in near_positions:
                     if not episodes or pos > episodes[-1][-1] + 1:
@@ -659,9 +820,9 @@ class FujimotoStrategy:
 
     def _build_fibonacci_signal_history(self, df: pd.DataFrame, lookback: int = 60) -> list:
         """
-        从完整 K 线序列逐日重放原有 Fib 算法，重建每次独立确认事件。
-        每个交易日只使用当日及以前的数据，避免未来数据泄漏。
-        不改变当前 _calc_fibonacci / _calc_fibonacci_bearish 的任何交易决策。
+        从完整 K 线序列逐日重放已确认波段 Fib 算法，重建独立确认事件。
+        每个交易日只使用当日及以前的数据；Pivot 必须经过右侧 K 线确认，
+        因此历史回放不会提前使用未来才可确认的高低点。
         """
         events = []
         if df is None or len(df) < 2:
@@ -680,7 +841,9 @@ class FujimotoStrategy:
                 continue
             event_date = parsed.strftime("%Y-%m-%d")
 
-            # 使用现有算法逐日重算锚点和信号；只收录当日首次确认。
+            # 使用同一套已确认 Pivot 算法逐日重算锚点和信号；只收录当日首次确认。
+            swing = self._detect_valid_fib_swing(prefix, lookback=max(lookback, 120))
+            swing_context = self._fib_trend_context(prefix, swing["direction"]) if swing else {}
             bullish, _, _, _ = self._calc_fibonacci(prefix, lookback=lookback)
             bearish, _, _, _ = self._calc_fibonacci_bearish(prefix, lookback=lookback)
             for side, levels in (("bullish", bullish), ("bearish", bearish)):
@@ -689,13 +852,34 @@ class FujimotoStrategy:
                         continue
                     if str(fl.signal_date or "")[:10] != event_date:
                         continue
-                    events.append({
+                    event = {
                         "side": side,
                         "level": float(fl.level),
                         "price": round(float(fl.price), 4),
                         "signal": fl.reaction_signal,
                         "signal_date": event_date,
-                    })
+                    }
+                    if swing and swing["direction"] == side:
+                        event.update(swing_context)
+                        start_idx = int(swing["start_idx"])
+                        end_idx = int(swing["end_idx"])
+                        confirm_idx = int(swing["confirmation_idx"])
+                        def _date_at(position):
+                            raw = (
+                                prefix.iloc[position]["date"] if "date" in prefix.columns
+                                else prefix.index[position]
+                            )
+                            parsed_date = pd.to_datetime(raw, errors="coerce")
+                            return parsed_date.strftime("%Y-%m-%d") if not pd.isna(parsed_date) else None
+                        event.update({
+                            "swing_direction": swing["direction"],
+                            "swing_start_date": _date_at(start_idx),
+                            "swing_end_date": _date_at(end_idx),
+                            "swing_confirmation_date": _date_at(confirm_idx) if confirm_idx < len(prefix) else None,
+                            "swing_start_price": round(float(swing["start_price"]), 4),
+                            "swing_end_price": round(float(swing["end_price"]), 4),
+                        })
+                    events.append(event)
 
         # 同一方向、Fib 位、交易日、信号类型只保留一条。
         unique = {}
@@ -1105,13 +1289,17 @@ class FujimotoStrategy:
             note = f"⚠ 数据有限（仅{len(df)}根K线），指标偏短期，结论仅供参考"
             risk_warning = (risk_warning + "；" + note) if risk_warning else note
 
-        # 图表数据
+        # 图表数据：保留有效波段锚点，并附加顺势/逆势背景，不参与交易门槛。
+        fib_swing = self._detect_valid_fib_swing(df)
+        if fib_swing:
+            fib_swing.update(self._fib_trend_context(df, fib_swing["direction"]))
         chart_data = {
             "swing_high": swing_high,
             "swing_low": swing_low,
             "fib_levels": fib_levels,
             "fib_bearish_levels": fib_bearish_levels,
             "fib_signal_history": [] if _lite else self._build_fibonacci_signal_history(df),
+            "fib_swing": fib_swing,
             "target_prices": target_prices,
             "mas": {p: v for p, v in mas.items() if v is not None},
             "vwma": vwma,

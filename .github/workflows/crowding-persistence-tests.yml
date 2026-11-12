@@ -9,6 +9,7 @@ on:
       - "trading_tool/strategy_engine.py"
       - "tests/test_fibonacci_bearish.py"
       - "tests/test_fibonacci_history.py"
+      - "tests/test_fibonacci_swing.py"
       - "tests/test_quote_performance.py"
       - "supabase/migrations/0008_crowding_persistence.sql"
       - "scripts/archive/archive_position_advice.py"
@@ -42,4 +43,5 @@ jobs:
           python -m pytest tests/test_analysis_ui_cleanup.py -q
           python -m pytest tests/test_fibonacci_bearish.py -q
           python -m pytest tests/test_fibonacci_history.py -q
+          python -m pytest tests/test_fibonacci_swing.py -q
           python -m pytest tests/test_quote_performance.py -q
