@@ -127,7 +127,7 @@ def test_fib_swing_expires_after_90_calendar_days_but_not_on_day_90():
 
 def test_expired_bullish_and_bearish_swings_are_not_current_fib_levels(monkeypatch):
     strategy = FujimotoStrategy()
-    frame = _frame([100 + i for i in range(100)])
+    frame = _frame([100 + i for i in range(140)])
     frame["date"] = pd.date_range("2026-01-01", periods=len(frame), freq="D").astype(str)
     swing = {
         "direction": "bullish",
