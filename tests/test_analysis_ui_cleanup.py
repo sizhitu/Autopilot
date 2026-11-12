@@ -115,9 +115,9 @@ def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
 
     assert "const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];" in update_results
     assert "const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];" in update_results
-    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull)" in update_results
-    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear)" in update_results
-    assert "const hasStrongSignal = !!(fl.reacted && fl.reaction_signal);" in update_results
+    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish')" in update_results
+    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
+    assert "const hasSignal = !!event || fallbackSignal;" in update_results
     assert "const _chartData = (data && data.chart_data) || {};" in update_results
     assert "const _fallbackLevels = [" in update_results
     assert "'参考区间 · Fib 回撤位'" in update_results
@@ -188,10 +188,10 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
     renderer = update_results[update_results.index("const _renderFibGroup"):update_results.index("if (_fibBull.length)")]
 
     assert '<span>最近确认</span>' in renderer
-    assert 'class="fib-signal-date">\u0024{dateText}</span>' in renderer
+    assert '<span>信号日期</span><span>所属波段</span>' in renderer
     assert "波段最近确认" not in renderer
     assert "class=\"fib-table-head\"" in renderer
-    assert "grid-template-columns:48px minmax(58px,.8fr) minmax(112px,1.5fr) 82px" in html
+    assert "grid-template-columns:42px minmax(54px,.75fr) minmax(88px,1.2fr) 72px 64px" in html
 
 
 
