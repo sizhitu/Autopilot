@@ -69,6 +69,10 @@ def test_fibonacci_history_expands_for_mixed_legacy_and_archive_snapshots():
     assert "if (legacyRecords.length > 0)" in loader
     assert "'&limit=100'" in loader
     assert "for (const item of items) collectSnapshot(parseRecord(item));" in loader
+    expanded_query = loader.index("if (legacyRecords.length > 0)")
+    collect_expanded = loader.index("for (const item of items) collectSnapshot(parseRecord(item));", expanded_query)
+    convert_expanded_legacy = loader.index("addLegacyEvents(legacyRecords);", collect_expanded)
+    assert collect_expanded < convert_expanded_legacy
     assert "events = Array.from(archivedEvents.values());" in loader
     assert "if (!hasEventArchive)" not in loader
     assert "break;" not in loader
