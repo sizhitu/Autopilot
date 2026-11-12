@@ -1318,6 +1318,22 @@ body.landing-locked #freeBanner { display: none !important; }
 
 <!-- 仓位节奏：利差 + 拥挤度 + 藤本茂阶梯 -->
 <div id="ladderView" class="hidden" style="padding:12px;max-width:720px;margin:0 auto;">
+  <div class="card" id="marketTemperatureCard" style="margin-bottom:10px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+    <div style="font-weight:700;color:var(--gold);">市场情绪温度</div>
+    <div style="display:flex;gap:4px;"><button class="btn btn-outline btn-sm active" id="temperatureMarketCn" onclick="selectMarketTemperature('cn')">A股</button><button class="btn btn-outline btn-sm" id="temperatureMarketUs" onclick="selectMarketTemperature('us')">美股</button></div>
+  </div>
+  <div style="display:grid;grid-template-columns:68px 1fr;gap:12px;align-items:center;">
+    <div style="height:164px;display:flex;align-items:center;justify-content:center;"><div style="position:relative;width:32px;height:148px;border:2px solid #667085;border-radius:18px;overflow:hidden;background:linear-gradient(to top,rgba(46,204,113,.1),rgba(241,196,15,.1),rgba(231,76,60,.1));">
+      <div id="temperatureMercury" style="position:absolute;bottom:0;left:4px;right:4px;height:0%;border-radius:12px;background:linear-gradient(to top,#3498db,#2ecc71,#f1c40f,#e74c3c);transition:height .35s ease;"></div><div style="position:absolute;left:-1px;right:-1px;top:50%;border-top:1px dashed rgba(255,255,255,.45);"></div></div></div>
+    <div><div style="display:flex;align-items:baseline;gap:5px;"><span id="temperatureValue" style="font-size:38px;font-weight:750;line-height:1;">--</span><span style="color:var(--text-dim);font-size:12px;">/ 100</span></div>
+      <div id="temperatureRegime" style="font-size:14px;font-weight:650;margin-top:5px;">等待数据</div><div id="temperatureChange" style="font-size:11px;color:var(--text-dim);margin-top:7px;">5日 -- · 20日 --</div>
+      <div id="temperatureCoverage" style="font-size:10px;color:var(--text-dim);margin-top:5px;">数据覆盖 --</div><div id="temperatureAsOf" style="font-size:10px;color:var(--text-dim);margin-top:3px;">数据日期 --</div></div>
+  </div>
+  <div id="temperatureComponents" style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px;"></div>
+  <div style="display:flex;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:10px;color:var(--text-dim);"><span id="temperatureCompare">A股 -- · 美股 --</span><span id="temperatureUpdated">每日收盘更新</span></div>
+  <div style="font-size:10px;color:var(--text-dim);line-height:1.45;margin-top:6px;">宽度35% · 趋势25% · 活跃度20% · 风险20%；不重复计入个股拥挤度。研究参考，不构成买卖信号。</div>
+</div>
   <div class="card" style="margin-bottom:10px;">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
       <div style="font-weight:700;color:var(--gold);">A股市场</div>
@@ -4195,7 +4211,7 @@ function switchMainTab(tab) {
       else { wv.classList.add('hidden'); wv.style.display = 'none'; }
     }
     if (lv) {
-      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { if (typeof paintMarketSpreadNow === 'function') paintMarketSpreadNow(); } catch (eP) {} try { loadLadderTable(); } catch (eL) {} try { loadMarketSpread(false); } catch (eMs) {} try { loadStockAdvice(currentSymbol); } catch (eSA) {} }
+      if (tab === 'ladder') { lv.classList.remove('hidden'); lv.style.display = ''; try { if (typeof paintMarketSpreadNow === 'function') paintMarketSpreadNow(); } catch (eP) {} try { loadLadderTable(); } catch (eL) {} try { loadMarketSpread(false); } catch (eMs) {} try { loadStockAdvice(currentSymbol); } catch (eSA) {} try { loadMarketTemperature(false); } catch (eMT) {} }
       else { lv.classList.add('hidden'); lv.style.display = 'none'; }
     }
     if (tl) {
@@ -7487,6 +7503,41 @@ async function loadStockAdvice(requestedSymbol) {
 // Expose the position-module functions to the main analysis script.
 window.loadCrowdingForAnalysis = loadCrowdingForAnalysis;
 window.loadStockAdvice = loadStockAdvice;
+
+
+let _marketTemperatureSelected='cn', _marketTemperatureData={cn:null,us:null}, _marketTemperatureInflight={cn:null,us:null};
+const _temperatureLabels={breadth:'市场宽度',trend:'趋势强度',activity:'成交活跃度',risk:'波动与风险'};
+function selectMarketTemperature(market){
+  if(market!=='cn'&&market!=='us')return; _marketTemperatureSelected=market;
+  ['cn','us'].forEach(k=>{const b=document.getElementById(k==='cn'?'temperatureMarketCn':'temperatureMarketUs');if(b)b.classList.toggle('active',k===market);});
+  paintMarketTemperature(); loadMarketTemperature(false,market);
+}
+function paintMarketTemperature(){
+  const m=_marketTemperatureSelected,d=_marketTemperatureData[m],v=document.getElementById('temperatureValue'),r=document.getElementById('temperatureRegime'),mer=document.getElementById('temperatureMercury'),root=document.getElementById('temperatureComponents');
+  if(!d){if(v)v.textContent='--';if(r)r.textContent='等待数据';if(mer)mer.style.height='0%';if(root)root.innerHTML='<div style="grid-column:1/-1;color:var(--text-dim);font-size:11px;">正在读取市场温度…</div>';return;}
+  const score=d.temperature==null?null:Number(d.temperature);if(v)v.textContent=score==null?'--':score.toFixed(1);if(r)r.textContent=d.regime||'数据不足';if(mer)mer.style.height=score==null?'0%':Math.max(0,Math.min(100,score))+'%';
+  const rows=Array.isArray(d.history)?d.history:[];
+  const delta=n=>{if(rows.length<n+1||score==null||rows[rows.length-n-1].temperature==null)return '--';const z=score-Number(rows[rows.length-n-1].temperature);return(z>0?'+':'')+z.toFixed(1)+'°';};
+  const ch=document.getElementById('temperatureChange');if(ch)ch.textContent='5日 '+delta(5)+' · 20日 '+delta(20);
+  const cov=document.getElementById('temperatureCoverage');if(cov)cov.textContent='数据覆盖 '+Number(d.coverage||0).toFixed(0)+'%（最低要求 '+Number(d.min_coverage||80).toFixed(0)+'%）';
+  const as=document.getElementById('temperatureAsOf');if(as)as.textContent='数据日期 '+(d.as_of||'--');
+  if(root){const c=d.components||{};root.innerHTML=Object.keys(_temperatureLabels).map(k=>{const x=c[k]||{},n=x.score==null?null:Number(x.score);return '<div title="'+String(x.source||'')+' · '+String(x.data_date||'日期未知')+'" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px;"><div style="display:flex;justify-content:space-between;gap:5px;font-size:10px;color:var(--text-dim);"><span>'+_temperatureLabels[k]+'</span><b>'+(n==null?'数据不足':n.toFixed(0)+'分')+'</b></div><div style="height:4px;background:var(--border);border-radius:4px;margin-top:5px;overflow:hidden;"><div style="height:4px;width:'+(n==null?0:Math.max(0,Math.min(100,n)))+'%;background:var(--blue);"></div></div></div>';}).join('');}
+  const up=document.getElementById('temperatureUpdated');if(up)up.textContent=(d.status==='pending'||d.status==='waiting_for_close')?'等待收盘':(d.stale_during_session?'沿用上个收盘快照':(d.cached?'缓存数据':'已更新'));
+  const cp=document.getElementById('temperatureCompare');if(cp)cp.textContent=['cn','us'].map(k=>{const x=_marketTemperatureData[k];return(k==='cn'?'A股 ':'美股 ')+(x&&x.temperature!=null?Number(x.temperature).toFixed(1)+'°':'--');}).join(' · ');
+}
+async function loadMarketTemperature(force,market){
+  const list=market?[market]:['cn','us'];
+  await Promise.all(list.map(async key=>{
+    if(_marketTemperatureInflight[key])return _marketTemperatureInflight[key];
+    const old=_marketTemperatureData[key];
+    _marketTemperatureInflight[key]=(async()=>{try{
+      const res=await api('/api/market-temperature?market='+key),j=await res.json();
+      if(j&&j.market===key){_marketTemperatureData[key]=j;if(j.status==='pending')setTimeout(()=>loadMarketTemperature(true,key),12000);}
+    }catch(e){if(!_marketTemperatureData[key])_marketTemperatureData[key]={market:key,status:'error',regime:'暂时无法读取',temperature:null,components:{}};}
+    finally{_marketTemperatureInflight[key]=null;if(_marketTemperatureSelected===key||!market)paintMarketTemperature();}})();
+    return _marketTemperatureInflight[key];
+  }));
+}
 
 async function loadMarketSpread(force) {
   const el = document.getElementById('cnSpreadBar');

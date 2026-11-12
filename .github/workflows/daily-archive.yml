@@ -100,6 +100,15 @@ jobs:
           PYTHONPATH=trading_tool python scripts/archive/archive_market_spread.py \
             --out ../data-repo/data || echo "market spread archive skipped"
 
+      - name: Archive market temperature (cold backup)
+        working-directory: app
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          PYTHONPATH=trading_tool python scripts/archive/archive_market_temperature.py \
+            --out ../data-repo/data || echo "market temperature archive skipped"
+
       - name: Archive action logs (cold backup)
         working-directory: app
         env:

@@ -783,6 +783,103 @@ async def market_spread():
     return JSONResponse(content=fallback, headers={"Cache-Control": "public, max-age=600"})
 
 
+
+# Market-wide sentiment temperature: separate CN/US snapshots and durable daily history.
+_MARKET_TEMPERATURE_CACHE = {"data": {}, "refreshing": set()}
+_MARKET_TEMPERATURE_TTL = 18 * 3600
+_MARKET_TEMPERATURE_MEM_TTL = 5 * 60
+
+def _persist_market_temperature(snapshot: dict) -> None:
+    try:
+        if not supabase_client.using_supabase(): return
+        day=str(snapshot.get("as_of") or datetime.now().date().isoformat())[:10]
+        supabase_client.get_service_client().table("market_temperature_daily").upsert({
+            "market":snapshot["market"],"trade_date":day,"temperature":snapshot.get("temperature"),
+            "regime":snapshot.get("regime") or "数据不足","coverage":snapshot.get("coverage") or 0,
+            "method_version":snapshot.get("method_version") or "1.0.0",
+            "components":snapshot.get("components") or {},"snapshot":snapshot,
+            "calculated_at":snapshot.get("calculated_at"),"updated_at":datetime.now().isoformat()
+        },on_conflict="market,trade_date").execute()
+    except Exception as exc: print(f"[market-temperature] persistence failed: {type(exc).__name__}: {exc}")
+
+def _market_temperature_history(market: str, limit: int = 30) -> list:
+    try:
+        if not supabase_client.using_supabase(): return []
+        rows=(supabase_client.get_service_client().table("market_temperature_daily")
+              .select("trade_date,temperature,regime,coverage,components,method_version")
+              .eq("market",market).order("trade_date",desc=True).limit(limit).execute().data or [])
+        return list(reversed(rows))
+    except Exception as exc:
+        print(f"[market-temperature] history read failed: {type(exc).__name__}: {exc}")
+        return []
+
+def _market_temperature_session_open(market: str) -> bool:
+    """Avoid mixing intraday breadth with end-of-day indicators."""
+    try:
+        from zoneinfo import ZoneInfo
+        zone = "Asia/Shanghai" if market == "cn" else "America/New_York"
+        local = datetime.now(ZoneInfo(zone))
+        if local.weekday() >= 5:
+            return False
+        minute = local.hour * 60 + local.minute
+        start = 9 * 60 + 30
+        end = 15 * 60 if market == "cn" else 16 * 60
+        return start <= minute < end
+    except Exception:
+        # Fail closed: if timezone detection fails, do not refresh intraday.
+        return True
+
+
+def _refresh_market_temperature(market: str) -> None:
+    import threading
+    state=_MARKET_TEMPERATURE_CACHE
+    if market in state["refreshing"]: return
+    state["refreshing"].add(market)
+    def _run():
+        try:
+            from market_temperature import build_market_temperature_snapshot
+            snap=build_market_temperature_snapshot(market,fetcher=fetcher)
+            _persist_market_temperature(snap)
+            snap["history"]=_market_temperature_history(market,30)
+            snap["stored_at"]=time.time()
+            import cache as _cache
+            _cache.set_json(f"market_temperature_v1_{market}",snap,_MARKET_TEMPERATURE_TTL)
+            state["data"][market]=snap
+        except Exception as exc: print(f"[market-temperature] {market} refresh failed: {type(exc).__name__}: {exc}")
+        finally: state["refreshing"].discard(market)
+    threading.Thread(target=_run,daemon=True,name=f"market-temperature-{market}").start()
+
+@app.get("/api/market-temperature")
+async def market_temperature(market: str = Query("cn", regex="^(cn|us)$")):
+    import cache as _cache
+    now=time.time()
+    session_open=_market_temperature_session_open(market)
+    current=_MARKET_TEMPERATURE_CACHE["data"].get(market)
+    if isinstance(current,dict):
+        age=now-float(current.get("stored_at") or 0)
+        if age<_MARKET_TEMPERATURE_TTL or session_open:
+            out=dict(current); out["cached"]=True; out["stale_during_session"]=bool(session_open and age>=_MARKET_TEMPERATURE_TTL)
+            return JSONResponse(content=_to_jsonable(out),headers={"Cache-Control":"public, max-age=120"})
+    try:
+        hit=await asyncio.wait_for(asyncio.to_thread(_cache.get_json,f"market_temperature_v1_{market}"),timeout=2.0)
+    except Exception:
+        hit=None
+    if isinstance(hit,dict) and hit.get("market")==market:
+        hit=dict(hit); _MARKET_TEMPERATURE_CACHE["data"][market]=hit
+        age=now-float(hit.get("stored_at") or 0)
+        if age>=_MARKET_TEMPERATURE_TTL and not session_open:
+            _refresh_market_temperature(market)
+        hit["cached"]=True; hit["stale_during_session"]=bool(session_open and age>=_MARKET_TEMPERATURE_TTL)
+        return JSONResponse(content=_to_jsonable(hit),headers={"Cache-Control":"public, max-age=120"})
+    if session_open:
+        return JSONResponse(content={"market":market,"temperature":None,"regime":"等待收盘数据","coverage":0,
+          "components":{},"history":[],"status":"waiting_for_close","message":"交易时段不混用盘中宽度与收盘指标，正式温度将在收盘后生成"},
+          headers={"Cache-Control":"no-store"})
+    _refresh_market_temperature(market)
+    return JSONResponse(content={"market":market,"temperature":None,"regime":"数据更新中","coverage":0,
+      "components":{},"history":[],"status":"pending","message":"首次计算正在后台进行，请稍后刷新"},
+      headers={"Cache-Control":"no-store"})
+
 @app.get("/api/config")
 async def public_config():
     """公开配置：前端用其初始化 supabase-js（anon key / url 均为公开安全值）。"""
