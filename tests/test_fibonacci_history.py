@@ -267,3 +267,44 @@ class TestFibonacciDirectionalVolumeConfirmation:
         assert by_signal["放量止跌"]["forward_5d_win_rate"] == 1.0
         assert by_signal["阳线反包"]["forward_5d_sample_size"] == 1
         assert by_signal["阳线反包"]["forward_5d_win_rate"] == 0.0
+
+
+class TestFibonacciTouchEpisodeOptimization:
+    def test_suffix_scan_is_exactly_equivalent_to_full_prefix_mask(self):
+        import numpy as np
+
+        rng = np.random.default_rng(20261113)
+        for length in (20, 121, 260):
+            lows = rng.uniform(80, 120, length)
+            highs = lows + rng.uniform(0.1, 8.0, length)
+            frame = pd.DataFrame({"low": lows, "high": highs})
+            for anchor in (0, max(0, length // 2), length - 2):
+                for price in (90.0, 100.0, 110.0):
+                    mask = (
+                        (frame["low"] <= price * 1.01)
+                        & (frame["high"] >= price * 0.99)
+                    ).to_numpy()
+                    positions = np.flatnonzero(
+                        mask & (np.arange(length) > anchor)
+                    )
+                    expected = []
+                    for pos in positions:
+                        if not expected or pos > expected[-1][-1] + 1:
+                            expected.append([int(pos)])
+                        else:
+                            expected[-1].append(int(pos))
+                    actual = FujimotoStrategy._fib_touch_episodes(
+                        frame, price, anchor
+                    )
+                    assert actual == expected
+
+    def test_suffix_scan_never_reads_rows_before_anchor(self, monkeypatch):
+        import numpy as np
+
+        frame = pd.DataFrame({
+            "low": np.full(500, 99.0),
+            "high": np.full(500, 101.0),
+        })
+        # A late anchor means the optimized scan processes only the 20-row suffix.
+        episodes = FujimotoStrategy._fib_touch_episodes(frame, 100.0, 479)
+        assert episodes == [list(range(480, 500))]
