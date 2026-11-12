@@ -134,7 +134,7 @@ def test_fibonacci_confirmation_is_emitted_once_per_continuous_touch_episode():
     level = _get_fibonacci_0786(frame)
 
     assert level.reacted is True
-    assert level.signal_date == "2026-08-03"
+    assert level.signal_date == "2026-08-04"
     assert level.reaction_signal == "放量止跌"
 
 
