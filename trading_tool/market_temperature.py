@@ -9,7 +9,7 @@ import requests
 logger = logging.getLogger("market_temperature")
 WEIGHTS = {"breadth": 35.0, "trend": 25.0, "activity": 20.0, "risk": 20.0}
 MIN_COVERAGE = 80.0
-CN_INDEXES = ["000001", "399001", "399006", "000300", "000905"]
+CN_INDEXES = ["sh000001", "sz399001", "sz399006", "sh000300", "sh000905"]
 US_INDEXES = ["SPY", "QQQ", "IWM", "DIA"]
 
 def _clean_frame(frame):
@@ -73,7 +73,7 @@ def _fetch_cn_breadth():
     if total<1000 or len(changes)<1000 or len(changes)<total*.75: raise ValueError(f"Eastmoney breadth coverage insufficient: {len(changes)}/{total}")
     adv=sum(x>0 for x in changes); dec=sum(x<0 for x in changes); unchanged=sum(x==0 for x in changes); n=adv+dec+unchanged
     if n<1000: raise ValueError("A-share breadth sample too small")
-    return {"score":round(adv/n*100,1),"advancers":adv,"decliners":dec,"unchanged":unchanged,"universe":n,
+    return {"score":round(adv/(adv+dec)*100,1) if adv+dec else 50.0,"advancers":adv,"decliners":dec,"unchanged":unchanged,"universe":n,
             "source":"Eastmoney A股全市场实时涨跌家数","data_date":datetime.now().date().isoformat()}
 
 def _fetch_us_breadth(fetcher):
