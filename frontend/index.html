@@ -6113,7 +6113,7 @@ async function loadFibSignalHistory() {
       const normalized = {
         side: ev.side, level: ev.level, price: ev.price,
         date: String(ev.signal_date).slice(0,10), signal: ev.signal,
-        // 保留后端按完整历史K线计算的10日统计；旧快照缺少这些字段时保持为空。
+        // 保留后端按完整历史K线计算的5日表现；旧快照缺少这些字段时保持为空。
         forward_5d_status: ev.forward_5d_status || null,
         forward_5d_return_pct: ev.forward_5d_return_pct == null ? null : Number(ev.forward_5d_return_pct),
         forward_5d_win: typeof ev.forward_5d_win === 'boolean' ? ev.forward_5d_win : null,
