@@ -6134,6 +6134,8 @@ async function loadFibSignalHistory() {
       items = Array.isArray(response.items) ? response.items : [];
       // 扩展结果可能同时包含新旧格式；统一收集并按事件键去重。
       for (const item of items) collectSnapshot(parseRecord(item));
+      // 新查询中新发现的legacy记录也必须转换为事件，不能只收集到数组里。
+      addLegacyEvents(legacyRecords);
     }
     events = Array.from(archivedEvents.values());
     events.sort((a,b) => b.date.localeCompare(a.date));
