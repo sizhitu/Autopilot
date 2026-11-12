@@ -76,3 +76,31 @@ def read_cold_snapshot(market: str) -> Optional[dict]:
     except Exception:
         return None
     return None
+
+
+def write_cold_snapshot(snapshot: dict, archive_root: str | Path, parquet_file: str) -> Path:
+    """Atomically write the latest display snapshot beside the Parquet archive."""
+    import tempfile
+    market = str(snapshot.get("market") or "")
+    trade_date = str(snapshot.get("as_of") or "")[:10]
+    if market not in ("cn", "us") or len(trade_date) != 10:
+        raise ValueError("snapshot market/as_of is invalid")
+    directory = Path(archive_root)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"latest_{market}.json"
+    payload = {"market": market, "trade_date": trade_date,
+               "parquet_file": parquet_file, "snapshot": snapshot}
+    fd, tmp_name = tempfile.mkstemp(prefix=f".latest_{market}.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"), default=str)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp_name, target)
+    finally:
+        try:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+        except OSError:
+            pass
+    return target
