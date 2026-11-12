@@ -110,7 +110,7 @@ def _fibonacci_test_bars(lows, volumes):
             "open": 86.0,
             "high": 100.0,
             "low": float(low),
-            "close": 85.0 if low < 90 else 96.0,
+            "close": (95.0 + i * 0.1) if low < 90 else 96.0,
             "volume": float(volume),
         })
     rows[0]["low"] = 80.0
