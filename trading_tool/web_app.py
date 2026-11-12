@@ -871,6 +871,8 @@ async def market_temperature(market: str = Query("cn", regex="^(cn|us)$")):
     if isinstance(current,dict):
         age=now-float(current.get("stored_at") or 0)
         if age<_MARKET_TEMPERATURE_TTL or session_open:
+            if current.get("cold_backup") and not session_open:
+                _refresh_market_temperature(market)
             out=dict(current); out["cached"]=True; out["stale_during_session"]=bool(session_open and age>=_MARKET_TEMPERATURE_TTL)
             return JSONResponse(content=_to_jsonable(out),headers={"Cache-Control":"public, max-age=120"})
     try:
