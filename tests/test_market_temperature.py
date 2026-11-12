@@ -55,3 +55,18 @@ def test_ui_is_minimal_provider_temperature_only():
     assert 'id="temperatureMarketCn"' in card and 'id="temperatureMarketUs"' in card
     assert 'id="temperatureSource"' in card and "temperatureStyles" not in card and "temperatureIndustries" not in card
     assert "数据覆盖" not in card and "数据不足" not in card
+
+
+def test_supabase_restore_is_used_before_cold_file_fallback():
+    source=(ROOT/"trading_tool"/"web_app.py").read_text(encoding="utf-8")
+    start=source.index("def _load_market_temperature_from_supabase(")
+    end=source.index("def _market_temperature_history(",start)
+    helper=source[start:end]
+    route=source[source.index('@app.get("/api/market-temperature")'):source.index('@app.get("/api/config")')]
+    assert 'table("market_temperature_daily")' in helper
+    assert '.select("trade_date,snapshot")' in helper
+    assert '0 <= score <= 100' in helper
+    assert 'age > 14' in helper
+    assert '_load_market_temperature_from_supabase,market' in route
+    assert route.index('_load_market_temperature_from_supabase,market') < route.index('read_cold_snapshot')
+    assert '"supabase_restored":True' in route
