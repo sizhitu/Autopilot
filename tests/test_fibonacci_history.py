@@ -227,3 +227,42 @@ class TestFibonacciDirectionalVolumeConfirmation:
         assert confirmed[0].level == 0.500
         assert confirmed[0].signal_date == "2026-08-28"
         assert all(not item.reacted and item.signal_date is None for item in result if item is not confirmed[0])
+
+
+    def test_win_rate_cohorts_separate_signal_types_at_same_fib_level(self, monkeypatch):
+        dates = pd.date_range("2026-08-03", periods=24, freq="B")
+        closes = [100.0] * 24
+        closes[11] = 110.0
+        closes[12] = 90.0
+        frame = pd.DataFrame({
+            "date": dates, "open": closes,
+            "high": [value + 1 for value in closes],
+            "low": [value - 1 for value in closes],
+            "close": closes, "volume": [100.0] * 24,
+        })
+        signal_map = {
+            dates[1].strftime("%Y-%m-%d"): "放量止跌",
+            dates[2].strftime("%Y-%m-%d"): "阳线反包",
+        }
+
+        def fake_bullish(self, prefix, lookback=60):
+            day = prefix.iloc[-1]["date"].strftime("%Y-%m-%d")
+            signal = signal_map.get(day)
+            levels = [FibLevel(
+                level=0.618, price=100.0, tested=True, reacted=True,
+                reaction_signal=signal, signal_date=day
+            )] if signal else []
+            return levels, 101.0, 99.0, []
+
+        monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci", fake_bullish)
+        monkeypatch.setattr(
+            FujimotoStrategy, "_calc_fibonacci_bearish",
+            lambda self, prefix, lookback=60: ([], 101, 99, [])
+        )
+
+        events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
+        by_signal = {event["signal"]: event for event in events}
+        assert by_signal["放量止跌"]["forward_10d_sample_size"] == 1
+        assert by_signal["放量止跌"]["forward_10d_win_rate"] == 1.0
+        assert by_signal["阳线反包"]["forward_10d_sample_size"] == 1
+        assert by_signal["阳线反包"]["forward_10d_win_rate"] == 0.0
