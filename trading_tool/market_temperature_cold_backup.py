@@ -54,7 +54,10 @@ def read_cold_snapshot(market: str) -> Optional[dict]:
             except (OSError, ValueError, TypeError):
                 continue
 
-    base_url = (os.getenv("MARKET_TEMPERATURE_COLD_BACKUP_BASE_URL") or
+    configured_base = os.getenv("MARKET_TEMPERATURE_COLD_BACKUP_BASE_URL")
+    if configured_base is not None and not configured_base.strip():
+        return None
+    base_url = (configured_base or
                 "https://raw.githubusercontent.com/sizhitu/Autopilot-data/main/data/market/temperature").rstrip("/")
     token = (os.getenv("MARKET_TEMPERATURE_COLD_BACKUP_TOKEN") or os.getenv("DATA_REPO_TOKEN") or "").strip()
     try:
