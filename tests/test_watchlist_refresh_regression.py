@@ -365,7 +365,7 @@ def test_watchlist_strategy_skips_full_fibonacci_history_replay():
 
     assert "include_fib_history: bool = True" in strategy_source
     assert "if include_fib_history and not _lite else []" in strategy_source
-    assert "strategy.analyze(df, include_fib_history=False)" in watchlist_source
+    assert watchlist_source.count("strategy.analyze(df, include_fib_history=False)") == 2
 
 
 def test_watchlist_user_rows_are_loaded_once_and_offloaded_from_event_loop():
