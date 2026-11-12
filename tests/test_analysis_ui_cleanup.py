@@ -88,10 +88,17 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     assert 'grid-template-columns:minmax(0,1.5fr) 54px minmax(64px,.8fr) 88px' in html
     assert 'fib-history-head span:last-child,.fib-history-date { text-align:right; }' in html
-    assert "ev.side==='bearish'?'↓下跌侧 ':'↑上涨侧 '" in html
+    assert "const bearish = ev.side === 'bearish';" in html
+    assert "fib-history-bullish" in html
+    assert "fib-history-bearish" in html
+    assert "fib-history-direction" in html
+    assert "fib-history-star" in html
+    assert "aria-label=\"强信号\"" in html
     assert "data.fib_signal_history" in html
     assert 'class="fib-history-date"' in html
     assert 'class="fib-star">★确认</span>' in html
+    assert '.fib-history-row.fib-history-bullish' in html
+    assert '.fib-history-row.fib-history-bearish' in html
     assert 'fl.reacted' in html
     assert 'fl.tested' in html
     assert 'fl.reaction_signal' in html
