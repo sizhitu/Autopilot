@@ -613,45 +613,152 @@ class FujimotoStrategy:
 
     def _build_fibonacci_signal_history(self, df: pd.DataFrame, lookback: int = 60) -> list:
         """
-        从完整 K 线序列逐日重放原有 Fib 算法，重建每次独立确认事件。
-        每个交易日只使用当日及以前的数据，避免未来数据泄漏。
-        不改变当前 _calc_fibonacci / _calc_fibonacci_bearish 的任何交易决策。
+        精确重建逐日 Fib 历史事件。将原先每个交易日复制前缀并全量扫描的 O(N²)
+        实现改为滚动极值 + 区间树查询，正常唯一交易日数据为 O(N log N)。
+
+        等价性关键：对第 i 日、当日 Fib 价位，原算法只会在「当日处于触及区，
+        且当前连续触及 episode 中第一次出现确认」时产生 signal_date=i 的事件。
+        更早 episode 的确认不会被记成当日事件；当日 episode 的历史确认可用
+        区间树找出最近一个不在触及区的 K 线，再用确认前缀和精确判断。
         """
-        events = []
         if df is None or len(df) < 2:
-            return events
+            return []
 
-        for end in range(1, len(df)):
-            prefix = df.iloc[:end + 1]
-            raw_date = (
-                prefix.iloc[-1]["date"] if "date" in prefix.columns
-                else prefix.index[-1]
-            )
-            if isinstance(raw_date, (int, float, np.integer, np.floating)):
+        n = len(df)
+        # 与原算法一致：每个前缀只看最近 lookback 根计算锚点。
+        rolling_high = df["high"].rolling(window=lookback, min_periods=1).max().to_numpy()
+        rolling_low = df["low"].rolling(window=lookback, min_periods=1).min().to_numpy()
+        highs = df["high"].to_numpy(dtype=float)
+        lows = df["low"].to_numpy(dtype=float)
+        opens = df["open"].to_numpy(dtype=float)
+        closes = df["close"].to_numpy(dtype=float)
+        volumes = df["volume"].to_numpy(dtype=float)
+
+        # 每根 K 线的确认条件与 Fib 价位无关，可预先计算一次。
+        bull_confirm = np.zeros(n, dtype=bool)
+        bear_confirm = np.zeros(n, dtype=bool)
+        bull_kind = np.full(n, "", dtype=object)
+        bear_kind = np.full(n, "", dtype=object)
+        for i in range(1, n):
+            body = closes[i] - opens[i]
+            prev_body = closes[i - 1] - opens[i - 1]
+            if (body > 0 and prev_body < 0 and closes[i] > opens[i - 1]
+                    and opens[i] < closes[i - 1]):
+                bull_confirm[i] = True
+                bull_kind[i] = "阳线反包确认"
+            elif volumes[i] > volumes[i - 1] * 1.2:
+                bull_confirm[i] = True
+                bull_kind[i] = "放量止跌"
+
+            if (body < 0 and prev_body > 0 and closes[i] < opens[i - 1]
+                    and opens[i] > closes[i - 1]):
+                bear_confirm[i] = True
+                bear_kind[i] = "阴线反包受阻"
+            elif volumes[i] > volumes[i - 1] * 1.2:
+                bear_confirm[i] = True
+                bear_kind[i] = "放量受阻"
+
+        bull_prefix = np.concatenate(([0], np.cumsum(bull_confirm, dtype=np.int64)))
+        bear_prefix = np.concatenate(([0], np.cumsum(bear_confirm, dtype=np.int64)))
+
+        class _RangeTree:
+            """查找区间内最右侧不满足 [lower, upper] 的位置；NaN 与原比较一样视为未触及。"""
+            def __init__(self, values):
+                size = 1
+                while size < len(values):
+                    size <<= 1
+                self.size = size
+                self.minimum = np.full(size * 2, np.inf)
+                self.maximum = np.full(size * 2, -np.inf)
+                self.nan_count = np.zeros(size * 2, dtype=np.int32)
+                for j, value in enumerate(values):
+                    if np.isnan(value):
+                        self.nan_count[size + j] = 1
+                    else:
+                        self.minimum[size + j] = value
+                        self.maximum[size + j] = value
+                for j in range(size - 1, 0, -1):
+                    l, r = j * 2, j * 2 + 1
+                    self.minimum[j] = min(self.minimum[l], self.minimum[r])
+                    self.maximum[j] = max(self.maximum[l], self.maximum[r])
+                    self.nan_count[j] = self.nan_count[l] + self.nan_count[r]
+
+            def last_outside(self, right, lower, upper):
+                def visit(node, left, end):
+                    if left > right:
+                        return -1
+                    if end <= right and self.nan_count[node] == 0:
+                        if self.minimum[node] >= lower and self.maximum[node] <= upper:
+                            return -1
+                    if left == end:
+                        return left
+                    mid = (left + end) // 2
+                    found = visit(node * 2 + 1, mid + 1, end)
+                    return found if found >= 0 else visit(node * 2, left, mid)
+                return visit(1, 0, self.size - 1)
+
+        low_tree = _RangeTree(lows)
+        high_tree = _RangeTree(highs)
+
+        # 正常行情日期唯一。重复日期时保留原逐前缀实现，避免同日多根 K 线
+        # 的 signal_date 去重/覆盖细节产生任何语义变化。
+        raw_dates = [df.iloc[i]["date"] if "date" in df.columns else df.index[i]
+                     for i in range(n)]
+        parsed_dates = []
+        for raw in raw_dates:
+            if isinstance(raw, (int, float, np.integer, np.floating)):
+                parsed_dates.append(None)
+            else:
+                parsed = pd.to_datetime(raw, errors="coerce")
+                parsed_dates.append(None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d"))
+        valid_dates = [d for d in parsed_dates if d is not None]
+        if len(valid_dates) != len(set(valid_dates)):
+            return self._build_fibonacci_signal_history_reference(df, lookback=lookback)
+
+        events = []
+        levels_config = (0.786, 0.618, 0.500, 0.382)
+        for i in range(1, n):
+            event_date = parsed_dates[i]
+            if event_date is None:
                 continue
-            parsed = pd.to_datetime(raw_date, errors="coerce")
-            if pd.isna(parsed):
+            swing_high = rolling_high[i]
+            swing_low = rolling_low[i]
+            diff = swing_high - swing_low
+            if not np.isfinite(diff) or diff <= 0:
                 continue
-            event_date = parsed.strftime("%Y-%m-%d")
+            close = closes[i]
 
-            # 使用现有算法逐日重算锚点和信号；只收录当日首次确认。
-            bullish, _, _, _ = self._calc_fibonacci(prefix, lookback=lookback)
-            bearish, _, _, _ = self._calc_fibonacci_bearish(prefix, lookback=lookback)
-            for side, levels in (("bullish", bullish), ("bearish", bearish)):
-                for fl in levels:
-                    if not fl.reacted or not fl.reaction_signal:
-                        continue
-                    if str(fl.signal_date or "")[:10] != event_date:
-                        continue
-                    events.append({
-                        "side": side,
-                        "level": float(fl.level),
-                        "price": round(float(fl.price), 4),
-                        "signal": fl.reaction_signal,
-                        "signal_date": event_date,
-                    })
+            for side in ("bullish", "bearish"):
+                is_bull = side == "bullish"
+                tested = (swing_low * 0.995 <= 0 <= 0)  # overwritten per level; keeps branches explicit
+                values = lows if is_bull else highs
+                tree = low_tree if is_bull else high_tree
+                confirms = bull_confirm if is_bull else bear_confirm
+                prefix = bull_prefix if is_bull else bear_prefix
+                kinds = bull_kind if is_bull else bear_kind
 
-        # 同一方向、Fib 位、交易日、信号类型只保留一条。
+                for level in levels_config:
+                    price = (swing_high - diff * level) if is_bull else (swing_low + diff * level)
+                    tested = (swing_low * 0.995 <= price <= close * 1.02) if is_bull else (close * 0.98 <= price <= swing_high * 1.005)
+                    if not tested:
+                        continue
+                    lower, upper = price * 0.99, price * 1.01
+                    value = values[i]
+                    if np.isnan(value) or not (value <= upper and value >= lower):
+                        continue
+                    # episode 是按连续行定义，而非连续交易日；找到当前触及区间前
+                    # 最近一根不触及的 K 线即可得到本 episode 的起点。
+                    previous_outside = tree.last_outside(i - 1, lower, upper)
+                    episode_start = previous_outside + 1
+                    if confirms[i] and prefix[i] - prefix[episode_start] == 0:
+                        events.append({
+                            "side": side,
+                            "level": float(level),
+                            "price": round(float(price), 4),
+                            "signal": str(kinds[i]),
+                            "signal_date": event_date,
+                        })
+
         unique = {}
         for event in events:
             key = (event["side"], event["level"], event["signal_date"], event["signal"])
@@ -661,6 +768,35 @@ class FujimotoStrategy:
             key=lambda item: (item["signal_date"], item["side"], item["level"]),
             reverse=True,
         )
+
+    def _build_fibonacci_signal_history_reference(self, df: pd.DataFrame, lookback: int = 60) -> list:
+        """原始逐前缀算法，仅供重复交易日期等边界输入的严格兼容回退。"""
+        events = []
+        for end in range(1, len(df)):
+            prefix = df.iloc[:end + 1]
+            raw_date = prefix.iloc[-1]["date"] if "date" in prefix.columns else prefix.index[-1]
+            if isinstance(raw_date, (int, float, np.integer, np.floating)):
+                continue
+            parsed = pd.to_datetime(raw_date, errors="coerce")
+            if pd.isna(parsed):
+                continue
+            event_date = parsed.strftime("%Y-%m-%d")
+            bullish, _, _, _ = self._calc_fibonacci(prefix, lookback=lookback)
+            bearish, _, _, _ = self._calc_fibonacci_bearish(prefix, lookback=lookback)
+            for side, levels in (("bullish", bullish), ("bearish", bearish)):
+                for fl in levels:
+                    if fl.reacted and fl.reaction_signal and str(fl.signal_date or "")[:10] == event_date:
+                        events.append({
+                            "side": side, "level": float(fl.level), "price": round(float(fl.price), 4),
+                            "signal": fl.reaction_signal, "signal_date": event_date,
+                        })
+        unique = {}
+        for event in events:
+            key = (event["side"], event["level"], event["signal_date"], event["signal"])
+            unique[key] = event
+        return sorted(unique.values(),
+                      key=lambda item: (item["signal_date"], item["side"], item["level"]),
+                      reverse=True)
 
     def _find_fib_buy_point(self, fib_levels: list, close: float) -> Optional[FibLevel]:
         """找到有市场反应确认的斐波那契买点"""
