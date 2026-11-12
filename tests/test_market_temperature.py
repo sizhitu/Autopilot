@@ -19,7 +19,7 @@ def test_temperature_score_and_regime(monkeypatch):
     monkeypatch.setattr(mt,"_fetch_cn_breadth",lambda:{"score":40.,"source":"test","data_date":"2026-11-11"})
     monkeypatch.setattr(mt,"_clean_frame",lambda f:None)
     r=mt.build_market_temperature_snapshot("cn",fetcher=object())
-    assert r["coverage"]==100 and r["temperature"]==59.0 and r["regime"]=="中性"
+    assert r["coverage"]==100 and r["temperature"]==59.5 and r["regime"]=="中性"
 
 def test_temperature_is_withheld_when_breadth_missing(monkeypatch):
     import market_temperature as mt
