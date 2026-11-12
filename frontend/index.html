@@ -6236,17 +6236,26 @@ function updateResults(data, meta, nineTurn) {
   document.getElementById('tab-indicators').innerHTML = ih;
 
   let fh = '';
-  const _fibs = (data && data.fib_levels) ? data.fib_levels : [];
-  if (!_fibs.length) {
-    fh = '<div style="color:var(--text-dim);text-align:center;padding:12px;">暂无斐波那契数据，请点「分析」或重新打开该代码</div>';
-  } else {
-    for (const fl of _fibs) {
+  // 当前结构必须同时展示上涨回撤位与下跌反弹阻力位。
+  // 历史强信号来自 fib_signal_history，不代表当前一定有同方向的 Fib 价位。
+  const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];
+  const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];
+  const _renderFibGroup = (title, levels) => {
+    if (!levels.length) return '';
+    let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
+    for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●</span>' : '');
+      const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '');
       const rx = fl.reaction_signal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
       const dateText = fl.signal_date ? `<span class="fib-signal-date" title="该Fib位置最近一次确认的实际交易日">最近确认 ${fl.signal_date}</span>` : '';
-      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
+      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
     }
+    return html;
+  };
+  fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull);
+  fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear);
+  if (!_fibBull.length && !_fibBear.length) {
+    fh = '<div style="color:var(--text-dim);text-align:center;padding:12px;">当前没有达到确认条件的有效 Fib 波段（历史强信号仍单独保留）</div>';
   }
   // 最新状态按Fib位置展示最近一次确认；历史列表展示逐日重建的全部独立事件。
   document.getElementById('tab-fibonacci').innerHTML = fh
