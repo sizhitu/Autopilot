@@ -6089,7 +6089,7 @@ async function loadFibSignalHistory() {
     // 新格式完整事件序列只存在最新分析记录中，先只取一条，避免拉取100份大JSON。
     let response = await apiJSON('/api/history?symbol=' + symbol + '&limit=5');
     let items = Array.isArray(response.items) ? response.items : [];
-    let events = [], hasEventArchive = false;
+    let events = [];
     const parseRecord = item => { let record=item && item.result_json ? item.result_json : {}; if (typeof record==='string') { try { record=JSON.parse(record); } catch(e) { record={}; } } return record && record.data ? record.data : {}; };
     const archivedEvents = new Map();
     const legacyRecords = [];
@@ -6102,16 +6102,15 @@ async function loadFibSignalHistory() {
       const key = [normalized.side, normalized.level, normalized.date, normalized.signal].join('|');
       if (!archivedEvents.has(key)) archivedEvents.set(key, normalized);
     };
-    for (const item of items) {
-      const data = parseRecord(item);
+    const collectSnapshot = data => {
       if (Array.isArray(data.fib_signal_history)) {
-        hasEventArchive = true;
         // 合并多个快照的归档事件，不让最新快照覆盖此前已保存的历史事件。
         data.fib_signal_history.forEach(addArchivedEvent);
       } else {
         legacyRecords.push(data);
       }
-    }
+    };
+    for (const item of items) collectSnapshot(parseRecord(item));
     const addLegacyEvents = records => {
       for (const data of records) {
         const levels = Array.isArray(data.fib_levels) ? data.fib_levels : [];
@@ -6128,14 +6127,15 @@ async function loadFibSignalHistory() {
     };
     addLegacyEvents(legacyRecords);
     events = Array.from(archivedEvents.values());
-    // 仅当最近快照全部没有归档字段时才扩大查询，兼容更早的旧快照。
-    // 仅旧版本记录没有事件归档字段时才扩大查询，兼容旧快照。
-    if (!hasEventArchive) {
+    // 只要最近快照中出现任何旧格式记录，就扩大查询补齐更早的旧记录。
+    // 混合新旧格式时也必须扩展，否则第6条以前的legacy事件会被漏掉。
+    if (legacyRecords.length > 0) {
       response = await apiJSON('/api/history?symbol=' + symbol + '&limit=100');
       items = Array.isArray(response.items) ? response.items : [];
-      addLegacyEvents(items.map(parseRecord));
-      events = Array.from(archivedEvents.values());
+      // 扩展结果可能同时包含新旧格式；统一收集并按事件键去重。
+      for (const item of items) collectSnapshot(parseRecord(item));
     }
+    events = Array.from(archivedEvents.values());
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
