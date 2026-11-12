@@ -1271,7 +1271,7 @@ def get_stock_status(code: str, name: str, days: int = 1250) -> StockStatus:
             pass
 
         strategy = FujimotoStrategy(total_capital=100000)
-        result = strategy.analyze(df)
+        result = strategy.analyze(df, include_fib_history=False)
         status.trend = result.trend.value
         nt_signal = result.signal.value  # 策略原始信号：买入/卖出/持有/加仓/观望
         nt = calc_nine_turn_display(df)
