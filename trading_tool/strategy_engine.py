@@ -686,12 +686,14 @@ class FujimotoStrategy:
             reacted = False
             reaction_signal = ""
             signal_date = None
-            if tested:
+            if len(df) > anchor_confirmation_idx + 1:
+                # 历史事件扫描不受最新收盘价是否仍靠近 Fib 位影响；tested 仅控制当前时机层资格。
                 # 将连续触及同一 Fib 价位的 K 线视为一次测试过程。
                 # 同一轮测试中只记录首次满足确认条件的交易日，避免每天重复
                 # 因成交量较前一日增加 20% 而反复生成同一条“放量止跌”信号。
+                # K线完整振幅与Fib容差带相交即视为触及，不能要求low本身落在窄带内。
                 near_mask = ((df['low'] <= price * 1.01) &
-                             (df['low'] >= price * 0.99)).to_numpy()
+                             (df['high'] >= price * 0.99)).to_numpy()
                 near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_confirmation_idx))
                 episodes = []
                 for pos in near_positions:
@@ -791,9 +793,10 @@ class FujimotoStrategy:
             reacted = False
             reaction_signal = ""
             signal_date = None
-            if tested:
-                # 对称于上涨侧：用 K 线高点判断触及阻力区。
-                near_mask = ((df['high'] <= price * 1.01) &
+            if len(df) > anchor_confirmation_idx + 1:
+                # 历史事件扫描独立于最新收盘价；tested 仅控制当前时机层资格。
+                # 对称于上涨侧：使用整根K线振幅与Fib容差带相交判断触及。
+                near_mask = ((df['low'] <= price * 1.01) &
                              (df['high'] >= price * 0.99)).to_numpy()
                 near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_confirmation_idx))
                 episodes = []
