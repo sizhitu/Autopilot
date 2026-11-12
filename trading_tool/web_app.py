@@ -1233,8 +1233,7 @@ class QuoteRequest(BaseModel):
     force: bool = False
 
 
-@app.post("/api/quote")
-async def get_quote(req: QuoteRequest, request: Request = None,
+async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
                     authorization: Optional[str] = Header(None)):
     """
     获取真实行情并自动分析。
@@ -1413,6 +1412,41 @@ async def get_quote(req: QuoteRequest, request: Request = None,
 
     return JSONResponse(content=_to_jsonable(payload),
                         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
+
+# 同一进程内同一标的只允许一个 quote 计算任务；等待者在锁内重新检查缓存。
+_QUOTE_LOCKS = {}
+_QUOTE_LOCKS_GUARD = threading.Lock()
+
+
+def _quote_lock_for(symbol: str):
+    key = _norm_sym(symbol)
+    with _QUOTE_LOCKS_GUARD:
+        lock = _QUOTE_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _QUOTE_LOCKS[key] = lock
+        # 控制长期运行进程中的锁表大小；只回收当前未持有的锁。
+        if len(_QUOTE_LOCKS) > 256:
+            for old_key, old_lock in list(_QUOTE_LOCKS.items()):
+                if old_key != key and not old_lock.locked():
+                    _QUOTE_LOCKS.pop(old_key, None)
+                    if len(_QUOTE_LOCKS) <= 192:
+                        break
+        return lock
+
+
+@app.post("/api/quote")
+async def get_quote(req: QuoteRequest, request: Request = None,
+                    authorization: Optional[str] = Header(None)):
+    lock = _quote_lock_for(req.symbol)
+    waited = lock.locked()
+    async with lock:
+        # 同一标的并发请求的等待者复用先行请求写入的缓存，不再次强制拉行情。
+        effective_req = req
+        if waited and req.force:
+            effective_req = req.copy(update={"force": False})
+        return await _get_quote_unlocked(effective_req, request, authorization)
 
 
 # ================================================================
