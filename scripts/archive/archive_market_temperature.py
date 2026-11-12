@@ -24,8 +24,7 @@ def main():
     args = parser.parse_args()
 
     import supabase_client
-    from data_fetcher import DataFetcher
-    from market_temperature import build_market_temperature_snapshot
+        from market_temperature import build_market_temperature_snapshot
     from market_temperature_cold_backup import write_cold_snapshot
 
     output_root = Path(args.out)
@@ -44,10 +43,10 @@ def main():
         print("Supabase not configured; continuing with file archive only")
 
     # Separate fetcher from the live web service; this script runs in the archive job.
-    fetcher = DataFetcher()
+    
     for market in ("cn", "us"):
         try:
-            snapshot = build_market_temperature_snapshot(market, fetcher=fetcher)
+            snapshot = build_market_temperature_snapshot(market)
             trade_date = str(snapshot.get("as_of") or datetime.now().date().isoformat())[:10]
             now_iso = datetime.now(timezone.utc).isoformat()
             row = {
@@ -90,7 +89,7 @@ def main():
             row["snapshot"] = snapshot
             try:
                 import cache
-                cache.set_json(f"market_temperature_v3_{market}", snapshot, 18 * 3600)
+                cache.set_json(f"market_temperature_v4_{market}", snapshot, 600)
             except Exception as exc:
                 print(f"{market}: cache write skipped: {type(exc).__name__}: {exc}")
 
