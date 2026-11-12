@@ -143,7 +143,7 @@ def test_industry_stale_quote_is_not_scored():
     assert mt._industry_score(asset,market) is None
 
 
-def test_us_breadth_requires_61_real_observations():
+def test_us_breadth_requires_220_real_observations():
     import pandas as pd, pytest
     import market_temperature as mt
     dates=pd.date_range("2026-01-01",periods=60,freq="B")
@@ -157,4 +157,5 @@ def test_position_temperature_ui_contains_style_industry_and_weight_effect_secti
     html=(ROOT/"frontend/index.html").read_text(encoding="utf-8")
     assert 'id="temperatureStyles"' in html and 'id="temperatureIndustries"' in html
     assert 'id="temperatureCapEffect"' in html
+    assert "等权参与度" in html
     assert "市场风格" in html and "七大产业热度" in html
