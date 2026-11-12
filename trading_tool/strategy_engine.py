@@ -574,6 +574,47 @@ class FujimotoStrategy:
             "confirmation_idx": last["idx"] + right_bars,
         }
 
+    @staticmethod
+    def _fib_trend_context(df: pd.DataFrame, swing_direction: str) -> dict:
+        """
+        Classify a Fib reaction as with-trend, counter-trend, or range/transition.
+        This is descriptive context only; it never suppresses a valid local reaction.
+        """
+        if df is None or len(df) < 55 or swing_direction not in ("bullish", "bearish"):
+            return {
+                "background_trend": "insufficient_data",
+                "signal_context": "趋势未确认",
+            }
+        close = pd.to_numeric(df["close"], errors="coerce")
+        ma20 = close.rolling(20, min_periods=20).mean()
+        ma50 = close.rolling(50, min_periods=50).mean()
+        if close.isna().iloc[-1] or ma20.isna().iloc[-1] or ma50.isna().iloc[-1] or ma20.isna().iloc[-6]:
+            return {
+                "background_trend": "insufficient_data",
+                "signal_context": "趋势未确认",
+            }
+
+        last_close = float(close.iloc[-1])
+        last_ma20 = float(ma20.iloc[-1])
+        last_ma50 = float(ma50.iloc[-1])
+        ma20_rising = last_ma20 > float(ma20.iloc[-6])
+        ma20_falling = last_ma20 < float(ma20.iloc[-6])
+
+        if last_close > last_ma20 > last_ma50 and ma20_rising:
+            background = "bullish"
+        elif last_close < last_ma20 < last_ma50 and ma20_falling:
+            background = "bearish"
+        else:
+            background = "range_or_transition"
+
+        if background == "range_or_transition":
+            context = "震荡/趋势转换"
+        elif background == swing_direction:
+            context = "顺势"
+        else:
+            context = "逆势"
+        return {"background_trend": background, "signal_context": context}
+
     def _calc_fibonacci(self, df: pd.DataFrame, lookback: int = 60) -> tuple:
         """
         计算斐波那契回撤与扩展位
@@ -802,6 +843,7 @@ class FujimotoStrategy:
 
             # 使用同一套已确认 Pivot 算法逐日重算锚点和信号；只收录当日首次确认。
             swing = self._detect_valid_fib_swing(prefix, lookback=max(lookback, 120))
+            swing_context = self._fib_trend_context(prefix, swing["direction"]) if swing else {}
             bullish, _, _, _ = self._calc_fibonacci(prefix, lookback=lookback)
             bearish, _, _, _ = self._calc_fibonacci_bearish(prefix, lookback=lookback)
             for side, levels in (("bullish", bullish), ("bearish", bearish)):
@@ -818,6 +860,7 @@ class FujimotoStrategy:
                         "signal_date": event_date,
                     }
                     if swing and swing["direction"] == side:
+                        event.update(swing_context)
                         start_idx = int(swing["start_idx"])
                         end_idx = int(swing["end_idx"])
                         confirm_idx = int(swing["confirmation_idx"])
@@ -1246,14 +1289,17 @@ class FujimotoStrategy:
             note = f"⚠ 数据有限（仅{len(df)}根K线），指标偏短期，结论仅供参考"
             risk_warning = (risk_warning + "；" + note) if risk_warning else note
 
-        # 图表数据
+        # 图表数据：保留有效波段锚点，并附加顺势/逆势背景，不参与交易门槛。
+        fib_swing = self._detect_valid_fib_swing(df)
+        if fib_swing:
+            fib_swing.update(self._fib_trend_context(df, fib_swing["direction"]))
         chart_data = {
             "swing_high": swing_high,
             "swing_low": swing_low,
             "fib_levels": fib_levels,
             "fib_bearish_levels": fib_bearish_levels,
             "fib_signal_history": [] if _lite else self._build_fibonacci_signal_history(df),
-            "fib_swing": self._detect_valid_fib_swing(df),
+            "fib_swing": fib_swing,
             "target_prices": target_prices,
             "mas": {p: v for p, v in mas.items() if v is not None},
             "vwma": vwma,
