@@ -61,7 +61,7 @@ def _fetch_cn_breadth():
     """One paginated-universe quote call; require >=75% of reported A-share universe."""
     url="https://push2.eastmoney.com/api/qt/clist/get"
     params={"pn":1,"pz":6000,"po":1,"np":1,"fltt":2,"invt":2,"fid":"f3",
-            "fs":"m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23","fields":"f12,f14,f3"}
+            "fs":"m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048","fields":"f12,f14,f3"}
     r=requests.get(url,params=params,headers={"User-Agent":"Mozilla/5.0","Referer":"https://quote.eastmoney.com/"},timeout=12)
     r.raise_for_status(); data=(r.json() or {}).get("data") or {}; rows=data.get("diff") or []
     total=int(data.get("total") or len(rows)); changes=[]
