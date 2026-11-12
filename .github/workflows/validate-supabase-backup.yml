@@ -18,6 +18,9 @@ on:
 
 permissions:
   contents: read
+  checks: write
+  issues: write
+  pull-requests: write
 
 jobs:
   validate:
@@ -28,7 +31,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Validate workflow syntax
-        uses: rhysd/actionlint@v1
+        uses: reviewdog/action-actionlint@v1
+        with:
+          fail_level: error
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
