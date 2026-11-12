@@ -76,8 +76,8 @@ jobs:
             "files": ["roles.sql", "schema.sql", "data.sql", "migration_history_schema.sql", "migration_history_data.sql"],
             "retention_days": 30,
             "includes": ["database roles", "schema", "database data", "RLS policies", "database functions and triggers where supported by Supabase CLI"],
-            "excludes": ["Supabase Storage object bytes", "project-level Auth/OAuth/SMTP settings", "Edge Function source and secrets"],
-            "notes": ["Storage metadata may be filtered with Supabase-managed schemas; actual Storage objects are not included.", "The data dump may contain auth user PII and password hashes; keep this archive encrypted and private."]
+            "excludes": ["Supabase-managed auth and storage schemas", "Supabase Storage object bytes", "project-level Auth/OAuth/SMTP settings", "Edge Function source and secrets"],
+            "notes": ["Supabase-managed auth/storage schemas and actual Storage objects are not included in this CLI export.", "Application tables may contain personal data; keep this archive encrypted and private."]
           }
           EOF
 
