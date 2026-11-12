@@ -109,3 +109,39 @@ def test_trend_context_does_not_force_a_direction_in_a_flat_market():
     assert FujimotoStrategy._fib_trend_context(flat, "bullish") == {
         "background_trend": "range_or_transition", "signal_context": "震荡/趋势转换"
     }
+
+
+def test_fib_swing_expires_after_90_calendar_days_but_not_on_day_90():
+    frame = _frame([100 + i for i in range(91)])
+    frame.index = pd.date_range("2026-01-01", periods=len(frame), freq="D")
+    swing = {"confirmation_idx": 0, "direction": "bullish"}
+
+    assert FujimotoStrategy._is_fib_swing_fresh(frame.iloc[:91], swing)
+    assert FujimotoStrategy._is_fib_swing_fresh(frame.iloc[:91], swing, max_age_days=90)
+
+    expired = frame.copy()
+    expired.loc[len(expired)] = expired.iloc[-1]
+    expired.index = pd.date_range("2026-01-01", periods=len(expired), freq="D")
+    assert not FujimotoStrategy._is_fib_swing_fresh(expired, swing)
+
+
+def test_expired_bullish_and_bearish_swings_are_not_current_fib_levels(monkeypatch):
+    strategy = FujimotoStrategy()
+    frame = _frame([100 + i for i in range(140)])
+    frame["date"] = pd.date_range("2026-01-01", periods=len(frame), freq="D").astype(str)
+    swing = {
+        "direction": "bullish",
+        "start_idx": 5,
+        "end_idx": 20,
+        "start_price": 100.0,
+        "end_price": 130.0,
+        "confirmation_idx": 23,
+    }
+    monkeypatch.setattr(strategy, "_detect_valid_fib_swing", lambda df, lookback=120: swing)
+    bullish, *_ = strategy._calc_fibonacci(frame)
+    assert bullish == []
+
+    bearish_swing = dict(swing, direction="bearish", start_price=130.0, end_price=100.0)
+    monkeypatch.setattr(strategy, "_detect_valid_fib_swing", lambda df, lookback=120: bearish_swing)
+    bearish, *_ = strategy._calc_fibonacci_bearish(frame)
+    assert bearish == []
