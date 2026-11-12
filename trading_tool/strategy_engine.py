@@ -719,7 +719,7 @@ class FujimotoStrategy:
                 # 对称于上涨侧：用 K 线高点判断触及阻力区。
                 near_mask = ((df['high'] <= price * 1.01) &
                              (df['high'] >= price * 0.99)).to_numpy()
-                near_positions = np.flatnonzero(near_mask)
+                near_positions = np.flatnonzero(near_mask & (np.arange(len(df)) > anchor_end_idx))
                 episodes = []
                 for pos in near_positions:
                     if not episodes or pos > episodes[-1][-1] + 1:
@@ -800,7 +800,8 @@ class FujimotoStrategy:
                 continue
             event_date = parsed.strftime("%Y-%m-%d")
 
-            # 使用现有算法逐日重算锚点和信号；只收录当日首次确认。
+            # 使用同一套已确认 Pivot 算法逐日重算锚点和信号；只收录当日首次确认。
+            swing = self._detect_valid_fib_swing(prefix, lookback=max(lookback, 120))
             bullish, _, _, _ = self._calc_fibonacci(prefix, lookback=lookback)
             bearish, _, _, _ = self._calc_fibonacci_bearish(prefix, lookback=lookback)
             for side, levels in (("bullish", bullish), ("bearish", bearish)):
@@ -809,13 +810,33 @@ class FujimotoStrategy:
                         continue
                     if str(fl.signal_date or "")[:10] != event_date:
                         continue
-                    events.append({
+                    event = {
                         "side": side,
                         "level": float(fl.level),
                         "price": round(float(fl.price), 4),
                         "signal": fl.reaction_signal,
                         "signal_date": event_date,
-                    })
+                    }
+                    if swing and swing["direction"] == side:
+                        start_idx = int(swing["start_idx"])
+                        end_idx = int(swing["end_idx"])
+                        confirm_idx = int(swing["confirmation_idx"])
+                        def _date_at(position):
+                            raw = (
+                                prefix.iloc[position]["date"] if "date" in prefix.columns
+                                else prefix.index[position]
+                            )
+                            parsed_date = pd.to_datetime(raw, errors="coerce")
+                            return parsed_date.strftime("%Y-%m-%d") if not pd.isna(parsed_date) else None
+                        event.update({
+                            "swing_direction": swing["direction"],
+                            "swing_start_date": _date_at(start_idx),
+                            "swing_end_date": _date_at(end_idx),
+                            "swing_confirmation_date": _date_at(confirm_idx) if confirm_idx < len(prefix) else None,
+                            "swing_start_price": round(float(swing["start_price"]), 4),
+                            "swing_end_price": round(float(swing["end_price"]), 4),
+                        })
+                    events.append(event)
 
         # 同一方向、Fib 位、交易日、信号类型只保留一条。
         unique = {}
