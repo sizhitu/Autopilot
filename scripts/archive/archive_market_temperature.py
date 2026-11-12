@@ -39,7 +39,7 @@ def main():
             import time
             import cache
             snap["stored_at"]=time.time()
-            cache.set_json(f"market_temperature_v2_{market}",snap,18*3600)
+            cache.set_json(f"market_temperature_v3_{market}",snap,18*3600)
             print(f"{market}: {snap.get('temperature')} / {snap.get('regime')} / coverage={snap.get('coverage')}% / {day}")
         except Exception as exc:
             print(f"{market}: snapshot failed: {type(exc).__name__}: {exc}")
