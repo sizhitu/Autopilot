@@ -6129,7 +6129,6 @@ async function loadFibSignalHistory() {
     addLegacyEvents(legacyRecords);
     events = Array.from(archivedEvents.values());
     // 仅当最近快照全部没有归档字段时才扩大查询，兼容更早的旧快照。
-    if (!hasEventArchive) {
     // 仅旧版本记录没有事件归档字段时才扩大查询，兼容旧快照。
     if (!hasEventArchive) {
       response = await apiJSON('/api/history?symbol=' + symbol + '&limit=100');
