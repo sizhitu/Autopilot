@@ -132,7 +132,7 @@ def _fibonacci_test_bars(lows, volumes):
         rows.append({
             "date": dates[i],
             "open": 86.0,
-            "high": 87.0 if 84.0 <= low < 90.0 else 100.0,
+            "high": 86.7 if 84.0 <= low < 90.0 else 100.0,
             "low": float(low),
             "close": (86.3 + (i - 1) * 0.1) if 84.0 <= low < 90.0 else (90.0 if i == 0 else 96.0),
             "volume": float(volume),
