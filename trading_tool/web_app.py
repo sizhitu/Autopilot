@@ -872,7 +872,7 @@ async def market_temperature(market: str = Query("cn", regex="^(cn|us)$")):
         return JSONResponse(content=_to_jsonable(hit),headers={"Cache-Control":"public, max-age=120"})
     if session_open:
         return JSONResponse(content={"market":market,"temperature":None,"regime":"等待收盘数据","coverage":0,
-          "components":{},"history":[],"status":"pending","message":"交易时段不混用盘中宽度与收盘指标，正式温度将在收盘后生成"},
+          "components":{},"history":[],"status":"waiting_for_close","message":"交易时段不混用盘中宽度与收盘指标，正式温度将在收盘后生成"},
           headers={"Cache-Control":"no-store"})
     _refresh_market_temperature(market)
     return JSONResponse(content={"market":market,"temperature":None,"regime":"数据更新中","coverage":0,
