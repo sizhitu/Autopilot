@@ -154,8 +154,8 @@ class TestFibonacciDirectionalVolumeConfirmation:
     def test_history_calculates_causal_5_trading_day_win_rate(self, monkeypatch):
         dates = pd.date_range("2026-08-01", periods=13, freq="B")
         closes = [100.0] * 13
-        closes[11] = 110.0  # first event: +10% after 10 trading bars
-        closes[12] = 90.0   # second event: -10% after 10 trading bars
+        closes[6] = 110.0  # first event: +10% after 5 trading bars
+        closes[7] = 90.0   # second event: -10% after 5 trading bars
         frame = pd.DataFrame({
             "date": dates,
             "open": closes,
@@ -186,8 +186,8 @@ class TestFibonacciDirectionalVolumeConfirmation:
     def test_history_marks_last_five_trading_days_as_pending(self, monkeypatch):
         dates = pd.date_range("2026-08-01", periods=5, freq="B")
         frame = pd.DataFrame({
-            "date": dates, "open": [100.0] * 8, "high": [101.0] * 8,
-            "low": [99.0] * 8, "close": [100.0] * 8, "volume": [100.0] * 8,
+            "date": dates, "open": [100.0] * 5, "high": [101.0] * 5,
+            "low": [99.0] * 5, "close": [100.0] * 5, "volume": [100.0] * 5,
         })
         day = dates[1].strftime("%Y-%m-%d")
         monkeypatch.setattr(
