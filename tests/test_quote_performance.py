@@ -58,3 +58,13 @@ def test_fibonacci_history_loads_latest_record_first_and_preserves_previous_data
     assert "'&limit=5'" in loader
     assert "'&limit=100'" in loader  # legacy fallback only
     assert "保留上次数据" in loader
+
+def test_fibonacci_history_merges_archives_across_recent_snapshots_and_legacy_records():
+    source = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    loader = source[source.index("async function loadFibSignalHistory()"):
+                    source.index("function updateResults(data, meta, nineTurn)")]
+    assert "const archivedEvents = new Map();" in loader
+    assert "data.fib_signal_history.forEach(addArchivedEvent);" in loader
+    assert "addLegacyEvents(legacyRecords);" in loader
+    assert "events = Array.from(archivedEvents.values());" in loader
+    assert "break;" not in loader
