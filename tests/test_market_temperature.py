@@ -99,10 +99,11 @@ def test_temperature_v2_weights_and_proxy_universes_are_separate():
 
 def test_cn_breadth_date_uses_quote_timestamp_and_dict_diff(monkeypatch):
     import market_temperature as mt
-    stamp=1794412800
     class Response:
         def raise_for_status(self): pass
-        def json(self): return {"data":{"total":1002,"diff":[{"f3":2,"f124":stamp},{"f3":-1,"f124":stamp},{"f3":0,"f124":stamp}]*334}}
+        def json(self):
+            rows=[{"f3":2,"f86":"202611111500"},{"f3":-1,"f86":"202611111500"},{"f3":0,"f86":"202611111500"}]*334
+            return {"data":{"total":1002,"diff":{str(i):row for i,row in enumerate(rows)}}}
     monkeypatch.setattr(mt.requests,"get",lambda *a,**k:Response())
     result=mt._fetch_cn_breadth()
     assert result["data_date"]=="2026-11-11"
