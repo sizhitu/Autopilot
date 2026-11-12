@@ -58,3 +58,40 @@ def test_fibonacci_history_loads_latest_record_first_and_preserves_previous_data
     assert "'&limit=5'" in loader
     assert "'&limit=100'" in loader  # legacy fallback only
     assert "保留上次数据" in loader
+
+def test_fibonacci_history_expands_for_mixed_legacy_and_archive_snapshots():
+    source = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    loader = source[source.index("async function loadFibSignalHistory()"):
+                    source.index("function updateResults(data, meta, nineTurn)")]
+    assert "const archivedEvents = new Map();" in loader
+    assert "const collectSnapshot = data =>" in loader
+    assert "data.fib_signal_history.forEach(addArchivedEvent);" in loader
+    assert "if (legacyRecords.length > 0)" in loader
+    assert "'&limit=100'" in loader
+    assert "for (const item of items) collectSnapshot(parseRecord(item));" in loader
+    expanded_query = loader.index("if (legacyRecords.length > 0)")
+    collect_expanded = loader.index("for (const item of items) collectSnapshot(parseRecord(item));", expanded_query)
+    convert_expanded_legacy = loader.index("addLegacyEvents(legacyRecords);", collect_expanded)
+    assert collect_expanded < convert_expanded_legacy
+    assert "events = Array.from(archivedEvents.values());" in loader
+    assert "if (!hasEventArchive)" not in loader
+    assert "break;" not in loader
+
+
+def test_fibonacci_legacy_migration_reads_both_bullish_and_bearish_levels():
+    source = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    loader = source[source.index("async function loadFibSignalHistory()"):
+                    source.index("function updateResults(data, meta, nineTurn)")]
+    assert "['bullish', 'fib_levels']" in loader
+    assert "['bearish', 'fib_bearish_levels']" in loader
+    assert "for (const [side, field] of" in loader
+    assert "side, level: fl.level, price: fl.price" in loader
+
+
+def test_fibonacci_history_deduplicates_archive_and_legacy_events_with_same_key():
+    source = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    loader = source[source.index("async function loadFibSignalHistory()"):
+                    source.index("function updateResults(data, meta, nineTurn)")]
+    assert "const key = [normalized.side, normalized.level, normalized.date, normalized.signal].join('|');" in loader
+    assert "if (!archivedEvents.has(key)) archivedEvents.set(key, normalized);" in loader
+    assert "for (const item of items) collectSnapshot(parseRecord(item));" in loader
