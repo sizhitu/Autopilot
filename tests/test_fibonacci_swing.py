@@ -61,6 +61,34 @@ def test_latest_confirmed_swing_selects_only_its_direction():
     assert bull_levels == []
     assert len(bear_levels) == 4
 
+
+def test_bullish_reaction_before_swing_confirmation_is_not_recorded():
+    frame = _frame([100, 98, 96, 94, 80, 86, 92, 98, 104, 110, 120, 100, 103, 106])
+    # The 120 high at index 10 is confirmed only at index 13. A bullish
+    # engulfing touch at index 12 must not be treated as a knowable Fib signal.
+    frame.loc[11, ["open", "high", "low", "close"]] = [102, 103, 99, 99]
+    frame.loc[12, ["open", "high", "low", "close"]] = [98, 104, 99, 103]
+    frame.loc[13, ["open", "high", "low", "close"]] = [104, 107, 103, 106]
+
+    levels, *_ = FujimotoStrategy()._calc_fibonacci(frame)
+    level_50 = next(level for level in levels if level.level == 0.5)
+    assert level_50.reacted is False
+    assert level_50.signal_date is None
+
+
+def test_bearish_reaction_before_swing_confirmation_is_not_recorded():
+    frame = _frame([80, 84, 88, 92, 120, 114, 108, 102, 96, 90, 80, 100, 97, 94])
+    # The 80 low at index 10 is confirmed only at index 13. A bearish
+    # engulfing touch at index 12 must not be treated as a knowable Fib signal.
+    frame.loc[11, ["open", "high", "low", "close"]] = [98, 101, 97, 101]
+    frame.loc[12, ["open", "high", "low", "close"]] = [102, 101, 97, 96]
+    frame.loc[13, ["open", "high", "low", "close"]] = [95, 97, 93, 94]
+
+    levels, *_ = FujimotoStrategy()._calc_fibonacci_bearish(frame)
+    level_50 = next(level for level in levels if level.level == 0.5)
+    assert level_50.reacted is False
+    assert level_50.signal_date is None
+
 def test_trend_context_distinguishes_with_trend_and_countertrend_reactions():
     rising = _frame([100 + i for i in range(60)])
     falling = _frame([160 - i for i in range(60)])
