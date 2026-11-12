@@ -40,7 +40,14 @@ class TestBearishFibonacciSignals:
         }
 
     def get_0786(self, frame):
-        levels, high, low, targets = FujimotoStrategy()._calc_fibonacci_bearish(
+        strategy = FujimotoStrategy()
+        # Episode tests exercise resistance reactions after a known bearish impulse;
+        # pivot recognition itself is covered in test_fibonacci_swing.py.
+        strategy._detect_valid_fib_swing = lambda df, lookback=120: {
+            "direction": "bearish", "start_idx": 0, "end_idx": 0,
+            "start_price": 120.0, "end_price": 80.0,
+        }
+        levels, high, low, targets = strategy._calc_fibonacci_bearish(
             frame, lookback=60
         )
         assert high == 120.0
@@ -164,14 +171,18 @@ class TestBearishFibonacciSignals:
         assert with_reference.position_pct == baseline.position_pct
         assert with_reference.layers_consistent == baseline.layers_consistent
 
-    def test_existing_bullish_calculation_remains_independently_available(self):
+    def test_only_matching_fibonacci_side_is_available_for_confirmed_swing(self):
         frame = self.bars([
             {"open": 86, "high": 100, "low": 80, "close": 90, "volume": 100},
             {"open": 86, "high": 100, "low": 84.2, "close": 85, "volume": 100},
             {"open": 86, "high": 100, "low": 84.2, "close": 85, "volume": 130},
         ])
-        bullish, *_ = FujimotoStrategy()._calc_fibonacci(frame, lookback=60)
-        bearish, *_ = FujimotoStrategy()._calc_fibonacci_bearish(frame, lookback=60)
+        strategy = FujimotoStrategy()
+        strategy._detect_valid_fib_swing = lambda df, lookback=120: {
+            "direction": "bullish", "start_idx": 0, "end_idx": 0,
+            "start_price": 80.0, "end_price": 100.0,
+        }
+        bullish, *_ = strategy._calc_fibonacci(frame, lookback=60)
+        bearish, *_ = strategy._calc_fibonacci_bearish(frame, lookback=60)
         assert len(bullish) == 4
-        assert len(bearish) == 4
-        assert bullish[0].price != bearish[0].price
+        assert bearish == []
