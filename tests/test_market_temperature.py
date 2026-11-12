@@ -82,3 +82,9 @@ def test_temperature_api_persists_daily_idempotent_snapshots():
     assert 'on_conflict="market,trade_date"' in source
     assert '_market_temperature_history(market,30)' in source
     assert 'MIN_COVERAGE' not in source  # API consumes score/coverage from the engine
+
+def test_temperature_api_uses_close_only_during_market_hours():
+    source=(ROOT/"trading_tool/web_app.py").read_text(encoding="utf-8")
+    assert "_market_temperature_session_open(market)" in source
+    assert '"status":"waiting_for_close"' in source
+    assert "stale_during_session" in source
