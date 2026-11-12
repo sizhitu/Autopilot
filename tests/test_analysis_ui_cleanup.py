@@ -200,12 +200,9 @@ def test_current_fibonacci_reference_rows_show_latest_signal_and_its_own_wave_st
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
     renderer = update_results[update_results.index("const _fibHistory"):update_results.index("if (_fibBull.length)")]
 
-    assert "const _fibHistory = Array.isArray(data && data.fib_signal_history)" in renderer
-    assert "Math.abs(Number(ev.level) - Number(level)) < 0.0005" in renderer
-    assert "if (side && ev.side !== side) return false;" in renderer
-    assert "ev.swing_confirmation_date" in renderer
-    assert "return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';" in renderer
-    assert "'无法追溯'" in renderer
+    assert "当前参考位只展示当前波段自身的确认，不跨波段借用历史事件。" in renderer
+    assert "_latestFibEvent" not in renderer
+    assert "const hasSignal = !!(fl.reacted && fl.reaction_signal);" in renderer
     assert '<span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish')" in update_results
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
@@ -216,16 +213,15 @@ def test_current_fibonacci_reference_rows_show_latest_signal_and_its_own_wave_st
 def test_fibonacci_history_has_ten_trading_day_win_rate_column():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
-    assert '<span>10日胜率</span>' in loader
-    assert "forward_10d_win_rate" in loader
-    assert "forward_10d_sample_size" in loader
+    assert '<span>10日表现</span>' in loader
     assert "forward_10d_status: ev.forward_10d_status || null" in loader
     assert "forward_10d_return_pct: ev.forward_10d_return_pct == null ? null : Number(ev.forward_10d_return_pct)" in loader
     assert "forward_10d_win: typeof ev.forward_10d_win === 'boolean' ? ev.forward_10d_win : null" in loader
     assert "forward_10d_win_rate: ev.forward_10d_win_rate == null ? null : Number(ev.forward_10d_win_rate)" in loader
     assert "forward_10d_sample_size: ev.forward_10d_sample_size == null ? 0 : Number(ev.forward_10d_sample_size)" in loader
-    assert "样本不足" in loader
-    assert "10个交易日尚未走完" in loader
+    assert "信号后10个交易日收盘收益" in loader
+    assert "'待观察'" in loader
+    assert "toFixed(2)" in loader
 
 def test_position_page_keeps_ladder_reference_but_removes_change_calculator():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
