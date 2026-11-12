@@ -483,15 +483,17 @@ body.help-open { overflow: hidden; touch-action: none; }
 .ind-detail { font-size:10px; color:var(--text-dim); flex:1; text-align:right; margin-right:6px; }
 
 /* 斐波那契 */
-.fib-row { display:flex; align-items:center; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border); }
-.fib-level { font-weight:600; color:var(--purple); width:55px; font-size:12px; }
-.fib-price { font-family:monospace; flex:1; font-size:12px; }
+.fib-table-head,.fib-row { display:grid; grid-template-columns:48px minmax(58px,.8fr) minmax(112px,1.5fr) 82px; align-items:center; column-gap:8px; }
+.fib-table-head { padding:4px 0 5px; color:var(--text-dim); font-size:10px; border-bottom:1px solid var(--border); }
+.fib-table-head span:last-child,.fib-signal-date { text-align:right; }
+.fib-row { padding:5px 0; border-bottom:1px solid var(--border); }
+.fib-level { font-weight:600; color:var(--purple); font-size:12px; }
+.fib-price { font-family:monospace; font-size:12px; }
 .fib-star { color:var(--gold); font-size:11px; }
 .fib-tested { color:var(--text-dim); font-size:10px; }
-.fib-row { gap:8px; }
-.fib-status { display:flex; align-items:center; justify-content:flex-end; gap:6px; font-size:10px; white-space:nowrap; }
+.fib-status { display:flex; align-items:center; justify-content:flex-start; gap:6px; font-size:10px; white-space:nowrap; min-width:0; }
 .fib-reaction { color:var(--gold); }
-.fib-signal-date { color:var(--text-dim); }
+.fib-signal-date { color:var(--text-dim); font-size:10px; white-space:nowrap; }
 .fib-history-head,.fib-history-row {
   display:grid;
   grid-template-columns:minmax(0,1.5fr) 54px minmax(64px,.8fr) 88px;
@@ -6275,13 +6277,14 @@ function updateResults(data, meta, nineTurn) {
   const _renderFibGroup = (title, levels) => {
     if (!levels.length) return '';
     let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
+    html += '<div class="fib-table-head"><span>Fib</span><span>价格</span><span>信号</span><span>最近确认</span></div>';
     for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
       const hasStrongSignal = !!(fl.reacted && fl.reaction_signal);
       const star = hasStrongSignal ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '');
       const rx = hasStrongSignal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
-      const dateText = hasStrongSignal && fl.signal_date ? `<span class="fib-signal-date" title="当前有效波段内该Fib位置最近一次确认的实际交易日">波段最近确认 ${fl.signal_date}</span>` : '';
-      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
+      const dateText = hasStrongSignal && fl.signal_date ? fl.signal_date : '—';
+      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${dateText}</span></div>`;
     }
     return html;
   };
