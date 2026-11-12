@@ -788,7 +788,7 @@ async def market_spread():
 _MARKET_TEMPERATURE_CACHE = {"data": {}, "refreshing": set()}
 _MARKET_TEMPERATURE_TTL = 5 * 60
 _MARKET_TEMPERATURE_MEM_TTL = 5 * 60
-_MARKET_TEMPERATURE_REFRESH_LOCK = threading.Lock()
+_MARKET_TEMPERATURE_REFRESH_LOCKS = {"cn": threading.Lock(), "us": threading.Lock()}
 
 def _persist_market_temperature(snapshot: dict) -> None:
     try:
@@ -815,7 +815,8 @@ def _market_temperature_history(market: str, limit: int = 30) -> list:
 
 def _refresh_market_temperature(market: str) -> None:
     state=_MARKET_TEMPERATURE_CACHE
-    if market in state["refreshing"] or not _MARKET_TEMPERATURE_REFRESH_LOCK.acquire(blocking=False): return
+    lock = _MARKET_TEMPERATURE_REFRESH_LOCKS.get(market)
+    if market in state["refreshing"] or lock is None or not lock.acquire(blocking=False): return
     state["refreshing"].add(market)
     def _run():
         try:
@@ -834,12 +835,12 @@ def _refresh_market_temperature(market: str) -> None:
             # Never overwrite a last-known-good value with an error response.
         finally:
             state["refreshing"].discard(market)
-            _MARKET_TEMPERATURE_REFRESH_LOCK.release()
+            lock.release()
     try:
         threading.Thread(target=_run,daemon=True,name=f"market-sentiment-{market}").start()
     except Exception:
         state["refreshing"].discard(market)
-        _MARKET_TEMPERATURE_REFRESH_LOCK.release()
+        lock.release()
         raise
 
 @app.get("/api/market-temperature")
