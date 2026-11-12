@@ -21,7 +21,7 @@ INDUSTRY_CONFIG={
  "cn":[
   {"key":"semiconductor","label":"芯片半导体","symbol":"512480","proxy":"半导体ETF"},
   {"key":"datacenter","label":"数据中心","symbol":"516510","proxy":"云计算/数据中心链代理"},
-  {"key":"power","label":"核能与电力","symbol":"561560","proxy":"电力ETF，非纯核能"},
+  {"key":"power","label":"核能与电力","symbol":"562550","proxy":"电力ETF，非纯核能"},
   {"key":"robotics","label":"机器人制造","symbol":"562500","proxy":"机器人ETF"},
   {"key":"biotech","label":"生物科技","symbol":"512290","proxy":"生物医药ETF"},
   {"key":"space","label":"太空经济","symbol":"512630","proxy":"卫星产业代理"},
