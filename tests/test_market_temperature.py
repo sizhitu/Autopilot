@@ -215,11 +215,13 @@ def test_temperature_refresh_is_single_worker_and_api_has_cold_fallback():
     assert "timeout=2.5" in source
 
 
-def test_temperature_archive_writes_atomic_json_sidecar(tmp_path):
+def test_temperature_archive_writes_atomic_json_sidecar(tmp_path, monkeypatch):
     from datetime import date
     import market_temperature_cold_backup as cold
     snapshot={"market":"cn","as_of":date.today().isoformat(),"temperature":63.1,"status":"ok"}
     target=cold.write_cold_snapshot(snapshot,tmp_path,"market/temperature/test.parquet")
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_DIR",str(tmp_path))
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_BASE_URL","")
     assert target.name=="latest_cn.json" and target.is_file()
     restored=cold.read_cold_snapshot("cn")
     assert restored["temperature"]==63.1
@@ -230,4 +232,4 @@ def test_temperature_archive_does_not_require_supabase_for_file_backup():
     source=(ROOT/"scripts/archive/archive_market_temperature.py").read_text(encoding="utf-8")
     assert "continuing with file archive only" in source
     assert "write_cold_snapshot(snapshot" in source
-    assert "if not supabase_client.using_supabase():\\n        raise SystemExit" not in source
+    assert "refusing to produce non-durable temperature history" not in source
