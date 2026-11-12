@@ -67,9 +67,21 @@ def test_supabase_restore_is_used_before_cold_file_fallback():
     assert '.select("trade_date,snapshot")' in helper
     assert '0 <= score <= 100' in helper
     assert 'age > 14' in helper
-    assert '_load_market_temperature_from_supabase,market' in route
-    assert route.index('_load_market_temperature_from_supabase,market') < route.index('read_cold_snapshot')
+    assert '_market_temperature_supabase_future(market)' in route
+    assert route.index('_market_temperature_supabase_future(market)') < route.index('read_cold_snapshot')
     assert '"supabase_restored":True' in route
+
+def test_supabase_restore_uses_one_shared_inflight_query_per_market():
+    source=(ROOT/"trading_tool"/"web_app.py").read_text(encoding="utf-8")
+    assert "_MARKET_TEMPERATURE_SUPABASE_LOADS = {}" in source
+    assert "def _market_temperature_supabase_future(market: str) -> Future:" in source
+    assert "if existing is not None and not existing.done():" in source
+    assert "asyncio.shield(asyncio.wrap_future(restore_future))" in source
+    assert "asyncio.to_thread(_load_market_temperature_from_supabase,market)" not in source
+    helper=source[source.index("def _market_temperature_supabase_future("):source.index("def _market_temperature_history(")]
+    assert '_MARKET_TEMPERATURE_CACHE["data"][market] = restored' in helper
+    assert "threading.Thread(" in helper
+
 
 def test_position_temperature_prefetches_on_initial_page_load():
     html=(ROOT/"frontend"/"index.html").read_text(encoding="utf-8")
