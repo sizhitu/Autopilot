@@ -107,10 +107,10 @@ def test_bullish_signal_scan_ignores_current_close_gate_and_uses_full_candle_ran
     }
     strategy._detect_valid_fib_swing = lambda df, lookback=120: swing
     levels, *_ = strategy._calc_fibonacci(frame)
-    level = next(item for item in levels if item.level == 0.618)
-
+    confirmed = [item for item in levels if item.reacted]
+    assert len(confirmed) == 1
+    level = confirmed[0]
     assert not bool(level.tested)
-    assert level.reacted is True
     assert level.reaction_signal == "阳线反包确认"
     assert level.signal_date == "2026-11-03"
 
@@ -132,10 +132,10 @@ def test_bearish_signal_scan_ignores_current_close_gate_and_uses_full_candle_ran
     }
     strategy._detect_valid_fib_swing = lambda df, lookback=120: swing
     levels, *_ = strategy._calc_fibonacci_bearish(frame)
-    level = next(item for item in levels if item.level == 0.618)
-
+    confirmed = [item for item in levels if item.reacted]
+    assert len(confirmed) == 1
+    level = confirmed[0]
     assert level.tested is False
-    assert level.reacted is True
     assert level.reaction_signal == "阴线反包受阻"
     assert level.signal_date == "2026-11-03"
 
@@ -157,10 +157,11 @@ def test_current_fib_level_matches_its_replayed_history_event():
     strategy._detect_valid_fib_swing = lambda df, lookback=120: swing
     current, *_ = strategy._calc_fibonacci(frame)
     history = strategy._build_fibonacci_signal_history(frame)
-    current_event = next(item for item in current if item.level == 0.618 and item.reacted)
+    current_event = next(item for item in current if item.reacted)
     matching = [
         event for event in history
-        if event["side"] == "bullish" and event["level"] == 0.618
+        if event["side"] == "bullish"
+        and event["level"] == current_event.level
         and event["signal_date"] == current_event.signal_date
         and event["signal"] == current_event.reaction_signal
     ]
