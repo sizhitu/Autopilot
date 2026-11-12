@@ -221,3 +221,15 @@ def test_fibonacci_history_has_ten_trading_day_win_rate_column():
     assert "forward_10d_sample_size" in loader
     assert "样本不足" in loader
     assert "10个交易日尚未走完" in loader
+
+def test_position_page_keeps_ladder_reference_but_removes_change_calculator():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    ladder_view = html[html.index('id="ladderView"'):html.index('<!-- 分析模式视图 -->')]
+
+    assert "藤本茂阶梯参考" in ladder_view
+    assert 'id="buyLadderTable"' in ladder_view
+    assert 'id="sellLadderTable"' in ladder_view
+    assert "涨跌幅计算器" not in ladder_view
+    assert 'id="calcChange"' not in html
+    assert 'id="calcResult"' not in html
+    assert "calcLadder" not in html

@@ -540,10 +540,6 @@ body.help-open { overflow: hidden; touch-action: none; }
 .search-result-item .name { color:var(--text); margin-left:8px; }
 .search-result-item .market { float:right; font-size:10px; color:var(--text-dim); }
 
-/* 阶梯计算器 */
-.ladder-input { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
-.ladder-input input { flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 10px; border-radius:4px; font-size:12px; }
-.ladder-result { padding:8px; background:var(--bg); border-radius:6px; text-align:center; font-size:13px; min-height:36px; }
 
 /* 回测统计 */
 .bt-stats { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:10px; }
@@ -1380,7 +1376,7 @@ body.landing-locked #freeBanner { display: none !important; }
         <span class="help-pop" onclick="event.stopPropagation()" style="min-width:min(92vw,340px);max-width:min(92vw,380px);max-height:min(70vh,520px);overflow-y:auto;text-align:left;font-weight:400;text-transform:none;letter-spacing:0;">
           <div class="hp-sec"><b>藤本茂是谁</b><p>日本个人投资者，因「相对成本分档加减仓」的阶梯式仓位管理思路在中文圈被引用较多。强调恐慌中有计划承接、上涨中分批兑现，用纪律对抗情绪。</p></div>
           <div class="hp-sec"><b>阶梯是什么</b><p>相对<strong>持仓成本</strong>的固定涨跌幅档位表：跌到某档考虑加仓节奏，涨到某档考虑减仓兑现。全市场同一套百分比，不随个股单独计算。</p></div>
-          <div class="hp-sec"><b>怎么用</b><p>先明确自己的成本价，再看现价相对成本的涨跌幅落在哪一档。下方「涨跌幅计算器」可快速对照。表中操作为研究备忘，不是下单指令。</p></div>
+          <div class="hp-sec"><b>怎么用</b><p>先明确自己的成本价，再看现价相对成本的涨跌幅落在哪一档，直接对照下方阶梯表。表中操作为研究备忘，不是下单指令。</p></div>
           <div class="hp-sec"><b>与分析页的关系</b><p>本页与「三层一致性校验」独立，不替代趋势/九转/量价判断。实际买卖请结合自选看板时机、趋势过滤与分析详情。</p></div>
           <div class="hp-sec"><b>提示</b><p>仅供研究学习，不构成投资建议。</p></div>
         </span>
@@ -1396,11 +1392,6 @@ body.landing-locked #freeBanner { display: none !important; }
     <table class="ladder-table" id="buyLadderTable"></table>
     <div style="margin:12px 0 6px;"><b style="color:var(--red);font-size:12px;">▲ 上涨阶梯（减仓）</b></div>
     <table class="ladder-table" id="sellLadderTable"></table>
-  </div>
-  <div class="card">
-    <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">涨跌幅计算器</div>
-    <div class="ladder-input"><input type="number" id="calcChange" placeholder="-15 或 +25"><button class="btn btn-green btn-sm" onclick="calcLadder()">计算</button></div>
-    <div class="ladder-result" id="calcResult">输入相对成本涨跌幅(%)后计算建议档位</div>
   </div>
 </div>
 
@@ -6508,20 +6499,6 @@ function updateHlVal(highLow, valuation) {
     `</div>`;
 
   body.innerHTML = hlHtml + vHtml;
-}
-
-// === 阶梯计算器 ===
-async function calcLadder() {
-  const change = parseFloat(document.getElementById('calcChange').value);
-  if (isNaN(change)) { document.getElementById('calcResult').innerHTML = '<span style="color:var(--red);">请输入数字</span>'; return; }
-  try {
-    const res = await api('/api/ladder', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price_change:change})});
-    const d = await res.json();
-    const el = document.getElementById('calcResult');
-    if (d.action_type === 'buy') el.innerHTML = `<span style="color:var(--green);font-weight:700;">${d.desc}</span><br><span style="color:var(--text-dim);font-size:11px;">加仓 ${d.delta}%</span>`;
-    else if (d.action_type === 'sell') el.innerHTML = `<span style="color:var(--red);font-weight:700;">${d.desc}</span><br><span style="color:var(--text-dim);font-size:11px;">卖出 ${Math.abs(d.delta)}%</span>`;
-    else el.innerHTML = `<span style="color:var(--text-dim);font-weight:700;">${d.desc}</span>`;
-  } catch(e) { document.getElementById('calcResult').innerHTML = '计算失败'; }
 }
 
 // === 回测 ===
