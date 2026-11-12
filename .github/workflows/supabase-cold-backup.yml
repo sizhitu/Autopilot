@@ -55,8 +55,11 @@ jobs:
           supabase db dump --remote="$SUPABASE_DB_URL" -f data.sql --data-only --use-copy \
             -x "storage.buckets_vectors" \
             -x "storage.vector_indexes"
+          # Keep Supabase migration history separately; the CLI excludes this managed schema by default.
+          supabase db dump --remote="$SUPABASE_DB_URL" -f migration_history_schema.sql --schema supabase_migrations
+          supabase db dump --remote="$SUPABASE_DB_URL" -f migration_history_data.sql --data-only --use-copy --schema supabase_migrations
 
-          for file in roles.sql schema.sql data.sql; do
+          for file in roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql; do
             test -s "$file" || { echo "::error::Backup output is missing or empty: $file"; exit 1; }
           done
 
@@ -66,7 +69,7 @@ jobs:
             "format": "supabase-cli-logical-dump",
             "created_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "postgres_server_version": "$SERVER_VERSION",
-            "files": ["roles.sql", "schema.sql", "data.sql"],
+            "files": ["roles.sql", "schema.sql", "data.sql", "migration_history_schema.sql", "migration_history_data.sql"],
             "retention_days": 30,
             "includes": ["database roles", "schema", "database data", "RLS policies", "database functions and triggers where supported by Supabase CLI"],
             "excludes": ["Supabase Storage object bytes", "project-level Auth/OAuth/SMTP settings", "Edge Function source and secrets"],
@@ -74,11 +77,11 @@ jobs:
           }
           EOF
 
-          sha256sum roles.sql schema.sql data.sql manifest.json > SHA256SUMS
+          sha256sum roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json > SHA256SUMS
           sha256sum --check SHA256SUMS
 
           # Validate the compressed archive can be listed and extracted before encryption/upload.
-          tar --zstd -cf database-backup.tar.zst roles.sql schema.sql data.sql manifest.json SHA256SUMS
+          tar --zstd -cf database-backup.tar.zst roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json SHA256SUMS
           tar --zstd -tf database-backup.tar.zst >/dev/null
           zstd -t database-backup.tar.zst
 
@@ -111,6 +114,8 @@ jobs:
             --file schema.sql \
             --command 'SET session_replication_role = replica' \
             --file data.sql \
+            --file migration_history_schema.sql \
+            --file migration_history_data.sql \
             --dbname 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
 
       - name: Publish encrypted backup and prune expired releases
