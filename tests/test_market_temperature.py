@@ -89,4 +89,4 @@ def test_position_temperature_retries_pending_snapshot_without_manual_market_cli
     assert "j&&j.status==='pending'" in loader
     assert "await new Promise(resolve=>setTimeout(resolve,1800))" in loader
     assert "if(j&&j.market===key&&j.temperature!=null)" in loader
-    assert "d.status==='pending'?'后台获取中'" in loader
+    assert "d.status==='pending'?'后台获取中'" in html
