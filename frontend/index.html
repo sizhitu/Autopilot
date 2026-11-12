@@ -6244,8 +6244,8 @@ function updateResults(data, meta, nineTurn) {
   document.getElementById('tab-indicators').innerHTML = ih;
 
   let fh = '';
-  // 当前结构必须同时展示上涨回撤位与下跌反弹阻力位。
-  // 历史强信号来自 fib_signal_history，不代表当前一定有同方向的 Fib 价位。
+  // 当前价格位与交易信号分离：没有有效波段时仍展示最近区间的四个参考价位，
+  // 但参考价位不参与信号判断，也绝不显示确认星号。
   const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];
   const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];
   const _renderFibGroup = (title, levels) => {
@@ -6253,17 +6253,40 @@ function updateResults(data, meta, nineTurn) {
     let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
     for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '');
-      const rx = fl.reaction_signal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
-      const dateText = fl.signal_date ? `<span class="fib-signal-date" title="该Fib位置最近一次确认的实际交易日">最近确认 ${fl.signal_date}</span>` : '';
+      const hasStrongSignal = !!(fl.reacted && fl.reaction_signal);
+      const star = hasStrongSignal ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '');
+      const rx = hasStrongSignal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
+      const dateText = hasStrongSignal && fl.signal_date ? `<span class="fib-signal-date" title="该Fib位置最近一次确认的实际交易日">最近确认 ${fl.signal_date}</span>` : '';
       html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
     }
     return html;
   };
-  fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull);
-  fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear);
-  if (!_fibBull.length && !_fibBear.length) {
-    fh = '<div style="color:var(--text-dim);text-align:center;padding:12px;">当前没有达到确认条件的有效 Fib 波段（历史强信号仍单独保留）</div>';
+  if (_fibBull.length) {
+    fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull);
+  } else if (_fibBear.length) {
+    fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear);
+  } else {
+    // 沿用原版四段位价格展示：以分析窗口高低点计算参考回撤位。
+    // 这是价格参考，不代表已确认波段；只有上面的有效波段数据才可能出现★。
+    const _chartData = (data && data.chart_data) || {};
+    const _high = Number(_chartData.swing_high);
+    const _low = Number(_chartData.swing_low);
+    const _diff = _high - _low;
+    if (Number.isFinite(_high) && Number.isFinite(_low) && _low > 0 && _diff > 0) {
+      const _fallbackLevels = [
+        [0.786, '极深回调'],
+        [0.618, '黄金回调'],
+        [0.500, '中等回调'],
+        [0.382, '浅回调']
+      ].map(([level, label]) => ({
+        level,
+        price: (_high - _diff * level).toFixed(2),
+        tested: false,
+        reacted: false,
+        reaction_signal: ''
+      }));
+      fh += _renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels);
+    }
   }
   // 最新状态按Fib位置展示最近一次确认；历史列表展示逐日重建的全部独立事件。
   document.getElementById('tab-fibonacci').innerHTML = fh
