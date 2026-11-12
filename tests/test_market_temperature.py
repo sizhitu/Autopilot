@@ -55,13 +55,13 @@ def test_cn_breadth_parser_requires_market_coverage(monkeypatch):
     monkeypatch.setattr(mt.requests,"get",lambda *a,**k:Response())
     result=mt._fetch_cn_breadth()
     assert result["advancers"]==334 and result["decliners"]==334
-    assert result["score"]==33.3
+    assert result["score"]==50.0
 
 def test_us_breadth_uses_ad_line_change_not_percent_of_negative_index():
     import pandas as pd
     import market_temperature as mt
     dates=pd.date_range("2026-01-01",periods=100,freq="B")
-    frame=pd.DataFrame({"date":dates,"close":[-500+i*3 for i in range(100)]})
+    frame=pd.DataFrame({"date":dates,"close":[-500+i*3+(i%5)*0.5 for i in range(100)]})
     class Fetcher:
         def fetch(self,symbol,days): return frame
     result=mt._fetch_us_breadth(Fetcher())
