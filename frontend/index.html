@@ -500,9 +500,15 @@ body.help-open { overflow: hidden; touch-action: none; }
 }
 .fib-history-head { padding:3px 0 5px; color:var(--text-dim); font-size:10px; border-bottom:1px solid var(--border); }
 .fib-history-head span:last-child,.fib-history-date { text-align:right; }
-.fib-history-row { padding:7px 0; border-bottom:1px solid var(--border); font-size:11px; }
-.fib-history-signal { color:var(--gold); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.fib-history-level { color:var(--purple); white-space:nowrap; }
+.fib-history-row { padding:7px 8px; margin:4px 0; border:1px solid var(--border); border-left-width:3px; border-radius:6px; font-size:11px; background:rgba(255,255,255,.025); }
+.fib-history-row.fib-history-bullish { border-color:rgba(46,204,113,.42); border-left-color:var(--green); background:rgba(46,204,113,.055); }
+.fib-history-row.fib-history-bearish { border-color:rgba(231,76,60,.42); border-left-color:var(--red); background:rgba(231,76,60,.055); }
+.fib-history-signal { display:flex; align-items:center; gap:5px; min-width:0; color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fib-history-direction { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; flex:0 0 18px; border-radius:4px; font-size:14px; line-height:1; }
+.fib-history-bullish .fib-history-direction { color:var(--green); background:rgba(46,204,113,.12); }
+.fib-history-bearish .fib-history-direction { color:var(--red); background:rgba(231,76,60,.12); }
+.fib-history-star { color:var(--gold); font-size:12px; flex:0 0 auto; }
+.fib-history-signal-text { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .fib-history-price { font-family:monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .fib-history-date { color:var(--text-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
 @media (max-width:420px) {
@@ -6116,10 +6122,14 @@ async function loadFibSignalHistory() {
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span></div>' + events.slice(0,50).map(ev =>
-      '<div class="fib-history-row"><span class="fib-history-signal">' + (ev.side==='bearish'?'↓下跌侧 ':'↑上涨侧 ') + esc(ev.signal) + '</span>' +
-      '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span></div>'
-    ).join('');
+    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span></div>' + events.slice(0,50).map(ev => {
+      const bearish = ev.side === 'bearish';
+      const sideClass = bearish ? 'fib-history-bearish' : 'fib-history-bullish';
+      const direction = bearish ? '↓' : '↑';
+      const sideLabel = bearish ? '下跌侧' : '上涨侧';
+      return '<div class="fib-history-row ' + sideClass + '"><span class="fib-history-signal" title="' + sideLabel + '"><span class="fib-history-direction" aria-label="' + sideLabel + '">' + direction + '</span><span class="fib-history-star" aria-label="强信号">★</span><span class="fib-history-signal-text">' + esc(ev.signal) + '</span></span>' +
+        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span></div>';
+    }).join('');
   } catch(e) {
     if (previousHTML && previousHTML.indexOf('fib-history-row') >= 0) { box.innerHTML=previousHTML; box.insertAdjacentHTML('afterbegin','<div class="fib-history-warning">历史更新失败，保留上次数据</div>'); }
     else box.textContent='历史信号读取失败：' + ((e && e.message) || '请稍后重试');
