@@ -35,6 +35,19 @@ age-keygen -o supabase-backup-identity.txt
 
 Add the public `age1...` recipient as Actions repository variable `SUPABASE_BACKUP_AGE_RECIPIENT`. Keep the identity file offline as a recovery copy. Never commit it.
 
+## Backup inventory and restore validation reports
+
+Every successful backup release publishes readable Markdown, machine-readable JSON, and per-table CSV reports:
+
+- `before_backup.md/json/csv`: captured from the live database immediately before export.
+- `after_restore.md/json/csv`: captured from the isolated restored database.
+- `restore_comparison.md/json`: pass/fail result with before/after database size, table count, index count, total rows, and all table-level mismatches.
+- `artifact_sizes.md/json`: byte and MiB sizes for each SQL dump, manifest/checksum, compressed archive, and encrypted upload.
+
+Each per-table inventory includes schema/table name, exact row count, index count, table bytes, index bytes, and total relation bytes. The verifier strictly requires the same table list, per-table row counts, per-table index counts, total table count, and total index count. Any difference fails the workflow and prevents upload/pruning. Physical database/table/index byte sizes are recorded for capacity tracking but are not required to match byte-for-byte after restore because PostgreSQL may lay out or rebuild relations differently.
+
+The reports cover the application/migration schemas exported by this CLI backup; they do not expand the backup scope to Supabase-managed Auth/Storage data.
+
 ## Automated verification performed before upload
 
 1. Export non-empty roles, schema, data and migration-history SQL files.
