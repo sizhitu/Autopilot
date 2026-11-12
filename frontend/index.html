@@ -6113,15 +6113,18 @@ async function loadFibSignalHistory() {
     for (const item of items) collectSnapshot(parseRecord(item));
     const addLegacyEvents = records => {
       for (const data of records) {
-        const levels = Array.isArray(data.fib_levels) ? data.fib_levels : [];
-        for (const fl of levels) {
-          if (!fl || !fl.reacted || !fl.reaction_signal) continue;
-          const date = String(fl.signal_date || '').slice(0,10);
-          if (!date) continue;
-          addArchivedEvent({
-            side: 'bullish', level: fl.level, price: fl.price,
-            signal_date: date, signal: fl.reaction_signal
-          });
+        // 旧快照也可能已经包含下跌侧字段；必须对称迁移，不能只补上涨侧。
+        for (const [side, field] of [['bullish', 'fib_levels'], ['bearish', 'fib_bearish_levels']]) {
+          const levels = Array.isArray(data[field]) ? data[field] : [];
+          for (const fl of levels) {
+            if (!fl || !fl.reacted || !fl.reaction_signal) continue;
+            const date = String(fl.signal_date || '').slice(0,10);
+            if (!date) continue;
+            addArchivedEvent({
+              side, level: fl.level, price: fl.price,
+              signal_date: date, signal: fl.reaction_signal
+            });
+          }
         }
       }
     };
