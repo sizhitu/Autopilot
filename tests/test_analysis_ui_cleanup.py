@@ -213,11 +213,11 @@ def test_current_fibonacci_reference_rows_show_latest_signal_and_its_own_wave_st
 def test_fibonacci_history_has_ten_trading_day_win_rate_column():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
-    assert '<span>10日表现</span>' in loader
-    assert "forward_10d_status: ev.forward_10d_status || null" in loader
-    assert "forward_10d_return_pct: ev.forward_10d_return_pct == null ? null : Number(ev.forward_10d_return_pct)" in loader
-    assert "forward_10d_win: typeof ev.forward_10d_win === 'boolean' ? ev.forward_10d_win : null" in loader
-    assert "信号后10个交易日收盘收益" in loader
+    assert '<span>5日表现</span>' in loader
+    assert "forward_5d_status: ev.forward_5d_status || null" in loader
+    assert "forward_5d_return_pct: ev.forward_5d_return_pct == null ? null : Number(ev.forward_5d_return_pct)" in loader
+    assert "forward_5d_win: typeof ev.forward_5d_win === 'boolean' ? ev.forward_5d_win : null" in loader
+    assert "信号后5个交易日收盘收益" in loader
     assert "'待观察'" in loader
     assert "toFixed(2)" in loader
 
