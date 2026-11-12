@@ -247,6 +247,7 @@ def result_to_dict(result) -> dict:
                 "signal_date": getattr(fl, "signal_date", None)
             } for fl in result.chart_data.get("fib_bearish_levels", [])
         ],
+        "fib_signal_history": result.chart_data.get("fib_signal_history", []),
         "fib_levels": [
             {
                 "level": float(fl.level),
