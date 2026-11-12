@@ -203,3 +203,27 @@ class TestFibonacciDirectionalVolumeConfirmation:
         assert len(events) == 1
         assert events[0]["forward_10d_status"] == "pending"
         assert events[0]["forward_10d_win_rate"] is None
+
+
+    def test_one_confirmation_candle_is_assigned_to_nearest_touched_fib_level(self):
+        frame = pd.DataFrame({
+            "date": [pd.Timestamp("2026-08-28")],
+            "open": [108.0], "high": [110.0], "low": [98.0],
+            "close": [101.0], "volume": [200.0],
+        })
+        levels = [
+            FibLevel(level=0.786, price=109.0, reacted=True,
+                     reaction_signal="阴线反包受阻", signal_date="2026-08-28"),
+            FibLevel(level=0.618, price=104.0, reacted=True,
+                     reaction_signal="阴线反包受阻", signal_date="2026-08-28"),
+            FibLevel(level=0.500, price=100.5, reacted=True,
+                     reaction_signal="阴线反包受阻", signal_date="2026-08-28"),
+            FibLevel(level=0.382, price=98.5, reacted=True,
+                     reaction_signal="阴线反包受阻", signal_date="2026-08-28"),
+        ]
+        result = FujimotoStrategy._dedupe_fib_confirmations_by_candle(frame, levels)
+        confirmed = [item for item in result if item.reacted]
+        assert len(confirmed) == 1
+        assert confirmed[0].level == 0.500
+        assert confirmed[0].signal_date == "2026-08-28"
+        assert all(not item.reacted and item.signal_date is None for item in result if item is not confirmed[0])
