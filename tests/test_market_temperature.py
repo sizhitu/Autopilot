@@ -19,7 +19,7 @@ def test_temperature_score_and_regime(monkeypatch):
     monkeypatch.setattr(mt,"_fetch_cn_breadth",lambda:{"score":40.,"source":"test","data_date":"2026-11-11"})
     monkeypatch.setattr(mt,"_clean_frame",lambda f:None)
     r=mt.build_market_temperature_snapshot("cn",fetcher=object())
-    assert r["coverage"]==100 and r["temperature"]==59.5 and r["regime"]=="中性"
+    assert r["coverage"]==100 and r["temperature"]==58.5 and r["regime"]=="中性"
 
 def test_temperature_is_withheld_when_breadth_missing(monkeypatch):
     import market_temperature as mt
@@ -30,7 +30,7 @@ def test_temperature_is_withheld_when_breadth_missing(monkeypatch):
     monkeypatch.setattr(mt,"_fetch_cn_breadth",lambda:(_ for _ in ()).throw(RuntimeError("offline")))
     monkeypatch.setattr(mt,"_clean_frame",lambda f:None)
     r=mt.build_market_temperature_snapshot("cn",fetcher=object())
-    assert r["coverage"]==65 and r["temperature"] is None and r["status"]=="insufficient_data"
+    assert r["coverage"]==60 and r["temperature"] is None and r["status"]=="insufficient_data"
 
 def test_trend_score_uses_multiple_indices():
     import pandas as pd
@@ -51,7 +51,7 @@ def test_cn_breadth_parser_requires_market_coverage(monkeypatch):
     class Response:
         def raise_for_status(self): pass
         def json(self):
-            return {"data":{"total":1000,"diff":[{"f3":2},{"f3":-1},{"f3":0}]*334}}
+            return {"data":{"total":1000,"diff":[{"f3":2,"f124":1794412800},{"f3":-1,"f124":1794412800},{"f3":0,"f124":1794412800}]*334}}
     monkeypatch.setattr(mt.requests,"get",lambda *a,**k:Response())
     result=mt._fetch_cn_breadth()
     assert result["advancers"]==334 and result["decliners"]==334
