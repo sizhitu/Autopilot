@@ -672,12 +672,16 @@ class DataFetcher:
                     fallback_frames.append(df_n)
             except Exception as ne:
                 last_error = f"{last_error}；Nasdaq: {ne}"
-            try:
-                df_s = self._fetch_stooq(symbol, days)
-                if df_s is not None and len(df_s) > 0:
-                    fallback_frames.append(df_s)
-            except Exception as se:
-                last_error = f"{last_error}；Stooq: {se}"
+
+            # Nasdaq 已补到预期交易日就不再请求 Stooq，控制每只股票的外部请求量。
+            nasdaq_last = _df_last_date(fallback_frames[0]) if fallback_frames else None
+            if exp_d is None or nasdaq_last is None or nasdaq_last < exp_d:
+                try:
+                    df_s = self._fetch_stooq(symbol, days)
+                    if df_s is not None and len(df_s) > 0:
+                        fallback_frames.append(df_s)
+                except Exception as se:
+                    last_error = f"{last_error}；Stooq: {se}"
 
         best = parsed.copy() if parsed is not None and len(parsed) > 0 else None
         if best is not None and fallback_frames:
