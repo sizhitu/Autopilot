@@ -97,8 +97,10 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
     assert "data.fib_signal_history" in html
     assert 'class="fib-history-date"' in html
     assert 'class="fib-star">★确认</span>' in html
-    assert '.fib-history-row.fib-history-bullish' in html
-    assert '.fib-history-row.fib-history-bearish' in html
+    assert '.fib-history-bullish .fib-history-direction { color:var(--green); }' in html
+    assert '.fib-history-bearish .fib-history-direction { color:var(--red); }' in html
+    assert '.fib-history-row { padding:7px 0; border-bottom:1px solid var(--border); font-size:11px; }' in html
+    assert 'border-radius:6px' not in html[html.index('.fib-history-row {'):html.index('/* 图表 */')]
     assert 'fl.reacted' in html
     assert 'fl.tested' in html
     assert 'fl.reaction_signal' in html
