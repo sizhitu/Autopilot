@@ -6115,38 +6115,47 @@ async function loadFibSignalHistory() {
   try {
     const response = await apiJSON('/api/history?symbol=' + encodeURIComponent(currentSymbol) + '&limit=100');
     const items = Array.isArray(response.items) ? response.items : [];
-    const unique = new Map();
+    let events = [];
+    // 新格式：最新分析记录保存基于完整K线逐日重放得到的事件序列。
+    // 只读取最新一份完整事件序列，避免把分析快照中的当前状态重复拼成历史。
     for (const item of items) {
       let record = item.result_json || {};
       if (typeof record === 'string') { try { record = JSON.parse(record); } catch (e) { record = {}; } }
-      const levels = record && record.data && Array.isArray(record.data.fib_levels) ? record.data.fib_levels : [];
-      for (const fl of levels) {
-        if (!fl || !fl.reacted || !fl.reaction_signal) continue;
-        // 只把真实 K 线交易日作为信号日期；分析记录保存日不是信号发生日。
-        const eventDate = String(fl.signal_date || '').slice(0, 10);
-        if (!eventDate) continue; // 旧记录缺少 signal_date，不能用 created_at 伪造事件日期
-        const key = [item.symbol || currentSymbol, fl.level, eventDate, fl.reaction_signal].join('|');
-        const prior = unique.get(key);
-        if (!prior || String(item.created_at || '') < prior.detectedAt) {
-          unique.set(key, {
-            symbol: item.symbol || currentSymbol, level: fl.level, price: fl.price,
-            date: eventDate, signal: fl.reaction_signal, detectedAt: String(item.created_at || '')
-          });
-        }
+      const data = record && record.data ? record.data : {};
+      if (Array.isArray(data.fib_signal_history)) {
+        events = data.fib_signal_history.filter(ev => ev && ev.signal_date && ev.signal && ev.side).map(ev => ({
+          side: ev.side, level: ev.level, price: ev.price,
+          date: String(ev.signal_date).slice(0, 10), signal: ev.signal
+        }));
+        break;
       }
     }
-    const events = Array.from(unique.values()).sort((a, b) => b.date.localeCompare(a.date));
-    if (!events.length) { box.textContent = '暂无可确认交易日期的历史强信号'; return; }
+    // 兼容旧版本：仅在没有新格式事件序列时读取旧快照。
+    if (!events.length) {
+      const unique = new Map();
+      for (const item of items) {
+        let record = item.result_json || {};
+        if (typeof record === 'string') { try { record = JSON.parse(record); } catch (e) { record = {}; } }
+        const levels = record && record.data && Array.isArray(record.data.fib_levels) ? record.data.fib_levels : [];
+        for (const fl of levels) {
+          if (!fl || !fl.reacted || !fl.reaction_signal) continue;
+          const eventDate = String(fl.signal_date || '').slice(0, 10);
+          if (!eventDate) continue;
+          const key = ['bullish', fl.level, eventDate, fl.reaction_signal].join('|');
+          if (!unique.has(key)) unique.set(key, {side:'bullish',level:fl.level,price:fl.price,date:eventDate,signal:fl.reaction_signal});
+        }
+      }
+      events = Array.from(unique.values());
+    }
+    events.sort((a, b) => b.date.localeCompare(a.date));
+    if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    box.innerHTML = `<div class="fib-history-head"><span>信号</span><span>Fib</span><span>价格</span><span>日期</span></div>`
-      + events.slice(0, 30).map(ev =>
-      `<div class="fib-history-row">
-        <span class="fib-history-signal">★ ${esc(ev.signal)}</span>
-        <span class="fib-history-level">${esc(ev.level)}</span>
-        <span class="fib-history-price">${esc(ev.price)}</span>
-        <span class="fib-history-date">${esc(ev.date || '-')}</span>
-      </div>`
-    ).join('');
+    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span></div>'
+      + events.slice(0, 50).map(ev => '<div class="fib-history-row">'
+        + '<span class="fib-history-signal">' + (ev.side === 'bearish' ? '↓下跌侧 ' : '↑上涨侧 ') + esc(ev.signal) + '</span>'
+        + '<span class="fib-history-level">' + esc(ev.level) + '</span>'
+        + '<span class="fib-history-price">' + esc(ev.price) + '</span>'
+        + '<span class="fib-history-date">' + esc(ev.date) + '</span></div>').join('');
   } catch (e) {
     box.textContent = '历史信号读取失败：' + ((e && e.message) || '请稍后重试');
   }
@@ -6270,11 +6279,11 @@ function updateResults(data, meta, nineTurn) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
       const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●</span>' : '');
       const rx = fl.reaction_signal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
-      const dateText = fl.signal_date ? `<span class="fib-signal-date">${fl.signal_date}</span>` : '';
+      const dateText = fl.signal_date ? `<span class="fib-signal-date" title="该Fib位置最近一次确认的实际交易日">最近确认 ${fl.signal_date}</span>` : '';
       fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
     }
   }
-  // 历史强信号列表保留；每条日期优先取信号交易日，旧记录回退到该条分析数据的更新时间。
+  // 最新状态按Fib位置展示最近一次确认；历史列表展示逐日重建的全部独立事件。
   document.getElementById('tab-fibonacci').innerHTML = fh
     + `<div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px;">
       <b style="font-size:12px;">历史强信号</b>
