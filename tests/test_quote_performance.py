@@ -55,6 +55,6 @@ def test_fibonacci_history_loads_latest_record_first_and_preserves_previous_data
     source = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
     loader = source[source.index("async function loadFibSignalHistory()"):
                     source.index("function updateResults(data, meta, nineTurn)")]
-    assert "'&limit=1'" in loader
+    assert "'&limit=5'" in loader
     assert "'&limit=100'" in loader  # legacy fallback only
     assert "保留上次数据" in loader
