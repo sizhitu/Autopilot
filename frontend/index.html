@@ -6091,31 +6091,51 @@ async function loadFibSignalHistory() {
     let items = Array.isArray(response.items) ? response.items : [];
     let events = [], hasEventArchive = false;
     const parseRecord = item => { let record=item && item.result_json ? item.result_json : {}; if (typeof record==='string') { try { record=JSON.parse(record); } catch(e) { record={}; } } return record && record.data ? record.data : {}; };
+    const archivedEvents = new Map();
+    const legacyRecords = [];
+    const addArchivedEvent = ev => {
+      if (!ev || !ev.signal_date || !ev.signal || !ev.side) return;
+      const normalized = {
+        side: ev.side, level: ev.level, price: ev.price,
+        date: String(ev.signal_date).slice(0,10), signal: ev.signal
+      };
+      const key = [normalized.side, normalized.level, normalized.date, normalized.signal].join('|');
+      if (!archivedEvents.has(key)) archivedEvents.set(key, normalized);
+    };
     for (const item of items) {
       const data = parseRecord(item);
       if (Array.isArray(data.fib_signal_history)) {
         hasEventArchive = true;
-        events = data.fib_signal_history.filter(ev => ev && ev.signal_date && ev.signal && ev.side).map(ev => ({side:ev.side,level:ev.level,price:ev.price,date:String(ev.signal_date).slice(0,10),signal:ev.signal}));
-        break;
+        // 合并多个快照的归档事件，不让最新快照覆盖此前已保存的历史事件。
+        data.fib_signal_history.forEach(addArchivedEvent);
+      } else {
+        legacyRecords.push(data);
       }
     }
-    // 仅旧版本记录没有事件归档字段时才扩大查询，兼容旧快照。
-    if (!hasEventArchive) {
-      response = await apiJSON('/api/history?symbol=' + symbol + '&limit=100');
-      items = Array.isArray(response.items) ? response.items : [];
-      const unique = new Map();
-      for (const item of items) {
-        const data = parseRecord(item);
+    const addLegacyEvents = records => {
+      for (const data of records) {
         const levels = Array.isArray(data.fib_levels) ? data.fib_levels : [];
         for (const fl of levels) {
           if (!fl || !fl.reacted || !fl.reaction_signal) continue;
           const date = String(fl.signal_date || '').slice(0,10);
           if (!date) continue;
-          const key = ['bullish',fl.level,date,fl.reaction_signal].join('|');
-          if (!unique.has(key)) unique.set(key,{side:'bullish',level:fl.level,price:fl.price,date,signal:fl.reaction_signal});
+          addArchivedEvent({
+            side: 'bullish', level: fl.level, price: fl.price,
+            signal_date: date, signal: fl.reaction_signal
+          });
         }
       }
-      events = Array.from(unique.values());
+    };
+    addLegacyEvents(legacyRecords);
+    events = Array.from(archivedEvents.values());
+    // 仅当最近快照全部没有归档字段时才扩大查询，兼容更早的旧快照。
+    if (!hasEventArchive) {
+    // 仅旧版本记录没有事件归档字段时才扩大查询，兼容旧快照。
+    if (!hasEventArchive) {
+      response = await apiJSON('/api/history?symbol=' + symbol + '&limit=100');
+      items = Array.isArray(response.items) ? response.items : [];
+      addLegacyEvents(items.map(parseRecord));
+      events = Array.from(archivedEvents.values());
     }
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
@@ -6256,7 +6276,7 @@ function updateResults(data, meta, nineTurn) {
       const hasStrongSignal = !!(fl.reacted && fl.reaction_signal);
       const star = hasStrongSignal ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '');
       const rx = hasStrongSignal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
-      const dateText = hasStrongSignal && fl.signal_date ? `<span class="fib-signal-date" title="该Fib位置最近一次确认的实际交易日">最近确认 ${fl.signal_date}</span>` : '';
+      const dateText = hasStrongSignal && fl.signal_date ? `<span class="fib-signal-date" title="当前有效波段内该Fib位置最近一次确认的实际交易日">波段最近确认 ${fl.signal_date}</span>` : '';
       html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
     }
     return html;
