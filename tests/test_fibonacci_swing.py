@@ -109,7 +109,7 @@ def test_bullish_signal_scan_ignores_current_close_gate_and_uses_full_candle_ran
     levels, *_ = strategy._calc_fibonacci(frame)
     level = next(item for item in levels if item.level == 0.618)
 
-    assert level.tested is False
+    assert not bool(level.tested)
     assert level.reacted is True
     assert level.reaction_signal == "阳线反包确认"
     assert level.signal_date == "2026-11-03"
