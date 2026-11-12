@@ -17,7 +17,7 @@ def test_lite_analysis_skips_expensive_fibonacci_history_replay(monkeypatch):
         raise AssertionError("lite/backtest path must not replay Fibonacci history")
 
     monkeypatch.setattr(FujimotoStrategy, "_build_fibonacci_signal_history", fail_if_called)
-    result = FujimotoStrategy().analyze(generate_sample_data(80), _lite=True)
+    result = FujimotoStrategy().analyze(generate_sample_data(90), _lite=True)
     assert result.chart_data["fib_signal_history"] == []
     assert calls == []
 
@@ -31,8 +31,8 @@ def test_full_analysis_still_builds_fibonacci_history(monkeypatch):
                  "signal": "放量止跌", "signal_date": "2026-11-10"}]
 
     monkeypatch.setattr(FujimotoStrategy, "_build_fibonacci_signal_history", fake_history)
-    result = FujimotoStrategy().analyze(generate_sample_data(80))
-    assert calls == [80]
+    result = FujimotoStrategy().analyze(generate_sample_data(90))
+    assert calls == [90]
     assert result.chart_data["fib_signal_history"][0]["signal_date"] == "2026-11-10"
 
 
