@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: supabase-weekly-cold-backup
@@ -20,10 +20,13 @@ jobs:
     env:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       AGE_RECIPIENT: ${{ vars.SUPABASE_BACKUP_AGE_RECIPIENT }}
+      AGE_IDENTITY: ${{ secrets.SUPABASE_BACKUP_AGE_IDENTITY }}
       GH_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
       BACKUP_REPOSITORY: "sizhitu/Autopilot-data"
       BACKUP_RETENTION_DAYS: "30"
     steps:
+      - uses: actions/checkout@v4
+
       - name: Validate required configuration
         shell: bash
         run: |
@@ -31,14 +34,16 @@ jobs:
           [[ -n "$SUPABASE_DB_URL" ]] || { echo "::error::Missing Actions secret SUPABASE_DB_URL"; exit 1; }
           [[ -n "$AGE_RECIPIENT" ]] || { echo "::error::Missing Actions variable SUPABASE_BACKUP_AGE_RECIPIENT"; exit 1; }
           [[ "$AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]] || { echo "::error::SUPABASE_BACKUP_AGE_RECIPIENT is not a valid age public recipient"; exit 1; }
+          [[ -n "$AGE_IDENTITY" ]] || { echo "::error::Missing Actions secret SUPABASE_BACKUP_AGE_IDENTITY"; exit 1; }
           [[ -n "$GH_TOKEN" ]] || { echo "::error::Missing Actions secret DATA_REPO_TOKEN"; exit 1; }
           IS_PRIVATE="$(gh repo view "$BACKUP_REPOSITORY" --json isPrivate --jq .isPrivate)"
           [[ "$IS_PRIVATE" == "true" ]] || { echo "::error::Backup destination must be a private GitHub repository"; exit 1; }
 
-      - name: Install backup tools
+      - name: Install backup and verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y age zstd postgresql-client jq
+          sudo apt-get install -y age zstd postgresql-client jq python3-pip
+          python3 -m pip install --break-system-packages 'psycopg[binary]'
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@v1
@@ -52,14 +57,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/supabase-backup"
           cd "$RUNNER_TEMP/supabase-backup"
 
-          # Supabase CLI intentionally filters managed/internal schemas.
-          # Keep roles, schema and data as separate portable SQL dumps.
+          # Follow Supabase's documented logical backup format.
           supabase db dump --remote="$SUPABASE_DB_URL" -f roles.sql --role-only
           supabase db dump --remote="$SUPABASE_DB_URL" -f schema.sql
           supabase db dump --remote="$SUPABASE_DB_URL" -f data.sql --data-only --use-copy \
             -x "storage.buckets_vectors" \
             -x "storage.vector_indexes"
-          # Keep Supabase migration history separately; the CLI excludes this managed schema by default.
+
+          # Supabase documents migration history as a separate optional export/restore.
           supabase db dump --remote="$SUPABASE_DB_URL" -f migration_history_schema.sql --schema supabase_migrations
           supabase db dump --remote="$SUPABASE_DB_URL" -f migration_history_data.sql --data-only --use-copy --schema supabase_migrations
 
@@ -75,16 +80,15 @@ jobs:
             "postgres_server_version": "$SERVER_VERSION",
             "files": ["roles.sql", "schema.sql", "data.sql", "migration_history_schema.sql", "migration_history_data.sql"],
             "retention_days": 30,
-            "includes": ["database roles", "schema", "database data", "RLS policies", "database functions and triggers where supported by Supabase CLI"],
-            "excludes": ["Supabase-managed auth and storage schemas", "Supabase Storage object bytes", "project-level Auth/OAuth/SMTP settings", "Edge Function source and secrets"],
-            "notes": ["Supabase-managed auth/storage schemas and actual Storage objects are not included in this CLI export.", "Application tables may contain personal data; keep this archive encrypted and private."]
+            "includes": ["Supabase CLI-exportable database roles", "application schema and data", "separately exported Supabase migration history"],
+            "excludes": ["Supabase-managed auth and storage schemas", "Supabase Storage object bytes", "project-level Auth/OAuth/SMTP settings", "Edge Function source and secrets", "project API keys and settings"],
+            "notes": ["Auth users are not included by this CLI dump.", "Application tables may contain personal data; keep this archive encrypted and private."]
           }
           EOF
 
           sha256sum roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json > SHA256SUMS
           sha256sum --check SHA256SUMS
 
-          # Validate the compressed archive can be listed and extracted before encryption/upload.
           tar --zstd -cf database-backup.tar.zst roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json SHA256SUMS
           tar --zstd -tf database-backup.tar.zst >/dev/null
           zstd -t database-backup.tar.zst
@@ -101,7 +105,27 @@ jobs:
           echo "BACKUP_DIR=$RUNNER_TEMP/supabase-backup" >> "$GITHUB_ENV"
           echo "BACKUP_TAG=supabase-db-$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_ENV"
 
-      - name: Verify restore in an isolated local Supabase database
+      - name: Decrypt, unpack and verify the exact upload artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          IDENTITY_FILE="$RUNNER_TEMP/age-identity.txt"
+          RESTORE_DIR="$RUNNER_TEMP/verified-backup"
+          install -m 600 /dev/null "$IDENTITY_FILE"
+          printf '%s\n' "$AGE_IDENTITY" > "$IDENTITY_FILE"
+          mkdir -p "$RESTORE_DIR"
+
+          age -d -i "$IDENTITY_FILE" "$BACKUP_DIR/database-backup.tar.zst.age" | tar --zstd -xf - -C "$RESTORE_DIR"
+          cd "$RESTORE_DIR"
+          sha256sum --check SHA256SUMS
+
+          for file in roles.sql schema.sql data.sql migration_history_schema.sql migration_history_data.sql manifest.json; do
+            test -s "$file" || { echo "::error::Decrypted archive is missing $file"; exit 1; }
+          done
+
+          echo "VERIFIED_BACKUP_DIR=$RESTORE_DIR" >> "$GITHUB_ENV"
+
+      - name: Restore into an isolated local Supabase stack
         shell: bash
         run: |
           set -euo pipefail
@@ -110,17 +134,32 @@ jobs:
           supabase init --workdir "$RESTORE_DIR"
           supabase db start --workdir "$RESTORE_DIR"
 
-          cd "$BACKUP_DIR"
-          psql \
+          cd "$VERIFIED_BACKUP_DIR"
+          LOCAL_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+
+          # Main restore follows Supabase's documented order.
+          psql "$LOCAL_DB_URL" -X \
             --single-transaction \
             --variable ON_ERROR_STOP=1 \
             --file roles.sql \
             --file schema.sql \
             --command 'SET session_replication_role = replica' \
-            --file data.sql \
+            --file data.sql
+
+          # Migration history is a separate optional restore transaction in Supabase's guide.
+          psql "$LOCAL_DB_URL" -X \
+            --single-transaction \
+            --variable ON_ERROR_STOP=1 \
             --file migration_history_schema.sql \
-            --file migration_history_data.sql \
-            --dbname 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+            --file migration_history_data.sql
+
+          python3 "$GITHUB_WORKSPACE/scripts/verify_supabase_restore.py" \
+            --database-url "$LOCAL_DB_URL" \
+            --data-file data.sql \
+            --data-file migration_history_data.sql
+
+          psql "$LOCAL_DB_URL" -X -v ON_ERROR_STOP=1 -c \
+            "SELECT 'restore_check_ok' AS status, count(*) AS restored_user_tables FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema', 'auth', 'storage', 'realtime', 'extensions', 'vault', 'graphql', 'graphql_public', 'supabase_functions');"
 
       - name: Publish encrypted backup and prune expired releases
         shell: bash
@@ -132,8 +171,8 @@ jobs:
           Automated encrypted Supabase logical database backup.
           Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)
           Retention: 30 days
-          Format: Supabase CLI roles/schema/data SQL, zstd-compressed and age-encrypted.
-          Storage object bytes and project-level settings are not included.
+          Format: Supabase CLI roles/schema/data and migration-history SQL, zstd-compressed and age-encrypted.
+          Supabase-managed Auth/Storage schemas, Storage object bytes, and project settings are not included.
           EOF
 
           gh release create "$BACKUP_TAG" database-backup.tar.zst.age \
