@@ -59,8 +59,8 @@ class TestBearishFibonacciSignals:
     def test_bearish_engulfing_confirms_rebound_resistance(self):
         frame = self.bars([
             self.anchor(),
-            self.touch(108, 110, high=111.5),
-            self.touch(111, 107, high=112.0),  # bearish body engulfs prior bullish body
+            self.touch(108, 110, high=111.5, low=106.0),
+            self.touch(111, 107, high=112.0, low=106.0),  # bearish body engulfs prior bullish body
         ])
         level = self.get_0786(frame)
         assert level.price == 111.44
@@ -73,7 +73,7 @@ class TestBearishFibonacciSignals:
         frame = self.bars([
             self.anchor(),
             *self.volume_warmup(),
-            self.touch(108, 109, volume=100, high=111.5),
+            self.touch(108, 109, volume=100, high=111.5, low=106.0),
             self.touch(109, 108, volume=121, high=112.0, low=106.0),
         ])
         level = self.get_0786(frame)
@@ -85,7 +85,7 @@ class TestBearishFibonacciSignals:
         frame = self.bars([
             self.anchor(),
             *self.volume_warmup(),
-            self.touch(108, 109, volume=100, high=111.5),
+            self.touch(108, 109, volume=100, high=111.5, low=106.0),
             self.touch(109, 108, volume=130, high=112.0, low=106.0),
             self.touch(109, 107, volume=250, high=112.0, low=106.0),
         ])
@@ -96,11 +96,11 @@ class TestBearishFibonacciSignals:
     def test_new_confirmation_can_appear_after_price_leaves_and_retests(self):
         frame = self.bars([
             self.anchor(),
-            self.touch(108, 109, volume=100, high=111.5),
-            self.touch(109, 108, volume=100, high=112.0),
+            self.touch(108, 109, volume=100, high=111.5, low=106.0),
+            self.touch(109, 108, volume=100, high=112.0, low=106.0),
             self.touch(100, 101, volume=100, high=105.0),  # leaves resistance zone
             self.touch(108, 109, volume=100, high=111.5),
-            self.touch(111, 107, volume=150, high=112.0),
+            self.touch(111, 107, volume=150, high=112.0, low=106.0),
         ])
         level = self.get_0786(frame)
         assert level.reacted is True
@@ -111,7 +111,7 @@ class TestBearishFibonacciSignals:
         frame = self.bars([
             self.anchor(),
             self.touch(108, 109, volume=100, high=111.5),
-            self.touch(109, 108.5, volume=100, high=112.0),
+            self.touch(109, 108.5, volume=100, high=112.0, low=106.0),
         ])
         level = self.get_0786(frame)
         assert bool(level.tested) is True
@@ -135,7 +135,7 @@ class TestBearishFibonacciSignals:
         frame = self.bars([
             self.anchor(),
             self.touch(108, 109, volume=100, high=111.5),
-            self.touch(111, 107, volume=100, high=112.0),
+            self.touch(111, 107, volume=100, high=112.0, low=106.0),
         ], dates=False)
         frame.index = [100, 101, 102]
         level = self.get_0786(frame)

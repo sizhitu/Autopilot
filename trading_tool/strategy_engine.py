@@ -648,6 +648,36 @@ class FujimotoStrategy:
             context = "逆势"
         return {"background_trend": background, "signal_context": context}
 
+    @staticmethod
+    def _dedupe_fib_confirmations_by_candle(df: pd.DataFrame, fib_levels: list) -> list:
+        """
+        A single confirmation candle can span several Fib tolerance bands.
+        Treat it as one reaction, assigned to the touched level nearest that
+        candle's close; separate dates/episodes remain independent signals.
+        """
+        by_date = {}
+        for fl in fib_levels:
+            if fl.reacted and fl.signal_date:
+                by_date.setdefault(str(fl.signal_date)[:10], []).append(fl)
+        if "date" in df.columns:
+            dates = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        else:
+            dates = pd.to_datetime(pd.Index(df.index), errors="coerce").strftime("%Y-%m-%d")
+        for date, group in by_date.items():
+            positions = np.flatnonzero(np.asarray(dates == date))
+            if not len(positions):
+                continue
+            close = pd.to_numeric(pd.Series([df.iloc[int(positions[-1])]["close"]]), errors="coerce").iloc[0]
+            if not np.isfinite(close):
+                continue
+            winner = min(group, key=lambda item: abs(float(item.price) - float(close)))
+            for fl in group:
+                if fl is not winner:
+                    fl.reacted = False
+                    fl.reaction_signal = ""
+                    fl.signal_date = None
+        return fib_levels
+
     def _calc_fibonacci(self, df: pd.DataFrame, lookback: int = 60) -> tuple:
         """
         计算斐波那契回撤与扩展位
@@ -748,6 +778,8 @@ class FujimotoStrategy:
                 reacted=reacted, reaction_signal=reaction_signal,
                 signal_date=signal_date
             ))
+
+        fib_levels = self._dedupe_fib_confirmations_by_candle(df, fib_levels)
 
         # 扩展位作为目标
         target_prices = [swing_high + diff * (ext - 1) for ext in extensions]
@@ -852,6 +884,8 @@ class FujimotoStrategy:
                 signal_date=signal_date
             ))
 
+        fib_levels = self._dedupe_fib_confirmations_by_candle(df, fib_levels)
+
         # 下跌侧反弹阻力确认仅作参考；不改变原有目标价和交易决策。
         target_prices = [swing_low - diff * (ext - 1) for ext in (1.272, 1.618)]
         return fib_levels, swing_high, swing_low, target_prices
@@ -924,8 +958,55 @@ class FujimotoStrategy:
         for event in events:
             key = (event["side"], event["level"], event["signal_date"], event["signal"])
             unique[key] = event
+        result = list(unique.values())
+
+        # 10 日表现只使用信号日之后第 10 根交易 K 线；未走满 10 根时不计入分母。
+        date_values = (
+            pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+            if "date" in df.columns
+            else pd.Series(pd.to_datetime(pd.Index(df.index), errors="coerce").strftime("%Y-%m-%d"))
+        )
+        date_positions = {}
+        for position, date_value in enumerate(date_values):
+            if pd.notna(date_value):
+                date_positions[str(date_value)[:10]] = position
+        closes = pd.to_numeric(df["close"], errors="coerce").to_numpy(dtype=float)
+        bucket_stats = {}
+        for event in result:
+            position = date_positions.get(event["signal_date"])
+            future_position = position + 10 if position is not None else len(closes)
+            if (position is None or future_position >= len(closes)
+                    or not np.isfinite(closes[position])
+                    or not np.isfinite(closes[future_position])
+                    or closes[position] <= 0):
+                event.update({
+                    "forward_10d_status": "pending",
+                    "forward_10d_return_pct": None,
+                    "forward_10d_win": None,
+                })
+                continue
+            forward_return = (closes[future_position] / closes[position] - 1.0) * 100.0
+            won = forward_return > 0 if event["side"] == "bullish" else forward_return < 0
+            event.update({
+                "forward_10d_status": "matured",
+                "forward_10d_return_pct": round(float(forward_return), 4),
+                "forward_10d_win": bool(won),
+            })
+            bucket = (event["side"], round(float(event["level"]), 3))
+            stats = bucket_stats.setdefault(bucket, {"wins": 0, "samples": 0})
+            stats["wins"] += int(won)
+            stats["samples"] += 1
+
+        for event in result:
+            stats = bucket_stats.get((event["side"], round(float(event["level"]), 3)))
+            samples = int(stats["samples"]) if stats else 0
+            event["forward_10d_sample_size"] = samples
+            event["forward_10d_win_rate"] = (
+                round(stats["wins"] / samples, 4) if samples else None
+            )
+
         return sorted(
-            unique.values(),
+            result,
             key=lambda item: (item["signal_date"], item["side"], item["level"]),
             reverse=True,
         )
