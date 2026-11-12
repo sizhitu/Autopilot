@@ -501,8 +501,12 @@ body.help-open { overflow: hidden; touch-action: none; }
 .fib-history-head { padding:3px 0 5px; color:var(--text-dim); font-size:10px; border-bottom:1px solid var(--border); }
 .fib-history-head span:last-child,.fib-history-date { text-align:right; }
 .fib-history-row { padding:7px 0; border-bottom:1px solid var(--border); font-size:11px; }
-.fib-history-signal { color:var(--gold); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.fib-history-level { color:var(--purple); white-space:nowrap; }
+.fib-history-signal { display:flex; align-items:center; gap:4px; min-width:0; color:var(--gold); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fib-history-direction { display:inline; flex:0 0 auto; font-size:12px; line-height:1; font-weight:700; }
+.fib-history-bullish .fib-history-direction { color:var(--green); }
+.fib-history-bearish .fib-history-direction { color:var(--red); }
+.fib-history-star { color:var(--gold); font-size:12px; flex:0 0 auto; }
+.fib-history-signal-text { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .fib-history-price { font-family:monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .fib-history-date { color:var(--text-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
 @media (max-width:420px) {
@@ -6116,10 +6120,14 @@ async function loadFibSignalHistory() {
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span></div>' + events.slice(0,50).map(ev =>
-      '<div class="fib-history-row"><span class="fib-history-signal">' + (ev.side==='bearish'?'↓下跌侧 ':'↑上涨侧 ') + esc(ev.signal) + '</span>' +
-      '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span></div>'
-    ).join('');
+    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span></div>' + events.slice(0,50).map(ev => {
+      const bearish = ev.side === 'bearish';
+      const sideClass = bearish ? 'fib-history-bearish' : 'fib-history-bullish';
+      const direction = bearish ? '↓' : '↑';
+      const sideLabel = bearish ? '下跌侧' : '上涨侧';
+      return '<div class="fib-history-row ' + sideClass + '"><span class="fib-history-signal" title="' + sideLabel + '"><span class="fib-history-direction" aria-label="' + sideLabel + '">' + direction + '</span><span class="fib-history-star" aria-label="强信号">★</span><span class="fib-history-signal-text">' + esc(ev.signal) + '</span></span>' +
+        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span></div>';
+    }).join('');
   } catch(e) {
     if (previousHTML && previousHTML.indexOf('fib-history-row') >= 0) { box.innerHTML=previousHTML; box.insertAdjacentHTML('afterbegin','<div class="fib-history-warning">历史更新失败，保留上次数据</div>'); }
     else box.textContent='历史信号读取失败：' + ((e && e.message) || '请稍后重试');
@@ -6236,17 +6244,26 @@ function updateResults(data, meta, nineTurn) {
   document.getElementById('tab-indicators').innerHTML = ih;
 
   let fh = '';
-  const _fibs = (data && data.fib_levels) ? data.fib_levels : [];
-  if (!_fibs.length) {
-    fh = '<div style="color:var(--text-dim);text-align:center;padding:12px;">暂无斐波那契数据，请点「分析」或重新打开该代码</div>';
-  } else {
-    for (const fl of _fibs) {
+  // 当前结构必须同时展示上涨回撤位与下跌反弹阻力位。
+  // 历史强信号来自 fib_signal_history，不代表当前一定有同方向的 Fib 价位。
+  const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];
+  const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];
+  const _renderFibGroup = (title, levels) => {
+    if (!levels.length) return '';
+    let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
+    for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●</span>' : '');
+      const star = fl.reacted ? '<span class="fib-star">★确认</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '');
       const rx = fl.reaction_signal ? `<span class="fib-reaction">${fl.reaction_signal}</span>` : '';
       const dateText = fl.signal_date ? `<span class="fib-signal-date" title="该Fib位置最近一次确认的实际交易日">最近确认 ${fl.signal_date}</span>` : '';
-      fh += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
+      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}${dateText}</span></div>`;
     }
+    return html;
+  };
+  fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull);
+  fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear);
+  if (!_fibBull.length && !_fibBear.length) {
+    fh = '<div style="color:var(--text-dim);text-align:center;padding:12px;">当前没有达到确认条件的有效 Fib 波段（历史强信号仍单独保留）</div>';
   }
   // 最新状态按Fib位置展示最近一次确认；历史列表展示逐日重建的全部独立事件。
   document.getElementById('tab-fibonacci').innerHTML = fh

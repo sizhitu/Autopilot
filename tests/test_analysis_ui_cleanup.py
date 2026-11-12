@@ -88,16 +88,36 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     assert 'grid-template-columns:minmax(0,1.5fr) 54px minmax(64px,.8fr) 88px' in html
     assert 'fib-history-head span:last-child,.fib-history-date { text-align:right; }' in html
-    assert "ev.side==='bearish'?'↓下跌侧 ':'↑上涨侧 '" in html
+    assert "const bearish = ev.side === 'bearish';" in html
+    assert "fib-history-bullish" in html
+    assert "fib-history-bearish" in html
+    assert "fib-history-direction" in html
+    assert "fib-history-star" in html
+    assert "aria-label=\"强信号\"" in html
     assert "data.fib_signal_history" in html
     assert 'class="fib-history-date"' in html
     assert 'class="fib-star">★确认</span>' in html
+    assert '.fib-history-bullish .fib-history-direction { color:var(--green); }' in html
+    assert '.fib-history-bearish .fib-history-direction { color:var(--red); }' in html
+    assert '.fib-history-row { padding:7px 0; border-bottom:1px solid var(--border); font-size:11px; }' in html
+    assert 'border-radius:6px' not in html[html.index('.fib-history-row {'):html.index('/* 图表 */')]
     assert 'fl.reacted' in html
     assert 'fl.tested' in html
     assert 'fl.reaction_signal' in html
     assert 'fib-history-head,.fib-history-row' in html
     assert '@media (max-width:420px)' in html
 
+
+
+def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
+
+    assert "const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];" in update_results
+    assert "const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];" in update_results
+    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull)" in update_results
+    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear)" in update_results
+    assert "当前没有达到确认条件的有效 Fib 波段（历史强信号仍单独保留）" in update_results
 
 def _fibonacci_test_bars(lows, volumes):
     import pandas as pd
