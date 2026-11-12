@@ -842,7 +842,7 @@ def _refresh_market_temperature(market: str) -> None:
     def _run():
         try:
             from market_temperature import build_market_temperature_snapshot
-            snap=build_market_temperature_snapshot(market,fetcher=fetcher)
+            snap=build_market_temperature_snapshot(market,fetcher=DataFetcher())
             _persist_market_temperature(snap)
             snap["history"]=_market_temperature_history(market,30)
             snap["stored_at"]=time.time()
