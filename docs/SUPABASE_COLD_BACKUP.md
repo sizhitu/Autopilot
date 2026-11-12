@@ -1,87 +1,104 @@
-# Supabase weekly cold backup
+# Supabase weekly cold backup and recovery
 
-This workflow creates one encrypted logical database backup every Sunday at 02:00 UTC (10:00 China time), keeps releases published within the last 30 days, and never prunes old backups until a new backup has been exported, verified, encrypted, and published successfully.
+This workflow creates one encrypted logical database backup every Sunday at 02:00 UTC (10:00 China time), keeps releases published within the last 30 days, and never prunes old backups until a new backup has been exported, encrypted, decrypted, checksum-verified, restored into an isolated Supabase stack, and passed row-count checks.
 
-## Scope and format
+## What is backed up
 
-Each private GitHub Release in the existing private repository `sizhitu/Autopilot-data` contains one asset. The public application repository `sizhitu/Autopilot` is never used as the backup destination.
+Each private GitHub Release in `sizhitu/Autopilot-data` contains one asset:
 
 - `database-backup.tar.zst.age`: an age-encrypted zstd tar archive.
-- Inside the archive: `roles.sql`, `schema.sql`, `data.sql`, `migration_history_schema.sql`, `migration_history_data.sql`, `manifest.json`, and `SHA256SUMS`.
+- Inside: `roles.sql`, `schema.sql`, `data.sql`, `migration_history_schema.sql`, `migration_history_data.sql`, `manifest.json`, and `SHA256SUMS`.
 
-The Supabase CLI is used rather than raw `pg_dump`. It filters Supabase-managed/internal schemas and produces separate role, schema, and data exports. The data export excludes `storage.buckets_vectors` and `storage.vector_indexes` as recommended by Supabase. The `supabase_migrations` schema and its rows are exported separately so migration history can be preserved.
+The Supabase CLI exports database roles, application schema and data. Supabase migration history is exported separately, following Supabase's documented optional migration-history procedure.
 
-**Scope limitation:** this is a Supabase CLI logical backup of the application database schemas/data and migration history, not a byte-for-byte physical backup of every Supabase-managed schema. The CLI intentionally filters managed schemas such as `auth` and `storage`; do not assume it contains Auth users, Storage metadata, or Storage object bytes. It also excludes Edge Function source/secrets, Auth provider configuration, SMTP settings, API keys, and project-level settings. If you need Auth users or Storage objects included in the disaster-recovery plan, those require separate, explicitly tested export steps.
+**Important scope limitation:** this is not a physical, byte-for-byte backup of the entire Supabase project. The CLI filters Supabase-managed schemas such as `auth` and `storage`; Auth users, Storage metadata/object bytes, Edge Functions, Auth provider configuration, SMTP settings, API keys, and project-level settings are not included. Supabase's project-clone flow can copy Auth user data, but this GitHub workflow does not currently do that. If Auth users or Storage objects are business-critical, they need a separate backup/restore process and a separate test before this can be called a complete project disaster-recovery solution.
 
-The database data can contain personal information and authentication-related data. The archive is encrypted before upload. It is stored as a Release asset in the private `Autopilot-data` repository, never in the public application repository.
+The archive may contain sensitive application data. It is encrypted before upload and stored only in the private `Autopilot-data` repository, never in the public application repository.
 
 ## One-time GitHub configuration
 
 In `sizhitu/Autopilot` → Settings → Secrets and variables → Actions:
 
-### 1. Reuse `DATA_REPO_TOKEN` for the private backup repository
+### Required secrets
 
-The workflow reuses the existing `DATA_REPO_TOKEN` secret already used by the daily archive job. It must have **Contents: read and write** access to the private repository `sizhitu/Autopilot-data`, including permission to create and delete Releases. The workflow checks that the destination repository is private and fails closed if it is not.
+1. `SUPABASE_DB_URL`: PostgreSQL Session Pooler connection string from Supabase Dashboard → Connect. URL-encode special characters in the password. GitHub-hosted runners are IPv4-only, so use Session Pooler unless your project has the IPv4 add-on.
+2. `SUPABASE_BACKUP_AGE_IDENTITY`: the complete private age identity file content. The workflow needs this to decrypt the exact uploaded artifact and prove that it can be unpacked and restored. Keep a separate offline copy in at least two secure locations. The private key is available to the workflow as a GitHub Actions secret; anyone who can change trusted workflow code or access this secret can decrypt backups.
+3. `DATA_REPO_TOKEN`: existing token with Contents read/write access to the private `sizhitu/Autopilot-data` repository, including Release create/delete permissions.
 
-### 2. Add repository secret `SUPABASE_DB_URL`
+### Required repository variable
 
-Copy the **Session pooler** connection string from Supabase Dashboard → Connect → Session pooler. Use the database password and URL-encode special characters in it.
-
-GitHub-hosted runners are IPv4-only; Supabase recommends the Session pooler connection string when a project does not have the IPv4 add-on. Do not use the service-role API key here; this must be a PostgreSQL connection string.
-
-### 3. Create an age key pair and add the public recipient
-
-On a trusted local machine, install age and run:
+Create an age key pair on a trusted machine:
 
 ```bash
 age-keygen -o supabase-backup-identity.txt
 ```
 
-The command prints a public recipient similar to `age1...`. Add that public recipient as an Actions **repository variable** named:
+Add the public `age1...` recipient as Actions repository variable `SUPABASE_BACKUP_AGE_RECIPIENT`. Keep the identity file offline as a recovery copy. Never commit it.
 
-```text
-SUPABASE_BACKUP_AGE_RECIPIENT
-```
+## Automated verification performed before upload
 
-Keep `supabase-backup-identity.txt` offline in a secure place (preferably two secure copies). It is the private decryption key. Never commit it or upload it to the repository. If it is lost, the encrypted backups cannot be decrypted.
+1. Export non-empty roles, schema, data and migration-history SQL files.
+2. Build a manifest and SHA-256 checksums.
+3. Compress with zstd and encrypt with age.
+4. Decrypt the exact encrypted file using the Actions identity secret, extract it into a clean directory and verify every checksum.
+5. Start a disposable local Supabase stack.
+6. Restore roles, schema and data in Supabase's documented order, then restore migration history in a separate transaction.
+7. Parse the COPY blocks in the exported data SQL and compare the expected row count for every exported table with the restored local table's actual row count.
+8. Only after all checks pass, upload the encrypted artifact to a Release in the private data repository, confirm that the asset exists, and prune backup releases older than 30 days.
 
-## First run
+The local restore is a structural/data-integrity test. It does not validate Auth users, Storage objects, Edge Functions, provider settings, or every project-level setting because those are outside this backup's scope.
 
-After both settings are added:
+## Manual restore procedure
 
-1. Open Actions → Supabase weekly cold backup.
-2. Select Run workflow.
-3. Wait for all steps to pass, including the isolated local restore check.
-4. Open the **private** `sizhitu/Autopilot-data` repository → Releases and confirm a new `supabase-db-YYYYMMDDTHHMMSSZ` release with `database-backup.tar.zst.age`.
+**Never restore directly over production as the first test.** Create a new/empty Supabase project or a separate recovery project first. Enable any non-default extensions and Database Webhooks used by the original project before restoring.
 
-The workflow runs automatically every Sunday at 02:00 UTC. It prunes only releases with the `supabase-db-` prefix that are older than 30 days. Other releases are untouched.
-
-## Restore procedure
-
-Restore into a **new/empty target database or a separate Supabase project first**. Do not test a restore against production.
-
-Install `age`, `zstd`, `tar`, `psql`, and the Supabase CLI. Download the release asset from the private `sizhitu/Autopilot-data` repository, then decrypt and extract:
+1. Download `database-backup.tar.zst.age` from the private `Autopilot-data` Release.
+2. Install `age`, `zstd`, `tar`, and `psql`.
+3. Decrypt and extract:
 
 ```bash
 age -d -i supabase-backup-identity.txt database-backup.tar.zst.age | tar --zstd -xf -
 sha256sum --check SHA256SUMS
 ```
 
-For a new Supabase project, follow the current Supabase Backup and Restore guide and apply in order:
+4. Set the new project's PostgreSQL connection string:
 
-1. `roles.sql`
-2. `schema.sql`
-3. `data.sql`
-4. `migration_history_schema.sql`
-5. `migration_history_data.sql`
+```bash
+export NEW_DB_URL='postgresql://...'
+```
 
-Use the target project's Session pooler connection string with `psql`. Review Supabase's current restore guidance for role/privilege and extension differences before restoring. Project-level Auth settings, Storage object bytes, Edge Functions, and secrets must be restored separately.
+5. Restore the main database dump using the documented order:
 
-## Operational safeguards
+```bash
+psql "$NEW_DB_URL" -X \
+  --single-transaction \
+  --variable ON_ERROR_STOP=1 \
+  --file roles.sql \
+  --file schema.sql \
+  --command 'SET session_replication_role = replica' \
+  --file data.sql
+```
 
-- Schedule is weekly; manual dispatch is available for the first run and on-demand backups.
-- A single run is serialized; overlapping runs are not allowed.
-- The workflow checks all export files are non-empty, verifies SHA-256, tests archive integrity, and runs a restore into a disposable local Supabase stack.
-- It uploads one encrypted asset to a private GitHub Release and confirms the asset exists before pruning.
-- Any export, restore-test, encryption, upload, or verification failure stops the workflow and leaves existing releases untouched.
-- A 1.9 GB safety limit is enforced for the single release asset.
+6. Restore migration history separately:
+
+```bash
+psql "$NEW_DB_URL" -X \
+  --single-transaction \
+  --variable ON_ERROR_STOP=1 \
+  --file migration_history_schema.sql \
+  --file migration_history_data.sql
+```
+
+7. Review Supabase restore notes for role grants/ownership. Custom login roles may need their passwords reset. Re-enable any Realtime publications used by the project.
+8. Reconfigure project-level Auth providers, SMTP, API keys, Edge Functions, secrets and Storage separately. Copy Storage object bytes using a separate Storage export process; database dumps alone do not contain them.
+9. Run application smoke tests against the recovery project before switching production traffic.
+
+Supabase's official restore guide: https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore
+
+## Retention and failure behavior
+
+- Weekly schedule: Sunday 02:00 UTC (10:00 China time); manual dispatch is available.
+- Retention: delete only backup releases older than 30 days.
+- Failed export, decryption, checksum, local restore, row-count comparison, or upload stops the workflow. Existing backups are not pruned.
+- The backup asset is limited to 1.9 GB as a safety check.
+- The workflow serializes runs to prevent overlapping backup/prune operations.
