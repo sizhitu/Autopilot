@@ -43,3 +43,14 @@
 
 ## 存储与刷新
 Supabase market_temperature_daily按(market,trade_date)幂等upsert，完整风格和产业快照保存在snapshot JSON。API缓存键升级v2，防止旧缓存覆盖新结构。每日Parquet冷备保留完整快照。交易时段仍使用上一完整收盘快照。方法版本2.1.0。温度标签不是买卖阈值。
+
+
+## 服务隔离与冷备回退（v2.2）
+- 温度计算只在后台线程运行，API 请求不等待实时行情计算。
+- 进程内全局互斥锁保证同一时刻最多执行一个市场温度刷新，A股/美股切换不会并行拉取两套指数和产业行情。
+- 刷新失败不覆盖内存中的最后有效快照；原看板、仓位、分析和其他行情 API 不依赖温度计算结果。
+- 读取优先级：进程内快照 → Redis/Supabase缓存 → 冷备文件 → pending/数据不足。冷备读取放入线程并限制最多2.5秒。
+- 每日归档在Parquet之外原子写入 `latest_cn.json` / `latest_us.json`，其中保存完整展示快照及对应Parquet路径。API故障时用JSON sidecar快速恢复显示，Parquet用于历史冷备。
+- 冷备文件默认从 `https://raw.githubusercontent.com/sizhitu/Autopilot-data/main/data/market/temperature` 读取；私有数据仓需在Render配置 `MARKET_TEMPERATURE_COLD_BACKUP_TOKEN`（或复用 `DATA_REPO_TOKEN`）。也可将文件挂载到本地持久盘并配置 `MARKET_TEMPERATURE_COLD_BACKUP_DIR`（目录内放置 `latest_cn.json` 和 `latest_us.json`）。
+- 冷备默认只接受14天内快照，可通过 `MARKET_TEMPERATURE_COLD_MAX_AGE_DAYS` 调整；回退后UI明确标记“冷备文件”，后台继续尝试恢复实时数据。
+- 冷备文件缺失、损坏或远端超时只会让温度计显示数据暂不可用，不会抛出到其他业务接口。

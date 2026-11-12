@@ -7,6 +7,7 @@ on:
       - "trading_tool/watchlist.py"
       - "trading_tool/web_app.py"
       - "trading_tool/market_temperature.py"
+      - "trading_tool/market_temperature_cold_backup.py"
       - "supabase/migrations/0009_market_temperature.sql"
       - "scripts/archive/archive_market_temperature.py"
       - "tests/test_market_temperature.py"
@@ -39,7 +40,7 @@ jobs:
           pip install pandas numpy requests pytest
       - name: Compile changed Python modules
         run: |
-          python -m py_compile trading_tool/market_temperature.py scripts/archive/archive_market_temperature.py trading_tool/cache.py trading_tool/watchlist.py trading_tool/web_app.py trading_tool/strategy_engine.py scripts/archive/archive_position_advice.py scripts/archive/build_watchlist_snapshot.py
+          python -m py_compile trading_tool/market_temperature.py trading_tool/market_temperature_cold_backup.py scripts/archive/archive_market_temperature.py trading_tool/cache.py trading_tool/watchlist.py trading_tool/web_app.py trading_tool/strategy_engine.py scripts/archive/archive_position_advice.py scripts/archive/build_watchlist_snapshot.py
       - name: Run persistence and fallback regression tests
         run: |
           python -m pytest tests/test_market_temperature.py -q
