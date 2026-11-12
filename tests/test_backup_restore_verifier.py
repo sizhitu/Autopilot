@@ -37,5 +37,35 @@ COPY "MixedSchema"."Odd""Table" (id) FROM stdin;
                 copy_row_counts([path])
 
 
+class InventoryComparisonTests(unittest.TestCase):
+    def setUp(self):
+        self.before = {
+            "table_count": 2, "index_count": 3, "row_count_total": 5,
+            "tables": [
+                {"schema": "public", "table": "a", "row_count": 2, "index_count": 2},
+                {"schema": "public", "table": "b", "row_count": 3, "index_count": 1},
+            ],
+        }
+
+    def test_identical_inventory_passes_even_when_storage_sizes_differ(self):
+        from scripts.verify_supabase_restore import compare_reports
+        after = {
+            **self.before, "database_bytes": 999999,
+            "tables": [dict(row, total_bytes=1234) for row in self.before["tables"]],
+        }
+        self.assertEqual(compare_reports(self.before, after), [])
+
+    def test_missing_table_and_row_or_index_mismatch_fail(self):
+        from scripts.verify_supabase_restore import compare_reports
+        after = {
+            "table_count": 1, "index_count": 1, "row_count_total": 4,
+            "tables": [{"schema": "public", "table": "a", "row_count": 1, "index_count": 1}],
+        }
+        errors = compare_reports(self.before, after)
+        self.assertTrue(any("Missing restored table: public.b" in item for item in errors))
+        self.assertTrue(any("row_count mismatch" in item for item in errors))
+        self.assertTrue(any("index_count mismatch" in item for item in errors))
+
+
 if __name__ == "__main__":
     unittest.main()
