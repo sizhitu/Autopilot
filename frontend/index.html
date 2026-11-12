@@ -4123,11 +4123,11 @@ async function ensureAnalysisSymbol() {
   if (isFreeUser() && !isFreeAllowedSymbol(code)) { code=freeDef.code; name=freeDef.name; market=freeDef.market; currentSymbol=code; currentName=name; currentMarket=market; }
   const key = String(code || '').trim().toUpperCase();
   if (_analysisInFlight.has(key)) { try { if (lastChartData && lastChartData.candles && lastChartData.candles.length) drawChart(lastChartData); } catch (e) {} return _analysisInFlight.get(key); }
-  const pending = (async () => {
+  const pending = Promise.resolve().then(async () => {
     try { await fetchQuote(code, name, market); }
     catch (e) { const meta=document.getElementById('chartMeta'); if (meta) meta.textContent='行情加载失败，请搜索代码或刷新'; }
     finally { if (_analysisInFlight.get(key) === pending) _analysisInFlight.delete(key); }
-  })();
+  });
   _analysisInFlight.set(key, pending);
   return pending;
 }
@@ -6083,15 +6083,16 @@ async function loadFibSignalHistory() {
   try {
     const symbol = encodeURIComponent(currentSymbol);
     // 新格式完整事件序列只存在最新分析记录中，先只取一条，避免拉取100份大JSON。
-    let response = await apiJSON('/api/history?symbol=' + symbol + '&limit=1');
+    let response = await apiJSON('/api/history?symbol=' + symbol + '&limit=5');
     let items = Array.isArray(response.items) ? response.items : [];
     let events = [], hasEventArchive = false;
     const parseRecord = item => { let record=item && item.result_json ? item.result_json : {}; if (typeof record==='string') { try { record=JSON.parse(record); } catch(e) { record={}; } } return record && record.data ? record.data : {}; };
-    if (items.length) {
-      const data = parseRecord(items[0]);
+    for (const item of items) {
+      const data = parseRecord(item);
       if (Array.isArray(data.fib_signal_history)) {
         hasEventArchive = true;
         events = data.fib_signal_history.filter(ev => ev && ev.signal_date && ev.signal && ev.side).map(ev => ({side:ev.side,level:ev.level,price:ev.price,date:String(ev.signal_date).slice(0,10),signal:ev.signal}));
+        break;
       }
     }
     // 仅旧版本记录没有事件归档字段时才扩大查询，兼容旧快照。
