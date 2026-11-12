@@ -7528,6 +7528,10 @@ async function loadMarketTemperature(force,market){
   }));
 }
 
+// Prefetch both market temperatures on initial page load. The API serves
+// in-memory/Supabase/cold snapshots first and refreshes providers in background.
+try { loadMarketTemperature(false); } catch (e) {}
+
 async function loadMarketSpread(force) {
   const el = document.getElementById('cnSpreadBar');
   if (!el) return;
