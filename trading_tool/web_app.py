@@ -786,7 +786,7 @@ async def market_spread():
 
 # Market-wide sentiment temperature: separate CN/US snapshots and durable daily history.
 _MARKET_TEMPERATURE_CACHE = {"data": {}, "refreshing": set()}
-_MARKET_TEMPERATURE_TTL = 18 * 3600
+_MARKET_TEMPERATURE_TTL = 18 * 3600\n_MARKET_TEMPERATURE_MEM_TTL = 5 * 60
 
 def _persist_market_temperature(snapshot: dict) -> None:
     try:
