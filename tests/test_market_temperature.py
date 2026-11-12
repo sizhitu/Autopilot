@@ -51,7 +51,7 @@ def test_cn_breadth_parser_requires_market_coverage(monkeypatch):
     class Response:
         def raise_for_status(self): pass
         def json(self):
-            return {"data":{"total":1000,"diff":[{"f3":2,"f124":1794412800},{"f3":-1,"f124":1794412800},{"f3":0,"f124":1794412800}]*334}}
+            return {"data":{"total":1000,"diff":[{"f3":2,"f86":"202611111500"},{"f3":-1,"f86":"202611111500"},{"f3":0,"f86":"202611111500"}]*334}}
     monkeypatch.setattr(mt.requests,"get",lambda *a,**k:Response())
     result=mt._fetch_cn_breadth()
     assert result["advancers"]==334 and result["decliners"]==334
@@ -97,7 +97,7 @@ def test_temperature_v2_weights_and_proxy_universes_are_separate():
     assert len(mt.INDUSTRY_CONFIG["cn"]) == len(mt.INDUSTRY_CONFIG["us"]) == 7
 
 
-def test_cn_breadth_date_uses_quote_timestamp(monkeypatch):
+def test_cn_breadth_date_uses_quote_timestamp_and_dict_diff(monkeypatch):
     import market_temperature as mt
     stamp=1794412800
     class Response:
@@ -105,8 +105,7 @@ def test_cn_breadth_date_uses_quote_timestamp(monkeypatch):
         def json(self): return {"data":{"total":1002,"diff":[{"f3":2,"f124":stamp},{"f3":-1,"f124":stamp},{"f3":0,"f124":stamp}]*334}}
     monkeypatch.setattr(mt.requests,"get",lambda *a,**k:Response())
     result=mt._fetch_cn_breadth()
-    expected=mt.datetime.fromtimestamp(stamp,mt.timezone.utc).astimezone(mt.ZoneInfo("Asia/Shanghai")).date().isoformat()
-    assert result["data_date"]==expected
+    assert result["data_date"]=="2026-11-11"
 
 
 def test_industry_score_aligns_common_dates_and_requires_220_bars():
