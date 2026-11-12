@@ -54,3 +54,9 @@ Supabase market_temperature_daily按(market,trade_date)幂等upsert，完整风�
 - 冷备文件默认从 `https://raw.githubusercontent.com/sizhitu/Autopilot-data/main/data/market/temperature` 读取；私有数据仓需在Render配置 `MARKET_TEMPERATURE_COLD_BACKUP_TOKEN`（或复用 `DATA_REPO_TOKEN`）。也可将文件挂载到本地持久盘并配置 `MARKET_TEMPERATURE_COLD_BACKUP_DIR`（目录内放置 `latest_cn.json` 和 `latest_us.json`）。
 - 冷备默认只接受14天内快照，可通过 `MARKET_TEMPERATURE_COLD_MAX_AGE_DAYS` 调整；回退后UI明确标记“冷备文件”，后台继续尝试恢复实时数据。
 - 冷备文件缺失、损坏或远端超时只会让温度计显示数据暂不可用，不会抛出到其他业务接口。
+
+
+### 冷备归档与数据库故障隔离
+- 每日归档任务先独立生成市场快照并原子写 JSON sidecar；Supabase 未配置、upsert 失败或历史读取失败，不会阻止 JSON 冷备和当日 Parquet 文件生成。
+- Supabase 只负责额外的历史索引/查询；当它不可用时，归档仍至少保留当日两市场快照文件。
+- 历史 Parquet 重建在 Supabase 可用时覆盖最近可取的历史；不可用时只写当日快照，不删除既有历史文件。
