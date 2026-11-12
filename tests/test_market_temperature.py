@@ -159,3 +159,64 @@ def test_position_temperature_ui_contains_style_industry_and_weight_effect_secti
     assert 'id="temperatureCapEffect"' in html
     assert "等权参与度" in html
     assert "市场风格" in html and "七大产业热度" in html
+
+
+def test_cold_backup_reads_local_sidecar_and_marks_source(tmp_path, monkeypatch):
+    import json
+    from datetime import date
+    import market_temperature_cold_backup as cold
+    snapshot={"market":"cn","as_of":date.today().isoformat(),"temperature":61.2,"status":"ok","regime":"偏乐观"}
+    (tmp_path/"latest_cn.json").write_text(json.dumps({"market":"cn","trade_date":snapshot["as_of"],"parquet_file":"market/temperature/test.parquet","snapshot":snapshot}),encoding="utf-8")
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_DIR",str(tmp_path))
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_BASE_URL","")
+    result=cold.read_cold_snapshot("cn")
+    assert result["temperature"]==61.2
+    assert result["cold_backup_source"]=="local_file"
+    assert result["cold_backup_file"]=="market/temperature/test.parquet"
+
+
+def test_cold_backup_rejects_wrong_market_and_old_snapshot(tmp_path, monkeypatch):
+    import json
+    from datetime import date, timedelta
+    import market_temperature_cold_backup as cold
+    old=(date.today()-timedelta(days=30)).isoformat()
+    (tmp_path/"latest_us.json").write_text(json.dumps({"snapshot":{"market":"cn","as_of":old,"temperature":55,"status":"ok"}}),encoding="utf-8")
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_DIR",str(tmp_path))
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_BASE_URL","")
+    assert cold.read_cold_snapshot("us") is None
+
+
+def test_cold_backup_remote_sidecar_is_bounded_and_authenticated(monkeypatch):
+    import market_temperature_cold_backup as cold
+    from datetime import date
+    class Response:
+        content=b'{}'
+        def raise_for_status(self): pass
+        def json(self): return {"market":"us","snapshot":{"market":"us","as_of":date.today().isoformat(),"temperature":48.5,"status":"ok"}}
+    captured={}
+    def fake_get(url,headers,timeout):
+        captured.update(url=url,headers=headers,timeout=timeout)
+        return Response()
+    monkeypatch.setattr("requests.get",fake_get)
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_DIR","")
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_BASE_URL","https://example.invalid/temperature")
+    monkeypatch.setenv("MARKET_TEMPERATURE_COLD_BACKUP_TOKEN","test-token")
+    result=cold.read_cold_snapshot("us")
+    assert result["temperature"]==48.5 and result["cold_backup_source"]=="remote_file"
+    assert captured["timeout"]==(0.6,1.5)
+    assert captured["headers"]["Authorization"]=="Bearer test-token"
+
+
+def test_temperature_refresh_is_single_worker_and_api_has_cold_fallback():
+    source=(ROOT/"trading_tool/web_app.py").read_text(encoding="utf-8")
+    assert "_MARKET_TEMPERATURE_REFRESH_LOCK = threading.Lock()" in source
+    assert "acquire(blocking=False)" in source
+    assert "read_cold_snapshot" in source
+    assert "timeout=2.5" in source
+
+
+def test_temperature_archive_writes_atomic_json_sidecar():
+    source=(ROOT/"scripts/archive/archive_market_temperature.py").read_text(encoding="utf-8")
+    assert 'latest_{market}.json' in source
+    assert "os.replace(tmp_name" in source
+    assert 'parquet_file' in source
