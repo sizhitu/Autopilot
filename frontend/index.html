@@ -7529,7 +7529,7 @@ async function loadMarketTemperature(force,market){
   const list=market?[market]:['cn','us'];
   await Promise.all(list.map(async key=>{
     if(_marketTemperatureInflight[key])return _marketTemperatureInflight[key];
-    const old=_marketTemperatureData[key];if(!force&&old&&old.status==='ok'&&old.cached)return;
+    const old=_marketTemperatureData[key];
     _marketTemperatureInflight[key]=(async()=>{try{
       const res=await api('/api/market-temperature?market='+key),j=await res.json();
       if(j&&j.market===key){_marketTemperatureData[key]=j;if(j.status==='pending')setTimeout(()=>loadMarketTemperature(true,key),12000);}
