@@ -7512,16 +7512,28 @@ function paintMarketTemperature(){
   if(mer)mer.style.height=score==null?'0%':Math.max(0,Math.min(100,score))+'%';
   if(src)src.textContent='数据来源 '+(d&&d.source||(_marketTemperatureSelected==='cn'?'财联社市场情绪':'CNN Fear & Greed'));
   if(as)as.textContent='数据日期 '+(d&&d.as_of||'--');
-  if(up)up.textContent=!d?'等待获取':(d.cold_backup?'冷备数据':d.stale?'上次有效数据（后台更新中）':d.cached?'缓存数据':'已更新')+(d.fetched_at?' · 获取于 '+String(d.fetched_at).replace('T',' ').slice(0,16):'');
+  if(up)up.textContent=!d?'等待获取':(d.status==='pending'?'后台获取中':(d.cold_backup?'冷备数据':d.stale?'上次有效数据（后台更新中）':d.cached?'缓存数据':'已更新'))+(d.fetched_at?' · 获取于 '+String(d.fetched_at).replace('T',' ').slice(0,16):'');
 }
 async function loadMarketTemperature(force,market){
   const list=market?[market]:['cn','us'];
   await Promise.all(list.map(async key=>{
     if(_marketTemperatureInflight[key])return _marketTemperatureInflight[key];
     _marketTemperatureInflight[key]=(async()=>{try{
-      const res=await api('/api/market-temperature?market='+key),j=await res.json();
-      if(j&&j.market===key&&j.temperature!=null)_marketTemperatureData[key]=j;
-      else if(j&&j.status==='pending'&&!_marketTemperatureData[key])_marketTemperatureData[key]=j;
+      // 首次无缓存时后端会先返回 pending，并在后台抓取供应商数据。
+      // 有界轮询同一接口，等后台快照就绪后自动更新，不需要用户手动切换市场。
+      for(let attempt=0;attempt<8;attempt++){
+        const res=await api('/api/market-temperature?market='+key),j=await res.json();
+        if(j&&j.market===key&&j.temperature!=null){
+          _marketTemperatureData[key]=j;
+          break;
+        }
+        if(j&&j.status==='pending'){
+          if(!_marketTemperatureData[key])_marketTemperatureData[key]=j;
+          if(attempt<7)await new Promise(resolve=>setTimeout(resolve,1800));
+          continue;
+        }
+        break;
+      }
     }catch(e){/* Keep last valid displayed snapshot. */}
     finally{_marketTemperatureInflight[key]=null;if(_marketTemperatureSelected===key||!market)paintMarketTemperature();}})();
     return _marketTemperatureInflight[key];
