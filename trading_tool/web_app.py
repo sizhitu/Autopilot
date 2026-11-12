@@ -802,6 +802,37 @@ def _persist_market_temperature(snapshot: dict) -> None:
         },on_conflict="market,trade_date").execute()
     except Exception as exc: print(f"[market-temperature] persistence failed: {type(exc).__name__}: {exc}")
 
+def _load_market_temperature_from_supabase(market: str):
+    """Restore the latest validated provider snapshot after process/cache loss."""
+    if market not in ("cn", "us") or not supabase_client.using_supabase():
+        return None
+    try:
+        rows=(supabase_client.get_service_client().table("market_temperature_daily")
+              .select("trade_date,snapshot")
+              .eq("market",market).order("trade_date",desc=True).limit(1).execute().data or [])
+        if not rows or not isinstance(rows[0].get("snapshot"),dict):
+            return None
+        snapshot=dict(rows[0]["snapshot"])
+        if snapshot.get("market") != market or snapshot.get("status") != "ok":
+            return None
+        try:
+            score=float(snapshot.get("temperature"))
+            snapshot_day=str(snapshot.get("as_of") or rows[0].get("trade_date") or "")[:10]
+            age=(datetime.now().date()-datetime.fromisoformat(snapshot_day).date()).days
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(score) or not 0 <= score <= 100 or age < -1 or age > 14:
+            return None
+        snapshot["temperature"]=score
+        snapshot["as_of"]=snapshot_day
+        snapshot["stored_at"]=time.time()
+        snapshot["supabase_restored"]=True
+        return snapshot
+    except Exception as exc:
+        print(f"[market-temperature] Supabase snapshot read failed: {type(exc).__name__}: {exc}")
+        return None
+
+
 def _market_temperature_history(market: str, limit: int = 30) -> list:
     try:
         if not supabase_client.using_supabase(): return []
@@ -856,13 +887,27 @@ async def market_temperature(market: str = Query("cn", regex="^(cn|us)$")):
         _refresh_market_temperature(market)
         out=dict(current); out.update({"cached":True,"stale":True})
         return JSONResponse(content=_to_jsonable(out),headers={"Cache-Control":"no-store"})
-    try:
-        hit=await asyncio.wait_for(asyncio.to_thread(_cache.get_json,f"market_temperature_v4_{market}"),timeout=1.5)
-    except Exception: hit=None
+    # Upstash is the fastest shared cache. When Supabase is the configured cache
+    # backend, read the durable daily snapshot directly instead of making two DB
+    # round-trips (cache table miss followed by history table lookup).
+    hit=None
+    if _cache.cache_backend_name() != "supabase":
+        try:
+            hit=await asyncio.wait_for(asyncio.to_thread(_cache.get_json,f"market_temperature_v4_{market}"),timeout=1.5)
+        except Exception: hit=None
     if isinstance(hit,dict) and hit.get("market")==market and hit.get("temperature") is not None:
         hit=dict(hit); _MARKET_TEMPERATURE_CACHE["data"][market]=hit; _refresh_market_temperature(market)
         hit.update({"cached":True,"stale":True})
         return JSONResponse(content=_to_jsonable(hit),headers={"Cache-Control":"no-store"})
+    try:
+        restored=await asyncio.wait_for(asyncio.to_thread(_load_market_temperature_from_supabase,market),timeout=1.25)
+    except Exception: restored=None
+    if isinstance(restored,dict) and restored.get("temperature") is not None:
+        restored["history_db"]=_market_temperature_history(market,30)
+        _MARKET_TEMPERATURE_CACHE["data"][market]=restored
+        _refresh_market_temperature(market)
+        restored.update({"cached":True,"stale":True,"supabase_restored":True})
+        return JSONResponse(content=_to_jsonable(restored),headers={"Cache-Control":"no-store"})
     try:
         from market_temperature_cold_backup import read_cold_snapshot
         cold=await asyncio.wait_for(asyncio.to_thread(read_cold_snapshot,market),timeout=2.5)
