@@ -730,6 +730,7 @@ class FujimotoStrategy:
 
             for side in ("bullish", "bearish"):
                 is_bull = side == "bullish"
+                values = lows if is_bull else highs
                 tree = low_tree if is_bull else high_tree
                 confirms = bull_confirm if is_bull else bear_confirm
                 prefix = bull_prefix if is_bull else bear_prefix
