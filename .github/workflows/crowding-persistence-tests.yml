@@ -6,7 +6,7 @@ on:
       - "trading_tool/cache.py"
       - "trading_tool/watchlist.py"
       - "trading_tool/web_app.py"
-      - "trading_tool/market_temperature.py"
+      - "trading_tool/market_temperature.py"\n      - "trading_tool/market_temperature_cold_backup.py"
       - "supabase/migrations/0009_market_temperature.sql"
       - "scripts/archive/archive_market_temperature.py"
       - "tests/test_market_temperature.py"
