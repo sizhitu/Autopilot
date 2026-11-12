@@ -960,7 +960,7 @@ class FujimotoStrategy:
             unique[key] = event
         result = list(unique.values())
 
-        # 10 日表现只使用信号日之后第 10 根交易 K 线；未走满 10 根时不计入分母。
+        # 5 日表现只使用信号日之后第 5 根交易 K 线；未走满 5 根时不计入分母。
         date_values = (
             pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
             if "date" in df.columns
@@ -974,23 +974,23 @@ class FujimotoStrategy:
         bucket_stats = {}
         for event in result:
             position = date_positions.get(event["signal_date"])
-            future_position = position + 10 if position is not None else len(closes)
+            future_position = position + 5 if position is not None else len(closes)
             if (position is None or future_position >= len(closes)
                     or not np.isfinite(closes[position])
                     or not np.isfinite(closes[future_position])
                     or closes[position] <= 0):
                 event.update({
-                    "forward_10d_status": "pending",
-                    "forward_10d_return_pct": None,
-                    "forward_10d_win": None,
+                    "forward_5d_status": "pending",
+                    "forward_5d_return_pct": None,
+                    "forward_5d_win": None,
                 })
                 continue
             forward_return = (closes[future_position] / closes[position] - 1.0) * 100.0
             won = forward_return > 0 if event["side"] == "bullish" else forward_return < 0
             event.update({
-                "forward_10d_status": "matured",
-                "forward_10d_return_pct": round(float(forward_return), 4),
-                "forward_10d_win": bool(won),
+                "forward_5d_status": "matured",
+                "forward_5d_return_pct": round(float(forward_return), 4),
+                "forward_5d_win": bool(won),
             })
             bucket = (event["side"], round(float(event["level"]), 3), event["signal"])
             stats = bucket_stats.setdefault(bucket, {"wins": 0, "samples": 0})
@@ -1000,8 +1000,8 @@ class FujimotoStrategy:
         for event in result:
             stats = bucket_stats.get((event["side"], round(float(event["level"]), 3), event["signal"]))
             samples = int(stats["samples"]) if stats else 0
-            event["forward_10d_sample_size"] = samples
-            event["forward_10d_win_rate"] = (
+            event["forward_5d_sample_size"] = samples
+            event["forward_5d_win_rate"] = (
                 round(stats["wins"] / samples, 4) if samples else None
             )
 

@@ -151,11 +151,11 @@ class TestFibonacciDirectionalVolumeConfirmation:
         assert not FujimotoStrategy._is_directional_volume_confirmation(frame, 2, "bullish")
 
 
-    def test_history_calculates_causal_10_trading_day_win_rate(self, monkeypatch):
+    def test_history_calculates_causal_5_trading_day_win_rate(self, monkeypatch):
         dates = pd.date_range("2026-08-01", periods=13, freq="B")
         closes = [100.0] * 13
-        closes[11] = 110.0  # first event: +10% after 10 trading bars
-        closes[12] = 90.0   # second event: -10% after 10 trading bars
+        closes[6] = 110.0  # first event: +10% after 5 trading bars
+        closes[7] = 90.0   # second event: -10% after 5 trading bars
         frame = pd.DataFrame({
             "date": dates,
             "open": closes,
@@ -178,16 +178,16 @@ class TestFibonacciDirectionalVolumeConfirmation:
         monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci_bearish", lambda self, prefix, lookback=60: ([], 101, 99, []))
         events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
         assert len(events) == 2
-        assert {event["forward_10d_status"] for event in events} == {"matured"}
-        assert sorted(event["forward_10d_win"] for event in events) == [False, True]
-        assert all(event["forward_10d_win_rate"] == 0.5 for event in events)
-        assert all(event["forward_10d_sample_size"] == 2 for event in events)
+        assert {event["forward_5d_status"] for event in events} == {"matured"}
+        assert sorted(event["forward_5d_win"] for event in events) == [False, True]
+        assert all(event["forward_5d_win_rate"] == 0.5 for event in events)
+        assert all(event["forward_5d_sample_size"] == 2 for event in events)
 
-    def test_history_marks_last_ten_trading_days_as_pending(self, monkeypatch):
-        dates = pd.date_range("2026-08-01", periods=8, freq="B")
+    def test_history_marks_last_five_trading_days_as_pending(self, monkeypatch):
+        dates = pd.date_range("2026-08-01", periods=5, freq="B")
         frame = pd.DataFrame({
-            "date": dates, "open": [100.0] * 8, "high": [101.0] * 8,
-            "low": [99.0] * 8, "close": [100.0] * 8, "volume": [100.0] * 8,
+            "date": dates, "open": [100.0] * 5, "high": [101.0] * 5,
+            "low": [99.0] * 5, "close": [100.0] * 5, "volume": [100.0] * 5,
         })
         day = dates[1].strftime("%Y-%m-%d")
         monkeypatch.setattr(
@@ -201,8 +201,8 @@ class TestFibonacciDirectionalVolumeConfirmation:
         monkeypatch.setattr(FujimotoStrategy, "_calc_fibonacci_bearish", lambda self, prefix, lookback=60: ([], 101, 99, []))
         events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
         assert len(events) == 1
-        assert events[0]["forward_10d_status"] == "pending"
-        assert events[0]["forward_10d_win_rate"] is None
+        assert events[0]["forward_5d_status"] == "pending"
+        assert events[0]["forward_5d_win_rate"] is None
 
 
     def test_one_confirmation_candle_is_assigned_to_nearest_touched_fib_level(self):
@@ -232,8 +232,9 @@ class TestFibonacciDirectionalVolumeConfirmation:
     def test_win_rate_cohorts_separate_signal_types_at_same_fib_level(self, monkeypatch):
         dates = pd.date_range("2026-08-03", periods=24, freq="B")
         closes = [100.0] * 24
-        closes[11] = 110.0
-        closes[12] = 90.0
+        # Five subsequent trading bars are used, not ten.
+        closes[6] = 110.0
+        closes[7] = 90.0
         frame = pd.DataFrame({
             "date": dates, "open": closes,
             "high": [value + 1 for value in closes],
@@ -262,7 +263,7 @@ class TestFibonacciDirectionalVolumeConfirmation:
 
         events = FujimotoStrategy()._build_fibonacci_signal_history(frame)
         by_signal = {event["signal"]: event for event in events}
-        assert by_signal["放量止跌"]["forward_10d_sample_size"] == 1
-        assert by_signal["放量止跌"]["forward_10d_win_rate"] == 1.0
-        assert by_signal["阳线反包"]["forward_10d_sample_size"] == 1
-        assert by_signal["阳线反包"]["forward_10d_win_rate"] == 0.0
+        assert by_signal["放量止跌"]["forward_5d_sample_size"] == 1
+        assert by_signal["放量止跌"]["forward_5d_win_rate"] == 1.0
+        assert by_signal["阳线反包"]["forward_5d_sample_size"] == 1
+        assert by_signal["阳线反包"]["forward_5d_win_rate"] == 0.0
