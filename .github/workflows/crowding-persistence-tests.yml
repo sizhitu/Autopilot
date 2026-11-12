@@ -11,6 +11,7 @@ on:
       - "supabase/migrations/0009_market_temperature.sql"
       - "scripts/archive/archive_market_temperature.py"
       - "tests/test_market_temperature.py"
+      - "tests/test_market_temperature_live.py"
       - "trading_tool/strategy_engine.py"
       - "tests/test_fibonacci_bearish.py"
       - "tests/test_fibonacci_history.py"
@@ -44,6 +45,7 @@ jobs:
       - name: Run persistence and fallback regression tests
         run: |
           python -m pytest tests/test_market_temperature.py -q
+          python -m pytest tests/test_market_temperature_live.py -q
           PYTHONPATH=trading_tool python -m pytest tests/test_crowding.py -q -k "watchlist_restores_persisted_crowding or position_advice_persists_raw_short_metrics"
           python -m pytest tests/test_watchlist_refresh_regression.py -q
           python -m pytest tests/test_analysis_ui_cleanup.py -q
