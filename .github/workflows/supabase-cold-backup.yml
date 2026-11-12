@@ -20,7 +20,8 @@ jobs:
     env:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       AGE_RECIPIENT: ${{ vars.SUPABASE_BACKUP_AGE_RECIPIENT }}
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+      BACKUP_REPOSITORY: "sizhitu/Autopilot-data"
       BACKUP_RETENTION_DAYS: "30"
     steps:
       - name: Validate required configuration
@@ -30,6 +31,9 @@ jobs:
           [[ -n "$SUPABASE_DB_URL" ]] || { echo "::error::Missing Actions secret SUPABASE_DB_URL"; exit 1; }
           [[ -n "$AGE_RECIPIENT" ]] || { echo "::error::Missing Actions variable SUPABASE_BACKUP_AGE_RECIPIENT"; exit 1; }
           [[ "$AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]] || { echo "::error::SUPABASE_BACKUP_AGE_RECIPIENT is not a valid age public recipient"; exit 1; }
+          [[ -n "$GH_TOKEN" ]] || { echo "::error::Missing Actions secret DATA_REPO_TOKEN"; exit 1; }
+          IS_PRIVATE="$(gh repo view "$BACKUP_REPOSITORY" --json isPrivate --jq .isPrivate)"
+          [[ "$IS_PRIVATE" == "true" ]] || { echo "::error::Backup destination must be a private GitHub repository"; exit 1; }
 
       - name: Install backup tools
         run: |
@@ -133,22 +137,23 @@ jobs:
           EOF
 
           gh release create "$BACKUP_TAG" database-backup.tar.zst.age \
+            --repo "$BACKUP_REPOSITORY" \
             --title "$BACKUP_TAG" \
             --notes-file release-notes.md
 
           # Confirm the release asset exists before deleting any older backup.
-          gh release view "$BACKUP_TAG" --json assets | \
+          gh release view "$BACKUP_TAG" --repo "$BACKUP_REPOSITORY" --json assets | \
             jq -e '.assets[] | select(.name == "database-backup.tar.zst.age" and .size > 0)' >/dev/null
 
           CUTOFF_EPOCH="$(date -u -d "$BACKUP_RETENTION_DAYS days ago" +%s)"
-          gh release list --limit 100 --json tagName,publishedAt | \
+          gh release list --repo "$BACKUP_REPOSITORY" --limit 100 --json tagName,publishedAt | \
             jq -r '.[] | select(.tagName | startswith("supabase-db-")) | [.tagName, .publishedAt] | @tsv' | \
             while IFS=$'\t' read -r tag published_at; do
               [[ -n "$tag" && -n "$published_at" ]] || continue
               PUBLISHED_EPOCH="$(date -u -d "$published_at" +%s)"
               if (( PUBLISHED_EPOCH < CUTOFF_EPOCH )); then
                 echo "Deleting expired backup release: $tag ($published_at)"
-                gh release delete "$tag" --yes --cleanup-tag
+                gh release delete "$tag" --repo "$BACKUP_REPOSITORY" --yes --cleanup-tag
               fi
             done
 
