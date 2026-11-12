@@ -517,7 +517,7 @@ class FujimotoStrategy:
                 continue
             pivot = {
                 "type": "high" if is_high else "low",
-                "idx": int(recent.index.get_indexer([recent.index[i]])[0] + (len(df) - len(recent))),
+                "idx": int(i + (len(df) - len(recent))),
                 "price": float(highs[i] if is_high else lows[i]),
             }
             if pivots and pivots[-1]["type"] == pivot["type"]:
@@ -1232,6 +1232,7 @@ class FujimotoStrategy:
             "fib_levels": fib_levels,
             "fib_bearish_levels": fib_bearish_levels,
             "fib_signal_history": [] if _lite else self._build_fibonacci_signal_history(df),
+            "fib_swing": self._detect_valid_fib_swing(df),
             "target_prices": target_prices,
             "mas": {p: v for p, v in mas.items() if v is not None},
             "vwma": vwma,
