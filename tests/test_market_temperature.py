@@ -78,3 +78,15 @@ def test_position_temperature_prefetches_on_initial_page_load():
     loader=html[start:end]
     assert "try { loadMarketTemperature(false); } catch (e) {}" in loader
     assert "['cn','us']" in loader
+
+
+def test_position_temperature_retries_pending_snapshot_without_manual_market_click():
+    html=(ROOT/"frontend"/"index.html").read_text(encoding="utf-8")
+    start=html.index("async function loadMarketTemperature(force,market)")
+    end=html.index("async function loadMarketSpread(force)",start)
+    loader=html[start:end]
+    assert "for(let attempt=0;attempt<8;attempt++)" in loader
+    assert "j&&j.status==='pending'" in loader
+    assert "await new Promise(resolve=>setTimeout(resolve,1800))" in loader
+    assert "if(j&&j.market===key&&j.temperature!=null)" in loader
+    assert "d.status==='pending'?'后台获取中'" in loader
