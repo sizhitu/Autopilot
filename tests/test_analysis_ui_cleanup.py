@@ -180,3 +180,15 @@ def test_fibonacci_can_emit_a_new_confirmation_after_price_leaves_and_retests():
     assert level.reacted is True
     assert level.signal_date == "2026-08-06"
     assert level.reaction_signal == "放量止跌"
+
+
+def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
+    renderer = update_results[update_results.index("const _renderFibGroup"):update_results.index("if (_fibBull.length)")]
+
+    assert '<span>最近确认</span>' in renderer
+    assert 'class="fib-signal-date">\u0024{dateText}</span>' in renderer
+    assert "波段最近确认" not in renderer
+    assert "class=\"fib-table-head\"" in renderer
+    assert "grid-template-columns:48px minmax(58px,.8fr) minmax(112px,1.5fr) 82px" in html
