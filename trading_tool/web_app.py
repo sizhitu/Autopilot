@@ -20,6 +20,7 @@ import re
 import time
 import threading
 import asyncio
+from concurrent.futures import Future
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -833,6 +834,49 @@ def _load_market_temperature_from_supabase(market: str):
         return None
 
 
+# A timed-out HTTP waiter must not cancel the blocking Supabase query running
+# in its worker thread. Share one Future per market until that query completes.
+_MARKET_TEMPERATURE_SUPABASE_LOADS = {}
+_MARKET_TEMPERATURE_SUPABASE_LOADS_LOCK = threading.Lock()
+
+
+def _market_temperature_supabase_future(market: str) -> Future:
+    if market not in ("cn", "us"):
+        raise ValueError("Unsupported market")
+    with _MARKET_TEMPERATURE_SUPABASE_LOADS_LOCK:
+        existing = _MARKET_TEMPERATURE_SUPABASE_LOADS.get(market)
+        if existing is not None and not existing.done():
+            return existing
+        future = Future()
+        _MARKET_TEMPERATURE_SUPABASE_LOADS[market] = future
+
+    def _run():
+        try:
+            restored = _load_market_temperature_from_supabase(market)
+            if isinstance(restored, dict) and restored.get("temperature") is not None:
+                # Cache the durable snapshot even if the original HTTP request
+                # already timed out; the next request can serve it immediately.
+                _MARKET_TEMPERATURE_CACHE["data"][market] = restored
+            future.set_result(restored)
+        except BaseException as exc:
+            future.set_exception(exc)
+        finally:
+            with _MARKET_TEMPERATURE_SUPABASE_LOADS_LOCK:
+                if _MARKET_TEMPERATURE_SUPABASE_LOADS.get(market) is future:
+                    _MARKET_TEMPERATURE_SUPABASE_LOADS.pop(market, None)
+
+    try:
+        threading.Thread(
+            target=_run, daemon=True, name=f"market-temperature-restore-{market}"
+        ).start()
+    except BaseException as exc:
+        with _MARKET_TEMPERATURE_SUPABASE_LOADS_LOCK:
+            if _MARKET_TEMPERATURE_SUPABASE_LOADS.get(market) is future:
+                _MARKET_TEMPERATURE_SUPABASE_LOADS.pop(market, None)
+        future.set_exception(exc)
+    return future
+
+
 def _market_temperature_history(market: str, limit: int = 30) -> list:
     try:
         if not supabase_client.using_supabase(): return []
@@ -900,7 +944,10 @@ async def market_temperature(market: str = Query("cn", regex="^(cn|us)$")):
         hit.update({"cached":True,"stale":True})
         return JSONResponse(content=_to_jsonable(hit),headers={"Cache-Control":"no-store"})
     try:
-        restored=await asyncio.wait_for(asyncio.to_thread(_load_market_temperature_from_supabase,market),timeout=1.25)
+        restore_future = _market_temperature_supabase_future(market)
+        restored = await asyncio.wait_for(
+            asyncio.shield(asyncio.wrap_future(restore_future)), timeout=1.25
+        )
     except Exception: restored=None
     if isinstance(restored,dict) and restored.get("temperature") is not None:
         _MARKET_TEMPERATURE_CACHE["data"][market]=restored
