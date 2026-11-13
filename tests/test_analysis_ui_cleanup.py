@@ -124,6 +124,8 @@ def test_fibonacci_panel_reuses_analysis_history_for_date_deduplicated_snapshots
     assert "历史分析快照直接复用 /api/history 已返回的数据" in history_loader
     assert "沿用当时快照保存的高低点还原参考位；不读取新行情" in history_loader
     assert "读取历史分析记录…" in update_results
+    assert "登录后可查看已保存的历史分析记录" in history_loader
+    assert "请选择真实股票代码后查看历史分析记录" in history_loader
 
 
 def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
