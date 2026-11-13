@@ -109,23 +109,47 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
 
 
 
-def test_fibonacci_panel_reuses_analysis_history_for_date_deduplicated_snapshots():
+def test_fibonacci_history_keeps_two_sections_and_shows_wave_range_under_price():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
     history_loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
 
-    assert 'id="fibAnalysisSnapshotsBody"' in update_results
-    assert "历史分析记录" in update_results
-    assert "按分析日期保存当时的 Fib 点位和信号，不随最新行情重算" in update_results
+    # Fibonacci keeps only the existing current-level section and historical strong-signal section.
+    assert 'id="fibSignalHistoryBody"' in update_results
+    assert "历史强信号" in update_results
+    assert 'id="fibAnalysisSnapshotsBody"' not in html
+    assert "历史分析记录" not in update_results
+    assert "const snapshotByDate" not in history_loader
+
+    # New events retain the historical swing endpoints and render them beneath the signal price.
+    assert "swing_start_price: ev.swing_start_price == null ? null : Number(ev.swing_start_price)" in history_loader
+    assert "swing_end_price: ev.swing_end_price == null ? null : Number(ev.swing_end_price)" in history_loader
+    assert "const hasWaveRange = Number.isFinite(ev.swing_start_price)" in history_loader
+    assert "波段区间 ' + waveLow.toFixed(2)" in history_loader
+    assert "esc(ev.price) + waveRangeHTML" in history_loader
     assert "apiJSON('/api/history?symbol=' + symbol + '&limit=5')" in history_loader
-    assert "const snapshotByDate = new Map();" in history_loader
-    assert "snapshotByDate.has(snapshotDate)" in history_loader
-    assert "Array.from(snapshotByDate.values()).slice(0,5)" in history_loader
-    assert "历史分析快照直接复用 /api/history 已返回的数据" in history_loader
-    assert "沿用当时快照保存的高低点还原参考位；不读取新行情" in history_loader
-    assert "读取历史分析记录…" in update_results
-    assert "登录后可查看已保存的历史分析记录" in history_loader
-    assert "请选择真实股票代码后查看历史分析记录" in history_loader
+    assert "forward_5d_return_pct" in history_loader
+
+    # Historical event payloads already carry the wave endpoints from the signal date.
+    engine = (ROOT / "trading_tool/strategy_engine.py").read_text(encoding="utf-8")
+    assert '"swing_start_price": round(float(swing["start_price"]), 4)' in engine
+    assert '"swing_end_price": round(float(swing["end_price"]), 4)' in engine
+
+
+def test_current_fibonacci_levels_show_their_own_wave_range():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
+
+    # Current levels use the same detected swing anchors as the backend Fib calculation.
+    assert "const _fibSwing = (data && data.chart_data && data.chart_data.fib_swing) || null;" in update_results
+    assert "_fibSwing.direction !== side" in update_results
+    assert "start_price" in update_results and "end_price" in update_results
+    assert "_currentFibWave('bullish')" in update_results
+    assert "_currentFibWave('bearish')" in update_results
+    assert "rangeLabel + ' ' + waveRange.low.toFixed(2)" in update_results
+    assert "rangeHTML}</span>" in update_results
+    # Fallback levels are based on the analysis window, not a confirmed swing.
+    assert "{ low: _low, high: _high }, '计算区间'" in update_results
 
 
 def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
@@ -134,8 +158,8 @@ def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
 
     assert "const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];" in update_results
     assert "const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];" in update_results
-    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish')" in update_results
-    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
+    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
+    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish', _currentFibWave('bearish'))" in update_results
     assert "近期信号按方向和 Fib 位匹配最近一次确认；波段有效性只作标注，不过滤信号。" in update_results
     assert "const hasSignal = !!event || fallbackSignal;" in update_results
     assert "const _latestFibEvent = (level, side) =>" in update_results
@@ -232,9 +256,9 @@ def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wav
     assert "return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';" in renderer
     assert "const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');" in renderer
     assert '<span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
-    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish')" in update_results
-    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
-    assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null)" in update_results
+    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
+    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish', _currentFibWave('bearish'))" in update_results
+    assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null," in update_results
     assert "fib-wave-expired" in html
     # Expired wave status is display-only: the matched signal remains visible.
     assert "const event = _latestFibEvent(fl.level, side);" in renderer
