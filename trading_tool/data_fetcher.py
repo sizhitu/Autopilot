@@ -1030,7 +1030,7 @@ class DataFetcher:
             response = self.session.get(
                 "https://push2.eastmoney.com/api/qt/stock/get",
                 params={"secid": f"{market_id}.{code}", "fields": "f57,f58,f189"},
-                timeout=3.5,
+                timeout=2.0,
                 headers={"User-Agent": _rotate_ua(), "Referer": "https://quote.eastmoney.com/"},
             )
             if response.status_code != 200:
