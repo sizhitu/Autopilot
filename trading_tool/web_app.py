@@ -371,10 +371,14 @@ def _quote_payload_has_complete_ipo_history(payload: dict) -> bool:
         return False
 
 
-def _quote_df_has_complete_ipo_history(df) -> bool:
+def _quote_df_has_complete_ipo_history(df, symbol: str = "") -> bool:
     try:
         from data_fetcher import is_complete_ipo_history
-        return bool(is_complete_ipo_history(df, market="us"))
+        raw = str(symbol or "").strip().lower()
+        cn_indices = {"000001", "000300", "399300", "399001", "399006", "399005", "sh000001", "sh000300", "sz399300", "sz399001", "sz399006", "sz399005"}
+        suffix = raw[2:] if raw.startswith(("sh", "sz", "bj")) else raw
+        is_cn_stock = (raw.startswith(("sh", "sz", "bj")) and raw not in cn_indices) or (suffix.isdigit() and len(suffix) == 6 and suffix not in cn_indices)
+        return bool(is_complete_ipo_history(df, market="cn" if is_cn_stock else "us"))
     except Exception:
         return False
 
@@ -1489,7 +1493,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
     def _quote_fetch_df():
         _days = CHART_BARS
         df0 = fetcher.fetch(req.symbol, _days)
-        if df0 is None or (len(df0) < 200 and not _quote_df_has_complete_ipo_history(df0)):
+        if df0 is None or (len(df0) < 200 and not _quote_df_has_complete_ipo_history(df0, req.symbol)):
             try:
                 from data_fetcher import invalidate_kline_cache
                 invalidate_kline_cache(req.symbol)
@@ -1528,7 +1532,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
     if len(df) < 5:
         raise HTTPException(400, f"数据不足: 仅{len(df)}根K线，无法分析")
     # 常规标的继续补足长历史；已确认完整的新股历史不因根数不足而重复强拉
-    if len(df) < 250 and not _quote_df_has_complete_ipo_history(df):
+    if len(df) < 250 and not _quote_df_has_complete_ipo_history(df, req.symbol):
         try:
             from data_fetcher import invalidate_kline_cache
             invalidate_kline_cache(req.symbol)
