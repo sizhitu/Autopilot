@@ -116,11 +116,12 @@ def test_fibonacci_panel_reuses_analysis_history_for_date_deduplicated_snapshots
     assert 'id="fibAnalysisSnapshotsBody"' in update_results
     assert "历史分析记录" in update_results
     assert "按分析日期保存当时的 Fib 点位和信号，不随最新行情重算" in update_results
-    assert "apiJSON('/api/history?symbol=' + symbol + '&limit=20')" in update_results
+    assert "apiJSON('/api/history?symbol=' + symbol + '&limit=5')" in update_results
     assert "const snapshotByDate = new Map();" in update_results
     assert "snapshotByDate.has(snapshotDate)" in update_results
-    assert "Array.from(snapshotByDate.values()).slice(0,10)" in update_results
+    assert "Array.from(snapshotByDate.values()).slice(0,5)" in update_results
     assert "历史分析快照直接复用 /api/history 已返回的数据" in update_results
+    assert "沿用当时快照保存的高低点还原参考位；不读取新行情" in update_results
     assert "读取历史分析记录…" in update_results
 
 
