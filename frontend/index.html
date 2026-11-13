@@ -6130,7 +6130,12 @@ async function loadFibSignalHistory() {
       if (!existing) archivedEvents.set(key, normalized);
       // 最新快照优先；若旧快照先到，也允许有统计字段的新快照补齐。
       else if (normalized.forward_5d_sample_size > 0) {
+        const savedWaveStart = existing.swing_start_price;
+        const savedWaveEnd = existing.swing_end_price;
         Object.assign(existing, normalized);
+        // 较旧快照可能带有回测统计却没有波段字段，不能覆盖已有的波段区间。
+        if (!Number.isFinite(normalized.swing_start_price)) existing.swing_start_price = savedWaveStart;
+        if (!Number.isFinite(normalized.swing_end_price)) existing.swing_end_price = savedWaveEnd;
       }
     };
     const collectSnapshot = data => {
