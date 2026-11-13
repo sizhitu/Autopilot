@@ -1463,7 +1463,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
             and isinstance(cached_hit.get("chart"), dict)
             and (cached_hit.get("chart") or {}).get("candles")):
         _nc = len((cached_hit.get("chart") or {}).get("candles") or [])
-        # 低于 250 根视为旧截断缓存，强制重拉
+        # 少于 250 根仅在具备完整上市历史证明时接受，否则视为旧截断缓存
         if _nc >= 250 or _quote_payload_has_complete_ipo_history(cached_hit):
             cached_hit = _clamp_quote_chart(dict(cached_hit))
             _nc3 = len(((cached_hit.get("chart") or {}).get("candles")) or [])
@@ -1522,7 +1522,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
 
     if len(df) < 5:
         raise HTTPException(400, f"数据不足: 仅{len(df)}根K线，无法分析")
-    # 统一目标 ≥300 根；不足再强拉一次
+    # 常规标的继续补足长历史；已确认完整的新股历史不因根数不足而重复强拉
     if len(df) < 250 and not _quote_df_has_complete_ipo_history(df):
         try:
             from data_fetcher import invalidate_kline_cache
