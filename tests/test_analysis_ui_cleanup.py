@@ -109,6 +109,21 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
 
 
 
+def test_fibonacci_panel_reuses_analysis_history_for_date_deduplicated_snapshots():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
+
+    assert 'id="fibAnalysisSnapshotsBody"' in update_results
+    assert "历史分析记录" in update_results
+    assert "按分析日期保存当时的 Fib 点位和信号，不随最新行情重算" in update_results
+    assert "apiJSON('/api/history?symbol=' + symbol + '&limit=20')" in update_results
+    assert "const snapshotByDate = new Map();" in update_results
+    assert "snapshotByDate.has(snapshotDate)" in update_results
+    assert "Array.from(snapshotByDate.values()).slice(0,10)" in update_results
+    assert "历史分析快照直接复用 /api/history 已返回的数据" in update_results
+    assert "读取历史分析记录…" in update_results
+
+
 def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
