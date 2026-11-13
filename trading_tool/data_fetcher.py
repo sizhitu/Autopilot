@@ -13,7 +13,7 @@ import json
 import re
 import time
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 import numpy as np
 
@@ -266,6 +266,26 @@ def _df_last_date(df):
         return None
 
 
+def is_complete_ipo_history(frame, market: str = "us", min_bars: int = 20) -> bool:
+    """仅在行情源明确提供上市日、且K线覆盖上市首日至最新交易日时接受短历史。"""
+    try:
+        if frame is None or len(frame) < max(10, int(min_bars)) or "date" not in frame.columns:
+            return False
+        raw = (getattr(frame, "attrs", {}) or {}).get("listing_date")
+        if not raw:
+            return False
+        listing_day = pd.to_datetime(raw, errors="coerce")
+        first_day = pd.to_datetime(frame["date"].iloc[0], errors="coerce")
+        if pd.isna(listing_day) or pd.isna(first_day):
+            return False
+        # 不允许用“返回数据的第一根K线”反推上市日；必须由行情源提供上市元数据。
+        if first_day.date() > listing_day.date():
+            return False
+        return not _bar_is_stale(_df_last_date(frame), market=market)
+    except Exception:
+        return False
+
+
 # 休市日（仅非周末）。A股含国庆等长假；美股含主要休市。
 # 2026 国庆：10-01 起休市，最近收盘为 09-30。
 _CN_HOLIDAYS = {
@@ -374,6 +394,14 @@ def _merge_ohlc_frames(frames):
     out = pd.concat(parts, ignore_index=True)
     out["date"] = pd.to_datetime(out["date"])
     out = out.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+    # 合并行情时保留可信的 Yahoo 上市日期元数据；冲突或缺失时不猜测。
+    listing_dates = {
+        str((getattr(frame, "attrs", {}) or {}).get("listing_date"))
+        for frame in frames
+        if frame is not None and (getattr(frame, "attrs", {}) or {}).get("listing_date")
+    }
+    if len(listing_dates) == 1:
+        out.attrs["listing_date"] = next(iter(listing_dates))
     return out
 
 
@@ -638,6 +666,16 @@ class DataFetcher:
                             if not _is_missing_num(df.loc[i, 'low']):
                                 df.loc[i, 'low'] = df.loc[i, 'low'] * ratio
                 df['date'] = pd.to_datetime(df['date'])
+                # Yahoo chart meta.firstTradeDate 是源站明确提供的上市首日元数据。
+                # 不可用时保持 None；不能从当前返回K线的起点猜上市日期。
+                try:
+                    first_trade_ts = (data.get("meta") or {}).get("firstTradeDate")
+                    if first_trade_ts:
+                        df.attrs["listing_date"] = datetime.fromtimestamp(
+                            int(first_trade_ts), tz=timezone.utc
+                        ).date().isoformat()
+                except Exception:
+                    pass
                 if len(df) > days:
                     df = df.tail(days).reset_index(drop=True)
                 parsed = df
@@ -694,6 +732,8 @@ class DataFetcher:
                 best = _merge_ohlc_frames([best, part])
 
         if best is not None and len(best) > 0:
+            if parsed is not None and (getattr(parsed, "attrs", {}) or {}).get("listing_date"):
+                best.attrs["listing_date"] = parsed.attrs["listing_date"]
             if _df_last_date(best) and exp_d and _df_last_date(best) >= exp_d:
                 _clear_yahoo_cooldown()
             return best.tail(days).reset_index(drop=True)
@@ -1051,9 +1091,7 @@ class DataFetcher:
                     return False
                 if len(frame) >= min_ok:
                     return True
-                if allow_ipo and len(frame) >= 20 and not _bar_is_stale(_df_last_date(frame), market=market):
-                    return True
-                return False
+                return bool(allow_ipo and is_complete_ipo_history(frame, market=market))
             except Exception:
                 return False
 
@@ -1078,7 +1116,7 @@ class DataFetcher:
                 df = _merge_ohlc_frames([stored_df, df] if df is not None else [stored_df])
 
         # 过短结果：再试一次更大窗口（常见于源站截断/临时失败）
-        if not _enough(df, allow_ipo=False):
+        if not _enough(df, allow_ipo=True):
             try:
                 if self._is_us_index(symbol) or not self._is_cn_stock(symbol):
                     df2 = self.fetch_us_stock(symbol, max(days, 400))
