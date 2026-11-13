@@ -91,7 +91,7 @@ def test_stale_long_yahoo_history_still_tries_fresh_fallback(monkeypatch):
 
 
 def test_stale_full_yahoo_history_returns_without_slow_fallback(monkeypatch):
-    dates = pd.date_range(end="2026-11-11", periods=250, freq="B")
+    dates = pd.date_range(end="2026-11-11", periods=270, freq="B")
     timestamps = [int(ts.timestamp()) for ts in dates]
     quote = {
         "open": [100.0] * len(dates),
@@ -133,7 +133,7 @@ def test_stale_full_yahoo_history_returns_without_slow_fallback(monkeypatch):
     fetcher.session = Session()
     result = fetcher.fetch_us_stock("AAPL", days=300)
 
-    assert len(result) == 250
+    assert len(result) == 270
     assert data_fetcher._df_last_date(result) == date(2026, 11, 11)
 
 
