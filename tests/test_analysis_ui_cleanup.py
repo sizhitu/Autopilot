@@ -125,7 +125,8 @@ def test_fibonacci_history_keeps_two_sections_and_shows_wave_range_under_price()
     assert "swing_start_price: ev.swing_start_price == null ? null : Number(ev.swing_start_price)" in history_loader
     assert "swing_end_price: ev.swing_end_price == null ? null : Number(ev.swing_end_price)" in history_loader
     assert "const hasWaveRange = Number.isFinite(ev.swing_start_price)" in history_loader
-    assert "波段区间 ' + waveLow.toFixed(2)" in history_loader
+    assert "' + waveLow.toFixed(2) + '–' + waveHigh.toFixed(2)" in history_loader
+    assert '<span>价格 / 波段区间</span>' in history_loader
     assert "esc(ev.price) + waveRangeHTML" in history_loader
     assert "apiJSON('/api/history?symbol=' + symbol + '&limit=5')" in history_loader
     assert "forward_5d_return_pct" in history_loader
@@ -146,7 +147,10 @@ def test_current_fibonacci_levels_show_their_own_wave_range():
     assert "start_price" in update_results and "end_price" in update_results
     assert "_currentFibWave('bullish')" in update_results
     assert "_currentFibWave('bearish')" in update_results
-    assert "rangeLabel + ' ' + waveRange.low.toFixed(2)" in update_results
+    assert "参考价 / 波段区间" in update_results
+    assert "参考价 / 计算区间" in update_results
+    assert "waveRange.low.toFixed(2) + '–' + waveRange.high.toFixed(2)" in update_results
+    assert "rangeLabel + ' ' + waveRange.low.toFixed(2)" not in update_results
     assert "rangeHTML}</span>" in update_results
     # Fallback levels are based on the analysis window, not a confirmed swing.
     assert "{ low: _low, high: _high }, '计算区间'" in update_results
