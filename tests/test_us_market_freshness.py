@@ -152,10 +152,10 @@ def test_stooq_long_history_is_preferred_before_short_nasdaq_fallback(monkeypatc
     stooq = pd.DataFrame({
         "date": pd.date_range(end="2026-11-12", periods=270, freq="B"),
         "open": [100.0] * 270,
-        "high": [101.0] * 240,
-        "low": [99.0] * 240,
-        "close": [100.0] * 240,
-        "volume": [1000.0] * 240,
+        "high": [101.0] * 270,
+        "low": [99.0] * 270,
+        "close": [100.0] * 270,
+        "volume": [1000.0] * 270,
     })
 
     monkeypatch.setattr(data_fetcher.DataFetcher, "_fetch_stooq", lambda self, symbol, days: stooq)
