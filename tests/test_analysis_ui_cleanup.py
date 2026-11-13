@@ -212,16 +212,20 @@ def test_current_fibonacci_reference_rows_show_latest_signal_and_its_own_wave_st
     assert "fib-wave-expired" in html
 
 
-def test_fibonacci_history_has_ten_trading_day_win_rate_column():
+def test_fibonacci_history_displays_cohort_five_day_win_rate_and_sample_size():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
-    assert '<span>5日表现</span>' in loader
-    assert "forward_5d_status: ev.forward_5d_status || null" in loader
-    assert "forward_5d_return_pct: ev.forward_5d_return_pct == null ? null : Number(ev.forward_5d_return_pct)" in loader
-    assert "forward_5d_win: typeof ev.forward_5d_win === 'boolean' ? ev.forward_5d_win : null" in loader
-    assert "信号后5个交易日收盘收益" in loader
-    assert "'待观察'" in loader
-    assert "toFixed(2)" in loader
+    assert '<span>5日胜率</span>' in loader
+    assert "forward_5d_win_rate: ev.forward_5d_win_rate == null ? null : Number(ev.forward_5d_win_rate)" in loader
+    assert "forward_5d_sample_size: ev.forward_5d_sample_size == null ? 0 : Number(ev.forward_5d_sample_size)" in loader
+    assert "同方向、同Fib位置、同信号类型的历史5日胜率" in loader
+    assert "有效样本" in loader
+    assert "待观察" in loader
+    assert "暂无样本" in loader
+    assert "Number(ev.forward_5d_win_rate * 100).toFixed(0)" in loader
+    assert "forward_5d_return_pct" not in loader[loader.index("box.innerHTML ="):]
+
+
 
 def test_position_page_keeps_ladder_reference_but_removes_change_calculator():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
