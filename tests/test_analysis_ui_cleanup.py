@@ -218,7 +218,7 @@ def test_fibonacci_history_displays_each_signal_five_day_performance():
     assert '<span>5日表现</span>' in loader
     assert "forward_5d_return_pct: ev.forward_5d_return_pct == null ? null : Number(ev.forward_5d_return_pct)" in loader
     assert "forward_5d_status: ev.forward_5d_status || null" in loader
-    assert "Math.abs(ev.forward_5d_return_pct).toFixed(2)" in loader
+    assert "(ev.forward_5d_return_pct > 0 ? '+' : '') + ev.forward_5d_return_pct.toFixed(2)" in loader
     assert "ev.forward_5d_return_pct > 0 ? 'positive'" in loader
     assert "ev.forward_5d_return_pct < 0 ? 'negative'" in loader
     assert ".fib-history-performance.positive { color:var(--green); }" in html
