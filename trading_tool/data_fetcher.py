@@ -671,6 +671,7 @@ class DataFetcher:
         except Exception as se:
             last_error = f"{last_error}；Stooq: {se}"
 
+        df_n = None
         try:
             df_n = self._fetch_us_stock_nasdaq(symbol, days)
             if df_n is not None and len(df_n) > 0:
