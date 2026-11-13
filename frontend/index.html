@@ -6103,8 +6103,8 @@ async function loadFibSignalHistory() {
   if (!previousHTML || previousHTML.indexOf('fib-history-row') < 0) box.textContent = '读取中…';
   try {
     const symbol = encodeURIComponent(currentSymbol);
-    // 一次请求同时复用最近快照：既汇总历史强信号，也展示分析快照；避免额外请求。
-    let response = await apiJSON('/api/history?symbol=' + symbol + '&limit=20');
+    // 保持原有轻量读取上限：同一次请求同时供历史强信号与分析快照复用。
+    let response = await apiJSON('/api/history?symbol=' + symbol + '&limit=5');
     let items = Array.isArray(response.items) ? response.items : [];
     let events = [];
     const parseRecord = item => { let record=item && item.result_json ? item.result_json : {}; if (typeof record==='string') { try { record=JSON.parse(record); } catch(e) { record={}; } } return record && record.data ? record.data : {}; };
@@ -6179,12 +6179,21 @@ async function loadFibSignalHistory() {
       if (!snapshotDate || snapshotByDate.has(snapshotDate)) continue;
       const bullish = Array.isArray(data.fib_levels) ? data.fib_levels : [];
       const bearish = Array.isArray(data.fib_bearish_levels) ? data.fib_bearish_levels : [];
-      if (!bullish.length && !bearish.length) continue;
-      snapshotByDate.set(snapshotDate, { date:snapshotDate, bullish, bearish, chart:data.chart_data || {} });
+      const chart = data.chart_data || {};
+      // 没有有效波段时，沿用当时快照保存的高低点还原参考位；不读取新行情。
+      const high = Number(chart.swing_high), low = Number(chart.swing_low);
+      const fallback = !bullish.length && !bearish.length && Number.isFinite(high) && Number.isFinite(low) && low > 0 && high > low
+        ? [0.786, 0.618, 0.500, 0.382].map(level => ({
+            level, price: Number((high - (high - low) * level).toFixed(2)),
+            reacted:false, reaction_signal:'', signal_date:null
+          }))
+        : [];
+      if (!bullish.length && !bearish.length && !fallback.length) continue;
+      snapshotByDate.set(snapshotDate, { date:snapshotDate, bullish: bullish.length ? bullish : fallback, bearish, chart });
     }
     const snapshotBox = document.getElementById('fibAnalysisSnapshotsBody');
     if (snapshotBox) {
-      const snapshots = Array.from(snapshotByDate.values()).slice(0,10);
+      const snapshots = Array.from(snapshotByDate.values()).slice(0,5);
       if (!snapshots.length) {
         snapshotBox.textContent = '暂无可展示的历史分析快照';
       } else {
