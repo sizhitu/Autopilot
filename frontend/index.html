@@ -6096,9 +6096,18 @@ function _formatSynAction(syn) {
 // === 读取并合并斐波那契历史强信号 ===
 async function loadFibSignalHistory() {
   const box = document.getElementById('fibSignalHistoryBody');
+  const snapshotBox = document.getElementById('fibAnalysisSnapshotsBody');
   if (!box) return;
-  if (!currentSymbol) { box.textContent = '请选择真实股票代码后查看'; return; }
-  if (!authToken) { box.textContent = '登录后可查看已保存的历史强信号'; return; }
+  if (!currentSymbol) {
+    box.textContent = '请选择真实股票代码后查看';
+    if (snapshotBox) snapshotBox.textContent = '请选择真实股票代码后查看历史分析记录';
+    return;
+  }
+  if (!authToken) {
+    box.textContent = '登录后可查看已保存的历史强信号';
+    if (snapshotBox) snapshotBox.textContent = '登录后可查看已保存的历史分析记录';
+    return;
+  }
   const previousHTML = box.innerHTML;
   if (!previousHTML || previousHTML.indexOf('fib-history-row') < 0) box.textContent = '读取中…';
   try {
