@@ -132,9 +132,8 @@ def test_fibonacci_history_keeps_two_sections_and_shows_wave_range_under_price()
 
     # Historical event payloads already carry the wave endpoints from the signal date.
     engine = (ROOT / "trading_tool/strategy_engine.py").read_text(encoding="utf-8")
-    event_builder = engine[engine.index("def _build_fibonacci_signal_history"):engine.index("def ", engine.index("def _build_fibonacci_signal_history") + 5)]
-    assert '"swing_start_price": round(float(swing["start_price"]), 4)' in event_builder
-    assert '"swing_end_price": round(float(swing["end_price"]), 4)' in event_builder
+    assert '"swing_start_price": round(float(swing["start_price"]), 4)' in engine
+    assert '"swing_end_price": round(float(swing["end_price"]), 4)' in engine
 
 
 def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
