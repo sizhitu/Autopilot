@@ -256,9 +256,9 @@ def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wav
     assert "return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';" in renderer
     assert "const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');" in renderer
     assert '<span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
-    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish')" in update_results
-    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
-    assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null)" in update_results
+    assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
+    assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish', _currentFibWave('bearish'))" in update_results
+    assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null," in update_results
     assert "fib-wave-expired" in html
     # Expired wave status is display-only: the matched signal remains visible.
     assert "const event = _latestFibEvent(fl.level, side);" in renderer
