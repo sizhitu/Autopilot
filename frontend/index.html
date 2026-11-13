@@ -515,6 +515,8 @@ body.help-open { overflow: hidden; touch-action: none; }
 .fib-history-signal-text { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .fib-history-price { font-family:monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .fib-history-date { color:var(--text-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }\n.fib-history-performance { font-variant-numeric:tabular-nums; white-space:nowrap; color:var(--text-dim); }
+.fib-history-performance.positive { color:var(--green); }
+.fib-history-performance.negative { color:var(--red); }
 @media (max-width:420px) {
   .fib-table-head,.fib-row { grid-template-columns:36px minmax(42px,.65fr) minmax(68px,1fr) 62px 54px; column-gap:4px; }
   .fib-table-head { font-size:9px; }
@@ -6176,7 +6178,7 @@ async function loadFibSignalHistory() {
       const direction = bearish ? '↓' : '↑';
       const sideLabel = bearish ? '下跌侧' : '上涨侧';
       return '<div class="fib-history-row ' + sideClass + '"><span class="fib-history-signal" title="' + sideLabel + '"><span class="fib-history-direction" aria-label="' + sideLabel + '">' + direction + '</span><span class="fib-history-star" aria-label="强信号">★</span><span class="fib-history-signal-text">' + esc(ev.signal) + '</span></span>' +
-        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-performance" title="' + esc(ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? '信号触发日收盘价至第5个交易日收盘价的方向收益' : '暂无完整的5日后行情数据') + '">' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? ((ev.forward_5d_return_pct > 0 ? '+' : '') + ev.forward_5d_return_pct.toFixed(2) + '%') : (ev.forward_5d_status === 'pending' ? '待观察' : '暂无数据')) + '</span></div>';
+        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-performance ' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? (ev.forward_5d_return_pct > 0 ? 'positive' : (ev.forward_5d_return_pct < 0 ? 'negative' : '')) : '') + '" title="' + esc(ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? '信号触发日收盘价至第5个交易日收盘价的方向收益' : '暂无完整的5日后行情数据') + '">' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? (Math.abs(ev.forward_5d_return_pct).toFixed(2) + '%') : (ev.forward_5d_status === 'pending' ? '待观察' : '暂无数据')) + '</span></div>';
     }).join('');
   } catch(e) {
     if (previousHTML && previousHTML.indexOf('fib-history-row') >= 0) { box.innerHTML=previousHTML; box.insertAdjacentHTML('afterbegin','<div class="fib-history-warning">历史更新失败，保留上次数据</div>'); }
