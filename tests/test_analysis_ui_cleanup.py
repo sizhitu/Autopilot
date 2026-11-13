@@ -106,7 +106,7 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
     assert 'fl.tested' in html
     assert 'fl.reaction_signal' in html
     assert 'fib-history-head,.fib-history-row' in html
-    assert '@media (max-width:420px)' in html
+    assert '@media (max-width:520px)' in html
 
 
 
@@ -249,10 +249,11 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
     assert "class=\"fib-table-head\"" in renderer
     assert "grid-template-columns:30px minmax(100px,1.1fr) minmax(140px,1.4fr) minmax(72px,.75fr) minmax(52px,.55fr)" in html
     assert "grid-template-columns:24px minmax(64px,1fr) minmax(76px,1.2fr) minmax(44px,.7fr) minmax(36px,.55fr)" in html
-    assert "column-gap:4px;" in html
-    assert "column-gap:2px;" in html
-    assert ".fib-table-head > span:nth-child(2),.fib-row > span:nth-child(2) { padding-left:4px; }" in html
-    assert "padding-left:3px;" in html
+    assert "column-gap:0;" in html
+    assert ".fib-table-head > span:nth-child(2),.fib-row > span:nth-child(2) { margin-left:10px; }" in html
+    assert ".fib-table-head > span:nth-child(n+3),.fib-row > span:nth-child(n+3) { margin-left:4px; }" in html
+    assert ".fib-table-head > span:nth-child(n+3),.fib-row > span:nth-child(n+3) { margin-left:3px; }" in html
+    assert "@media (max-width:520px)" in html
     assert ".fib-table-head > span,.fib-row > span { min-width:0; }" in html
     assert "white-space:normal;overflow-wrap:anywhere;" in html
 
