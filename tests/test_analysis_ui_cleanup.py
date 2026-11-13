@@ -109,23 +109,32 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
 
 
 
-def test_fibonacci_panel_reuses_analysis_history_for_date_deduplicated_snapshots():
+def test_fibonacci_history_keeps_two_sections_and_shows_wave_range_under_price():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
     history_loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
 
-    assert 'id="fibAnalysisSnapshotsBody"' in update_results
-    assert "历史分析记录" in update_results
-    assert "按分析日期保存当时的 Fib 点位和信号，不随最新行情重算" in update_results
+    # Fibonacci keeps only the existing current-level section and historical strong-signal section.
+    assert 'id="fibSignalHistoryBody"' in update_results
+    assert "历史强信号" in update_results
+    assert 'id="fibAnalysisSnapshotsBody"' not in html
+    assert "历史分析记录" not in update_results
+    assert "const snapshotByDate" not in history_loader
+
+    # New events retain the historical swing endpoints and render them beneath the signal price.
+    assert "swing_start_price: ev.swing_start_price == null ? null : Number(ev.swing_start_price)" in history_loader
+    assert "swing_end_price: ev.swing_end_price == null ? null : Number(ev.swing_end_price)" in history_loader
+    assert "const hasWaveRange = Number.isFinite(ev.swing_start_price)" in history_loader
+    assert "'波段区间 '" in history_loader
+    assert "esc(ev.price) + waveRangeHTML" in history_loader
     assert "apiJSON('/api/history?symbol=' + symbol + '&limit=5')" in history_loader
-    assert "const snapshotByDate = new Map();" in history_loader
-    assert "snapshotByDate.has(snapshotDate)" in history_loader
-    assert "Array.from(snapshotByDate.values()).slice(0,5)" in history_loader
-    assert "历史分析快照直接复用 /api/history 已返回的数据" in history_loader
-    assert "沿用当时快照保存的高低点还原参考位；不读取新行情" in history_loader
-    assert "读取历史分析记录…" in update_results
-    assert "登录后可查看已保存的历史分析记录" in history_loader
-    assert "请选择真实股票代码后查看历史分析记录" in history_loader
+    assert "forward_5d_return_pct" in history_loader
+
+    # Historical event payloads already carry the wave endpoints from the signal date.
+    engine = (ROOT / "trading_tool/strategy_engine.py").read_text(encoding="utf-8")
+    event_builder = engine[engine.index("def _build_fibonacci_signal_history"):engine.index("def ", engine.index("def _build_fibonacci_signal_history") + 5)]
+    assert '"swing_start_price": round(float(swing["start_price"]), 4)' in event_builder
+    assert '"swing_end_price": round(float(swing["end_price"]), 4)' in event_builder
 
 
 def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
