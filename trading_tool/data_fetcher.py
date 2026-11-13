@@ -685,7 +685,6 @@ class DataFetcher:
         if long_fallback is not None and (best is None or len(long_fallback) > len(best)):
             best = long_fallback.copy()
         elif best is not None and df_n is not None and len(df_n) > 0:
-            import pandas as pd
             base_last = _df_last_date(best)
             part = df_n.copy()
             part["date"] = pd.to_datetime(part["date"])
