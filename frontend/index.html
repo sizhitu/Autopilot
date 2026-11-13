@@ -6187,8 +6187,10 @@ async function loadFibSignalHistory() {
       const sideLabel = bearish ? '下跌侧' : '上涨侧';
       const hasWaveRange = Number.isFinite(ev.swing_start_price) && ev.swing_start_price > 0
         && Number.isFinite(ev.swing_end_price) && ev.swing_end_price > 0;
+      const waveLow = hasWaveRange ? Math.min(ev.swing_start_price, ev.swing_end_price) : null;
+      const waveHigh = hasWaveRange ? Math.max(ev.swing_start_price, ev.swing_end_price) : null;
       const waveRangeHTML = hasWaveRange
-        ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:nowrap;">波段区间 ' + ev.swing_start_price.toFixed(2) + '–' + ev.swing_end_price.toFixed(2) + '</small>'
+        ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:nowrap;">波段区间 ' + waveLow.toFixed(2) + '–' + waveHigh.toFixed(2) + '</small>'
         : '';
       return '<div class="fib-history-row ' + sideClass + '"><span class="fib-history-signal" title="' + sideLabel + '"><span class="fib-history-direction" aria-label="' + sideLabel + '">' + direction + '</span><span class="fib-history-star" aria-label="强信号">★</span><span class="fib-history-signal-text">' + esc(ev.signal) + '</span></span>' +
         '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + waveRangeHTML + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-performance ' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? (ev.forward_5d_return_pct > 0 ? 'positive' : (ev.forward_5d_return_pct < 0 ? 'negative' : '')) : '') + '" title="' + esc(ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? '信号触发日收盘价至第5个交易日收盘价的方向收益' : '暂无完整的5日后行情数据') + '">' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? ((ev.forward_5d_return_pct > 0 ? '+' : '') + ev.forward_5d_return_pct.toFixed(2) + '%') : (ev.forward_5d_status === 'pending' ? '待观察' : '暂无数据')) + '</span></div>';
