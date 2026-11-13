@@ -357,11 +357,16 @@ def _quote_payload_has_complete_ipo_history(payload: dict) -> bool:
         start_date = str(meta.get("start_date") or "").strip()
         end_date = str(meta.get("end_date") or "").strip()
         rows = int(meta.get("rows") or len(((payload.get("chart") or {}).get("candles")) or []))
+        symbol = str(payload.get("symbol") or "").strip().lower()
+        cn_indices = {"000001", "000300", "399300", "399001", "399006", "399005", "sh000001", "sh000300", "sz399300", "sz399001", "sz399006", "sz399005"}
+        suffix = symbol[2:] if symbol.startswith(("sh", "sz", "bj")) else symbol
+        is_cn_stock = (symbol.startswith(("sh", "sz", "bj")) and symbol not in cn_indices) or (suffix.isdigit() and len(suffix) == 6 and suffix not in cn_indices)
+        market = "cn" if is_cn_stock else "us"
         if not listing_date or not start_date or not end_date or rows < 20:
             return False
         if start_date > listing_date:
             return False
-        return not _bar_is_stale(datetime.strptime(end_date[:10], "%Y-%m-%d").date(), market="us")
+        return not _bar_is_stale(datetime.strptime(end_date[:10], "%Y-%m-%d").date(), market=market)
     except Exception:
         return False
 
