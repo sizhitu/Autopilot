@@ -193,6 +193,11 @@ _PROFILE_META_CACHE = {}
 _PROFILE_META_CACHE_TS = {}
 _PROFILE_META_TTL = 6 * 3600
 
+# A股上市日期独立缓存：成功结果24小时，失败结果1小时，避免分析页反复请求F10。
+_LISTING_DATE_CACHE = {}
+_LISTING_DATE_CACHE_TTL = 24 * 3600
+_LISTING_DATE_NEGATIVE_TTL = 3600
+
 
 def _kline_cache_prune(now=None):
     now = now if now is not None else time.time()
@@ -1009,6 +1014,41 @@ class DataFetcher:
         return out
 
 
+    def _fetch_em_listing_date(self, symbol: str):
+        """从东方财富证券快照 f189 获取 A 股上市日期；只缓存元数据，不参与行情主链路。"""
+        key = str(symbol or "").strip().lower()
+        if not key or self._is_cn_index(key):
+            return None
+        now = time.time()
+        cached = _LISTING_DATE_CACHE.get(key)
+        if cached and now - cached[0] < (_LISTING_DATE_CACHE_TTL if cached[1] else _LISTING_DATE_NEGATIVE_TTL):
+            return cached[1]
+        try:
+            normalized = self._normalize_cn_symbol(key)
+            prefix, code = normalized[:2], normalized[2:]
+            market_id = "1" if prefix == "sh" else ("2" if prefix == "bj" else "0")
+            response = self.session.get(
+                "https://push2.eastmoney.com/api/qt/stock/get",
+                params={"secid": f"{market_id}.{code}", "fields": "f57,f58,f189"},
+                timeout=2.0,
+                headers={"User-Agent": _rotate_ua(), "Referer": "https://quote.eastmoney.com/"},
+            )
+            if response.status_code != 200:
+                raise ValueError(f"东方财富上市日期 HTTP {response.status_code}")
+            data = (response.json() or {}).get("data") or {}
+            digits = str(data.get("f189") or "").strip()
+            if len(digits) != 8 or not digits.isdigit() or digits == "00000000":
+                raise ValueError("东方财富未返回有效上市日期")
+            parsed = datetime.strptime(digits, "%Y%m%d").date()
+            if parsed > datetime.now().date():
+                raise ValueError("上市日期晚于当前日期")
+            result = parsed.isoformat()
+            _LISTING_DATE_CACHE[key] = (now, result)
+            return result
+        except Exception:
+            _LISTING_DATE_CACHE[key] = (now, None)
+            return None
+
     def fetch_cn_stock(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
         A 股日 K 优先级（兼顾速度与复权准确性）：
@@ -1052,7 +1092,12 @@ class DataFetcher:
 
         if len(out) == 0:
             raise ValueError("腾讯/东方财富/新浪均未返回数据，请检查股票代码")
-        return out.tail(days).reset_index(drop=True)
+        # 上市日期是独立的辅助元数据；获取失败不影响正常K线返回。
+        listing_date = self._fetch_em_listing_date(symbol)
+        result = out.tail(days).reset_index(drop=True)
+        if listing_date:
+            result.attrs["listing_date"] = listing_date
+        return result
 
 
 

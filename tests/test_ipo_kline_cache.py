@@ -126,3 +126,39 @@ def test_yahoo_first_trade_date_is_preserved_as_listing_metadata(monkeypatch):
 
     assert len(result) == 108
     assert result.attrs["listing_date"] == "2026-06-01"
+
+
+
+def test_cn_listing_date_uses_eastmoney_f189_and_is_cached(monkeypatch):
+    data_fetcher._LISTING_DATE_CACHE.clear()
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": {"f57": "688777", "f58": "测试新股", "f189": 20261028}}
+
+    class Session:
+        @staticmethod
+        def get(url, **kwargs):
+            calls.append((url, kwargs))
+            return Response()
+
+    fetcher = data_fetcher.DataFetcher()
+    fetcher.session = Session()
+
+    assert fetcher._fetch_em_listing_date("688777") == "2026-10-28"
+    assert fetcher._fetch_em_listing_date("688777") == "2026-10-28"
+    assert len(calls) == 1
+    assert calls[0][1]["params"]["fields"] == "f57,f58,f189"
+
+
+def test_cn_ipo_history_is_accepted_with_trusted_listing_date(monkeypatch):
+    monkeypatch.setattr(data_fetcher, "_bar_is_stale", lambda last_date, market="us": False)
+    frame = _bars(count=35, listing_date="2026-10-01")
+    frame["date"] = pd.bdate_range("2026-10-01", periods=35)
+
+    assert data_fetcher.is_complete_ipo_history(frame, market="cn")
+    assert not data_fetcher.is_complete_ipo_history(_bars(count=35, listing_date=None), market="cn")
