@@ -254,6 +254,7 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
     assert ".fib-table-head > span:nth-child(n+3),.fib-row > span:nth-child(n+3) { margin-left:4px; }" in html
     assert ".fib-table-head > span:nth-child(n+3),.fib-row > span:nth-child(n+3) { margin-left:3px; }" in html
     assert "@media (max-width:520px)" in html
+    assert ".fib-table-head > span:nth-child(4) { text-align:right; }" in html
     assert ".fib-table-head > span,.fib-row > span { min-width:0; }" in html
     assert "white-space:normal;overflow-wrap:anywhere;" in html
 
