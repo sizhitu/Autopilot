@@ -6345,7 +6345,7 @@ function updateResults(data, meta, nineTurn) {
   const _renderFibGroup = (title, levels, side, waveRange, rangeLabel = '波段区间') => {
     if (!levels.length) return '';
     let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
-    const rangeColumnLabel = waveRange ? '参考价 / 波段区间' : '参考价 / 计算区间';
+    const rangeColumnLabel = '参考价 / ' + rangeLabel;
     html += '<div class="fib-table-head"><span>Fib</span><span>' + rangeColumnLabel + '</span><span>最近确认</span><span>信号日期</span><span>所属波段</span></div>';
     const rangeHTML = waveRange && Number.isFinite(waveRange.low) && Number.isFinite(waveRange.high)
       ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:nowrap;">' + waveRange.low.toFixed(2) + '–' + waveRange.high.toFixed(2) + '</small>'
