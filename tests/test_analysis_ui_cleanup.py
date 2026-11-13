@@ -125,7 +125,8 @@ def test_fibonacci_history_keeps_two_sections_and_shows_wave_range_under_price()
     assert "swing_start_price: ev.swing_start_price == null ? null : Number(ev.swing_start_price)" in history_loader
     assert "swing_end_price: ev.swing_end_price == null ? null : Number(ev.swing_end_price)" in history_loader
     assert "const hasWaveRange = Number.isFinite(ev.swing_start_price)" in history_loader
-    assert "波段区间 ' + waveLow.toFixed(2)" in history_loader
+    assert "' + waveLow.toFixed(2) + '–' + waveHigh.toFixed(2)" in history_loader
+    assert '<span>价格 / 波段区间</span>' in history_loader
     assert "esc(ev.price) + waveRangeHTML" in history_loader
     assert "apiJSON('/api/history?symbol=' + symbol + '&limit=5')" in history_loader
     assert "forward_5d_return_pct" in history_loader
@@ -139,6 +140,7 @@ def test_fibonacci_history_keeps_two_sections_and_shows_wave_range_under_price()
 def test_current_fibonacci_levels_show_their_own_wave_range():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
+    renderer = html[html.index("const _renderFibGroup"):html.index("if (_fibBull.length)")]
 
     # Current levels use the same detected swing anchors as the backend Fib calculation.
     assert "const _fibSwing = (data && data.chart_data && data.chart_data.fib_swing) || null;" in update_results
@@ -146,8 +148,14 @@ def test_current_fibonacci_levels_show_their_own_wave_range():
     assert "start_price" in update_results and "end_price" in update_results
     assert "_currentFibWave('bullish')" in update_results
     assert "_currentFibWave('bearish')" in update_results
-    assert "rangeLabel + ' ' + waveRange.low.toFixed(2)" in update_results
-    assert "rangeHTML}</span>" in update_results
+
+    # The renderer is declared before updateResults; validate the column header and numeric-only range there.
+    assert "const rangeColumnLabel = '参考价 / ' + rangeLabel;" in renderer
+    assert "rangeLabel = '波段区间'" in renderer
+    assert "参考价 / 计算区间" not in renderer
+    assert "waveRange.low.toFixed(2) + '–' + waveRange.high.toFixed(2)" in renderer
+    assert "rangeLabel + ' ' + waveRange.low.toFixed(2)" not in renderer
+    assert "rangeHTML}</span>" in renderer
     # Fallback levels are based on the analysis window, not a confirmed swing.
     assert "{ low: _low, high: _high }, '计算区间'" in update_results
 
@@ -255,7 +263,8 @@ def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wav
     assert "ev.swing_confirmation_date" in renderer
     assert "return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';" in renderer
     assert "const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');" in renderer
-    assert '<span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
+    assert "const rangeColumnLabel = '参考价 / ' + rangeLabel;" in renderer
+    assert '<span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish', _currentFibWave('bearish'))" in update_results
     assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null," in update_results

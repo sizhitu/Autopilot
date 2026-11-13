@@ -6180,7 +6180,7 @@ async function loadFibSignalHistory() {
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span><span>5日表现</span></div>' + events.slice(0,50).map(ev => {
+    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格 / 波段区间</span><span>日期</span><span>5日表现</span></div>' + events.slice(0,50).map(ev => {
       const bearish = ev.side === 'bearish';
       const sideClass = bearish ? 'fib-history-bearish' : 'fib-history-bullish';
       const direction = bearish ? '↓' : '↑';
@@ -6190,7 +6190,7 @@ async function loadFibSignalHistory() {
       const waveLow = hasWaveRange ? Math.min(ev.swing_start_price, ev.swing_end_price) : null;
       const waveHigh = hasWaveRange ? Math.max(ev.swing_start_price, ev.swing_end_price) : null;
       const waveRangeHTML = hasWaveRange
-        ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:nowrap;">波段区间 ' + waveLow.toFixed(2) + '–' + waveHigh.toFixed(2) + '</small>'
+        ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:nowrap;">' + waveLow.toFixed(2) + '–' + waveHigh.toFixed(2) + '</small>'
         : '';
       return '<div class="fib-history-row ' + sideClass + '"><span class="fib-history-signal" title="' + sideLabel + '"><span class="fib-history-direction" aria-label="' + sideLabel + '">' + direction + '</span><span class="fib-history-star" aria-label="强信号">★</span><span class="fib-history-signal-text">' + esc(ev.signal) + '</span></span>' +
         '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + waveRangeHTML + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-performance ' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? (ev.forward_5d_return_pct > 0 ? 'positive' : (ev.forward_5d_return_pct < 0 ? 'negative' : '')) : '') + '" title="' + esc(ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? '信号触发日收盘价至第5个交易日收盘价的方向收益' : '暂无完整的5日后行情数据') + '">' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? ((ev.forward_5d_return_pct > 0 ? '+' : '') + ev.forward_5d_return_pct.toFixed(2) + '%') : (ev.forward_5d_status === 'pending' ? '待观察' : '暂无数据')) + '</span></div>';
@@ -6345,9 +6345,10 @@ function updateResults(data, meta, nineTurn) {
   const _renderFibGroup = (title, levels, side, waveRange, rangeLabel = '波段区间') => {
     if (!levels.length) return '';
     let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
-    html += '<div class="fib-table-head"><span>Fib</span><span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span></div>';
+    const rangeColumnLabel = '参考价 / ' + rangeLabel;
+    html += '<div class="fib-table-head"><span>Fib</span><span>' + rangeColumnLabel + '</span><span>最近确认</span><span>信号日期</span><span>所属波段</span></div>';
     const rangeHTML = waveRange && Number.isFinite(waveRange.low) && Number.isFinite(waveRange.high)
-      ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:nowrap;">' + rangeLabel + ' ' + waveRange.low.toFixed(2) + '–' + waveRange.high.toFixed(2) + '</small>'
+      ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:nowrap;">' + waveRange.low.toFixed(2) + '–' + waveRange.high.toFixed(2) + '</small>'
       : '';
     for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
