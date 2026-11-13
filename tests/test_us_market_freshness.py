@@ -150,7 +150,7 @@ def test_stooq_long_history_is_preferred_before_short_nasdaq_fallback(monkeypatc
     monkeypatch.setattr(data_fetcher, "_trigger_yahoo_cooldown", lambda: None)
 
     stooq = pd.DataFrame({
-        "date": pd.date_range(end="2026-11-12", periods=240, freq="B"),
+        "date": pd.date_range(end="2026-11-12", periods=270, freq="B"),
         "open": [100.0] * 240,
         "high": [101.0] * 240,
         "low": [99.0] * 240,
@@ -169,5 +169,5 @@ def test_stooq_long_history_is_preferred_before_short_nasdaq_fallback(monkeypatc
     fetcher.session = Session()
     result = fetcher.fetch_us_stock("AAPL", days=300)
 
-    assert len(result) == 240
+    assert len(result) == 270
     assert data_fetcher._df_last_date(result) == date(2026, 11, 12)
