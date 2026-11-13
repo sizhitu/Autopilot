@@ -87,7 +87,7 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
 def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     assert 'grid-template-columns:minmax(0,1.5fr) 44px minmax(58px,.7fr) 78px 70px' in html
-    assert 'fib-history-head span:nth-last-child(-n+2),.fib-history-date,.fib-history-win-rate { text-align:right; }' in html
+    assert 'fib-history-head span:nth-last-child(-n+2),.fib-history-date,.fib-history-performance { text-align:right; }' in html
     assert "const bearish = ev.side === 'bearish';" in html
     assert "fib-history-bullish" in html
     assert "fib-history-bearish" in html
