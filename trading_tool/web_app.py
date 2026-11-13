@@ -1547,7 +1547,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
             pass
 
     # 实时成功时，把每日 K 线写入缓存层（供回测 / 指标分析 / 容错）
-    if source == "live" and df is not None and (len(df) >= 180 or _quote_df_has_complete_ipo_history(df)):
+    if source == "live" and df is not None and (len(df) >= 180 or _quote_df_has_complete_ipo_history(df, req.symbol)):
         try:
             daily_store.store_daily_bars(req.symbol, df, source=source)
         except Exception:
