@@ -247,8 +247,10 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
     assert '<span>信号日期</span><span>所属波段</span>' in renderer
     assert "波段最近确认" not in renderer
     assert "class=\"fib-table-head\"" in renderer
-    assert "grid-template-columns:30px minmax(74px,1fr) minmax(92px,1.35fr) minmax(66px,.85fr) minmax(54px,.7fr)" in html
-    assert "grid-template-columns:26px minmax(62px,.9fr) minmax(88px,1.35fr) minmax(64px,.9fr) minmax(50px,.7fr)" in html
+    assert "grid-template-columns:30px minmax(90px,1fr) minmax(125px,1.3fr) minmax(82px,.9fr) minmax(64px,.7fr)" in html
+    assert "grid-template-columns:24px minmax(60px,1fr) minmax(70px,1.2fr) minmax(48px,.85fr) minmax(40px,.7fr)" in html
+    assert ".fib-table-head > span,.fib-row > span { min-width:0; }" in html
+    assert "white-space:normal;overflow-wrap:anywhere;" in html
 
 
 
