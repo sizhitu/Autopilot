@@ -3965,7 +3965,7 @@ async function fetchQuote(symbol, name, market) {
     const _nBars = (json.chart && json.chart.candles && json.chart.candles.length)
       ? json.chart.candles.length
       : (json.meta && json.meta.rows) || '';
-    info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span> <span style="color:var(--text-dim);">${_nBars}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
+    info.innerHTML = `<span class="symbol">${symbol}</span> <span class="stock-name">${name||''}</span> <span class="market" style="color:var(--text-dim);">[${market||''}]</span> <span class="price">收盘: ${json.meta.last_close}</span>${json.meta.listing_date ? `<span class="listing-date" style="flex-basis:100%;color:var(--text-dim);font-size:11px;">上市日期: ${json.meta.listing_date}</span>` : ''} <span style="color:var(--text-dim);">${_nBars}根K线 ${json.meta.start_date} ~ ${json.meta.end_date}</span>`;
 
     updateResults(json.data, json.meta, json.nine_turn);
     if (json.stale) showToast('⚠ 当前行情为缓存快照，可能延迟', 'info');
