@@ -147,6 +147,7 @@ def test_current_fibonacci_levels_show_their_own_wave_range():
     assert "start_price" in update_results and "end_price" in update_results
     assert "_currentFibWave('bullish')" in update_results
     assert "_currentFibWave('bearish')" in update_results
+    assert "const rangeColumnLabel = '参考价 / ' + rangeLabel;" in update_results
     assert "参考价 / 波段区间" in update_results
     assert "参考价 / 计算区间" in update_results
     assert "waveRange.low.toFixed(2) + '–' + waveRange.high.toFixed(2)" in update_results
@@ -259,7 +260,8 @@ def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wav
     assert "ev.swing_confirmation_date" in renderer
     assert "return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';" in renderer
     assert "const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');" in renderer
-    assert '<span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
+    assert "const rangeColumnLabel = '参考价 / ' + rangeLabel;" in renderer
+    assert '<span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish', _currentFibWave('bearish'))" in update_results
     assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null," in update_results
