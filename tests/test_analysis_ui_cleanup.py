@@ -117,9 +117,11 @@ def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
     assert "const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];" in update_results
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish')" in update_results
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
-    assert "当前参考位只展示当前波段自身的确认，不跨波段借用历史事件。" in update_results
-    assert "const hasSignal = !!(fl.reacted && fl.reaction_signal);" in update_results
-    assert "_latestFibEvent" not in update_results
+    assert "近期信号按方向和 Fib 位匹配最近一次确认；波段有效性只作标注，不过滤信号。" in update_results
+    assert "const hasSignal = !!event || fallbackSignal;" in update_results
+    assert "const _latestFibEvent = (level, side) =>" in update_results
+    assert "if (side && ev.side !== side) return false;" in update_results
+    assert "matches.sort((a, b) => String(b.signal_date).localeCompare(String(a.signal_date)));" in update_results
     assert "const _chartData = (data && data.chart_data) || {};" in update_results
     assert "const _fallbackLevels = [" in update_results
     assert "'参考区间 · Fib 回撤位'" in update_results
@@ -197,19 +199,27 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
 
 
 
-def test_current_fibonacci_reference_rows_show_latest_signal_and_its_own_wave_status():
+def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wave_status():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
-    renderer = update_results[update_results.index("const _renderFibGroup"):update_results.index("if (_fibBull.length)")]
+    renderer = update_results[update_results.index("const _fibHistory"):update_results.index("if (_fibBull.length)")]
 
-    assert "当前参考位只展示当前波段自身的确认，不跨波段借用历史事件。" in renderer
-    assert "_latestFibEvent" not in renderer
-    assert "const hasSignal = !!(fl.reacted && fl.reaction_signal);" in renderer
+    assert "const _fibHistory = Array.isArray(data && data.fib_signal_history)" in renderer
+    assert "Math.abs(Number(ev.level) - Number(level)) < 0.0005" in renderer
+    assert "if (side && ev.side !== side) return false;" in renderer
+    assert "matches.sort((a, b) => String(b.signal_date).localeCompare(String(a.signal_date)));" in renderer
+    assert "const hasSignal = !!event || fallbackSignal;" in renderer
+    assert "ev.swing_confirmation_date" in renderer
+    assert "return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';" in renderer
+    assert "const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');" in renderer
     assert '<span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish')" in update_results
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish')" in update_results
     assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null)" in update_results
     assert "fib-wave-expired" in html
+    # Expired wave status is display-only: the matched signal remains visible.
+    assert "const event = _latestFibEvent(fl.level, side);" in renderer
+    assert "const hasSignal = !!event || fallbackSignal;" in renderer
 
 
 def test_fibonacci_history_displays_each_signal_five_day_performance():
