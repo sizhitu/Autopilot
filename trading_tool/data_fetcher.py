@@ -651,7 +651,6 @@ class DataFetcher:
         min_history = max(90, min(180, int(max(1, days) * 0.6)))
         last_d = _df_last_date(parsed) if parsed is not None else None
         exp_d = _expected_session_date("us")
-        behind = bool(last_d and exp_d and last_d < exp_d)
         if parsed is not None and len(parsed) >= min_history:
             _clear_yahoo_cooldown()
             return parsed
@@ -734,7 +733,7 @@ class DataFetcher:
                 'todate': end.strftime('%Y-%m-%d'),
             }
             try:
-                r = self.session.get(url, params=params, headers=headers, timeout=6)
+                r = self.session.get(url, params=params, headers=headers, timeout=4)
                 if r.status_code != 200:
                     last_err = f"Nasdaq({assetclass}) 返回 {r.status_code}"
                     continue
