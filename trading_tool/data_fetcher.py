@@ -552,8 +552,7 @@ class DataFetcher:
         elif symbol == "IXIC":
             symbol = "^IXIC"
 
-        # 分析/看板需要长 K 线。Nasdaq 历史经常只有约 15 根，冷却期也不再先打它。
-        # 冷却只缩短 Yahoo 超时，避免 2×10s 空等。
+        # 分析/看板需要长 K 线。Yahoo 冷却时仍保留长历史优先策略，短历史兜底放到 Stooq/Nasdaq。
 
         # days 是交易日，转换为日历天（交易日约占日历天的 5/7）
         # 额外多取 40 天日历时间，确保足够
@@ -647,67 +646,60 @@ class DataFetcher:
                 last_error = str(e)
                 continue
 
-        candidates = []
-        if parsed is not None and len(parsed) > 0:
-            candidates.append(parsed)
-
-        # 无论 Yahoo 成败，若结果偏旧或为空，继续拉 Nasdaq / Stooq，取「交易日最新」的一份
+        # 分析页需要长历史。只要 Yahoo 已返回足够长的序列，就先保留它；
+        # 是否落后一个交易日由行情新鲜度层单独标记，不应因此牺牲 300 根历史或阻塞页面。
+        min_history = max(90, min(180, int(max(1, days) * 0.6)))
         last_d = _df_last_date(parsed) if parsed is not None else None
         exp_d = _expected_session_date("us")
         behind = bool(last_d and exp_d and last_d < exp_d)
-        if parsed is not None and len(parsed) >= 90 and not behind:
+        if parsed is not None and len(parsed) >= min_history:
             _clear_yahoo_cooldown()
             return parsed
 
         if parsed is None:
             _trigger_yahoo_cooldown()
 
-        # Yahoo 有长历史但日期落后时，也必须查询备用源；只把 Yahoo 缺失日期追加，
-        # 避免短备用序列覆盖长历史，也避免同日未复权价格覆盖 Yahoo 复权价格。
+        # Yahoo 无法提供足够历史时，先尝试 Stooq 的长历史 CSV。
+        # Nasdaq 免费历史通常只有约 15 根，只作为最后的近期行情兜底。
         fallback_frames = []
-        if behind or not candidates:
-            try:
-                df_n = self._fetch_us_stock_nasdaq(symbol, days)
-                if df_n is not None and len(df_n) > 0:
-                    fallback_frames.append(df_n)
-            except Exception as ne:
-                last_error = f"{last_error}；Nasdaq: {ne}"
+        try:
+            df_s = self._fetch_stooq(symbol, days)
+            if df_s is not None and len(df_s) > 0:
+                fallback_frames.append(df_s)
+                if len(df_s) >= min_history:
+                    return df_s.tail(days).reset_index(drop=True)
+        except Exception as se:
+            last_error = f"{last_error}；Stooq: {se}"
 
-            # Nasdaq 已补到预期交易日就不再请求 Stooq，控制每只股票的外部请求量。
-            nasdaq_last = _df_last_date(fallback_frames[0]) if fallback_frames else None
-            if exp_d is None or nasdaq_last is None or nasdaq_last < exp_d:
-                try:
-                    df_s = self._fetch_stooq(symbol, days)
-                    if df_s is not None and len(df_s) > 0:
-                        fallback_frames.append(df_s)
-                except Exception as se:
-                    last_error = f"{last_error}；Stooq: {se}"
+        try:
+            df_n = self._fetch_us_stock_nasdaq(symbol, days)
+            if df_n is not None and len(df_n) > 0:
+                fallback_frames.append(df_n)
+        except Exception as ne:
+            last_error = f"{last_error}；Nasdaq: {ne}"
 
+        # 优先选择历史更长的数据源，避免把未复权的 Stooq/Nasdaq 价格拼进 Yahoo
+        # 的前复权序列；只有同一 Yahoo 序列的最新日期补齐时才追加 Nasdaq 新行。
         best = parsed.copy() if parsed is not None and len(parsed) > 0 else None
-        if best is not None and fallback_frames:
+        long_fallback = max(fallback_frames, key=len) if fallback_frames else None
+        if long_fallback is not None and (best is None or len(long_fallback) > len(best)):
+            best = long_fallback.copy()
+        elif best is not None and df_n is not None and len(df_n) > 0:
             import pandas as pd
             base_last = _df_last_date(best)
-            newer = []
-            for frame in fallback_frames:
-                if frame is None or len(frame) == 0:
-                    continue
-                part = frame.copy()
-                part["date"] = pd.to_datetime(part["date"])
-                if base_last is not None:
-                    part = part[part["date"].dt.date > base_last]
-                if len(part):
-                    newer.append(part)
-            if newer:
-                best = _merge_ohlc_frames([best] + newer)
-        elif best is None and fallback_frames:
-            best = _merge_ohlc_frames(fallback_frames)
+            part = df_n.copy()
+            part["date"] = pd.to_datetime(part["date"])
+            if base_last is not None:
+                part = part[part["date"].dt.date > base_last]
+            if len(part):
+                best = _merge_ohlc_frames([best, part])
 
         if best is not None and len(best) > 0:
-            if _df_last_date(best) and _expected_session_date("us") <= _df_last_date(best):
+            if _df_last_date(best) and exp_d and _df_last_date(best) >= exp_d:
                 _clear_yahoo_cooldown()
-            return best
+            return best.tail(days).reset_index(drop=True)
 
-        raise ValueError(f"Yahoo/Nasdaq 均失败: {last_error}")
+        raise ValueError(f"Yahoo/Stooq/Nasdaq 均失败: {last_error}")
 
     def _fetch_us_stock_nasdaq(self, symbol: str, days: int = 300) -> pd.DataFrame:
         """
@@ -741,7 +733,7 @@ class DataFetcher:
                 'todate': end.strftime('%Y-%m-%d'),
             }
             try:
-                r = self.session.get(url, params=params, headers=headers, timeout=15)
+                r = self.session.get(url, params=params, headers=headers, timeout=6)
                 if r.status_code != 200:
                     last_err = f"Nasdaq({assetclass}) 返回 {r.status_code}"
                     continue
