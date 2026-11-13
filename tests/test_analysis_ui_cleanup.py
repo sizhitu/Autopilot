@@ -87,7 +87,7 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
 def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     assert 'grid-template-columns:minmax(0,1.5fr) 44px minmax(58px,.7fr) 78px 70px' in html
-    assert 'fib-history-head span:nth-last-child(-n+2),.fib-history-date,.fib-history-win-rate { text-align:right; }' in html
+    assert 'fib-history-head span:nth-last-child(-n+2),.fib-history-date,.fib-history-performance { text-align:right; }' in html
     assert "const bearish = ev.side === 'bearish';" in html
     assert "fib-history-bullish" in html
     assert "fib-history-bearish" in html
@@ -212,18 +212,22 @@ def test_current_fibonacci_reference_rows_show_latest_signal_and_its_own_wave_st
     assert "fib-wave-expired" in html
 
 
-def test_fibonacci_history_displays_cohort_five_day_win_rate_and_sample_size():
+def test_fibonacci_history_displays_each_signal_five_day_performance():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
-    assert '<span>5日胜率</span>' in loader
-    assert "forward_5d_win_rate: ev.forward_5d_win_rate == null ? null : Number(ev.forward_5d_win_rate)" in loader
-    assert "forward_5d_sample_size: ev.forward_5d_sample_size == null ? 0 : Number(ev.forward_5d_sample_size)" in loader
-    assert "同方向、同Fib位置、同信号类型的历史5日胜率" in loader
-    assert "有效样本" in loader
+    assert '<span>5日表现</span>' in loader
+    assert "forward_5d_return_pct: ev.forward_5d_return_pct == null ? null : Number(ev.forward_5d_return_pct)" in loader
+    assert "forward_5d_status: ev.forward_5d_status || null" in loader
+    assert "Math.abs(ev.forward_5d_return_pct).toFixed(2)" in loader
+    assert "ev.forward_5d_return_pct > 0 ? 'positive'" in loader
+    assert "ev.forward_5d_return_pct < 0 ? 'negative'" in loader
+    assert ".fib-history-performance.positive { color:var(--green); }" in html
+    assert ".fib-history-performance.negative { color:var(--red); }" in html
+    assert "信号触发日收盘价至第5个交易日收盘价的方向收益" in loader
     assert "待观察" in loader
-    assert "暂无样本" in loader
-    assert "Number(ev.forward_5d_win_rate * 100).toFixed(0)" in loader
-    assert "forward_5d_return_pct" not in loader[loader.index("box.innerHTML ="):]
+    assert "暂无数据" in loader
+    assert "forward_5d_win_rate" not in loader[loader.index("box.innerHTML ="):]
+    assert "forward_5d_sample_size" not in loader[loader.index("box.innerHTML ="):]
 
 
 
