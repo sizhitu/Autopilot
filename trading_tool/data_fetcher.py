@@ -648,7 +648,7 @@ class DataFetcher:
 
         # 分析页需要长历史。只要 Yahoo 已返回足够长的序列，就先保留它；
         # 是否落后一个交易日由行情新鲜度层单独标记，不应因此牺牲 300 根历史或阻塞页面。
-        min_history = max(90, min(180, int(max(1, days) * 0.6)))
+        min_history = min(max(1, int(days)), max(180, int(max(1, days) * 0.85)))
         last_d = _df_last_date(parsed) if parsed is not None else None
         exp_d = _expected_session_date("us")
         if parsed is not None and len(parsed) >= min_history:
