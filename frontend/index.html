@@ -6113,7 +6113,7 @@ async function loadFibSignalHistory() {
       const normalized = {
         side: ev.side, level: ev.level, price: ev.price,
         date: String(ev.signal_date).slice(0,10), signal: ev.signal,
-        // 保留后端按完整历史K线计算的5日表现；旧快照缺少这些字段时保持为空。
+        // 展示同类信号的5日方向胜率与成熟样本数；旧快照缺失统计字段时不伪造胜率。
         forward_5d_status: ev.forward_5d_status || null,
         forward_5d_return_pct: ev.forward_5d_return_pct == null ? null : Number(ev.forward_5d_return_pct),
         forward_5d_win: typeof ev.forward_5d_win === 'boolean' ? ev.forward_5d_win : null,
@@ -6170,13 +6170,13 @@ async function loadFibSignalHistory() {
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span><span>5日表现</span></div>' + events.slice(0,50).map(ev => {
+    box.innerHTML = '<div class="fib-history-head"><span>方向 / 信号</span><span>Fib</span><span>价格</span><span>日期</span><span>5日胜率</span></div>' + events.slice(0,50).map(ev => {
       const bearish = ev.side === 'bearish';
       const sideClass = bearish ? 'fib-history-bearish' : 'fib-history-bullish';
       const direction = bearish ? '↓' : '↑';
       const sideLabel = bearish ? '下跌侧' : '上涨侧';
       return '<div class="fib-history-row ' + sideClass + '"><span class="fib-history-signal" title="' + sideLabel + '"><span class="fib-history-direction" aria-label="' + sideLabel + '">' + direction + '</span><span class="fib-history-star" aria-label="强信号">★</span><span class="fib-history-signal-text">' + esc(ev.signal) + '</span></span>' +
-        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-win-rate" title="' + esc(ev.forward_5d_return_pct == null ? '信号后第5个交易日收盘收益，尚未成熟则继续观察' : ('信号后5个交易日收盘收益 ' + ev.forward_5d_return_pct + '%')) + '">' + (ev.forward_5d_status === 'matured' && Number.isFinite(Number(ev.forward_5d_return_pct)) ? ((Number(ev.forward_5d_return_pct) > 0 ? '+' : '') + Number(ev.forward_5d_return_pct).toFixed(2) + '%') : '待观察') + '</span></div>';
+        '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-win-rate" title="' + esc(ev.forward_5d_sample_size > 0 && Number.isFinite(ev.forward_5d_win_rate) ? ('同方向、同Fib位置、同信号类型的历史5日胜率；有效样本 ' + ev.forward_5d_sample_size + ' 次') : '暂无足够的已完成5日样本') + '">' + (ev.forward_5d_sample_size > 0 && Number.isFinite(ev.forward_5d_win_rate) ? (Number(ev.forward_5d_win_rate * 100).toFixed(0) + '% (' + ev.forward_5d_sample_size + ')') : (ev.forward_5d_status === 'pending' ? '待观察' : '暂无样本')) + '</span></div>';
     }).join('');
   } catch(e) {
     if (previousHTML && previousHTML.indexOf('fib-history-row') >= 0) { box.innerHTML=previousHTML; box.insertAdjacentHTML('afterbegin','<div class="fib-history-warning">历史更新失败，保留上次数据</div>'); }
