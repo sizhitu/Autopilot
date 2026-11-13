@@ -6316,6 +6316,14 @@ function updateResults(data, meta, nineTurn) {
   const _fibBull = Array.isArray(data && data.fib_levels) ? data.fib_levels : [];
   const _fibBear = Array.isArray(data && data.fib_bearish_levels) ? data.fib_bearish_levels : [];
   const _fibHistory = Array.isArray(data && data.fib_signal_history) ? data.fib_signal_history : [];
+  const _fibSwing = (data && data.chart_data && data.chart_data.fib_swing) || null;
+  const _currentFibWave = side => {
+    if (!_fibSwing || _fibSwing.direction !== side) return null;
+    const start = Number(_fibSwing.start_price);
+    const end = Number(_fibSwing.end_price);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= 0 || start === end) return null;
+    return { low: Math.min(start, end), high: Math.max(start, end) };
+  };
   const _fibAsOf = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10);
   const _latestFibEvent = (level, side) => {
     const matches = _fibHistory.filter(ev => {
@@ -6334,10 +6342,13 @@ function updateResults(data, meta, nineTurn) {
     if (!Number.isFinite(confirmedAt) || !Number.isFinite(asOfAt) || asOfAt < confirmedAt) return '无法追溯';
     return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';
   };
-  const _renderFibGroup = (title, levels, side) => {
+  const _renderFibGroup = (title, levels, side, waveRange, rangeLabel = '波段区间') => {
     if (!levels.length) return '';
     let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
     html += '<div class="fib-table-head"><span>Fib</span><span>参考价</span><span>最近确认</span><span>信号日期</span><span>所属波段</span></div>';
+    const rangeHTML = waveRange && Number.isFinite(waveRange.low) && Number.isFinite(waveRange.high)
+      ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:nowrap;">' + rangeLabel + ' ' + waveRange.low.toFixed(2) + '–' + waveRange.high.toFixed(2) + '</small>'
+      : '';
     for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
       // 近期信号按方向和 Fib 位匹配最近一次确认；波段有效性只作标注，不过滤信号。
@@ -6350,14 +6361,14 @@ function updateResults(data, meta, nineTurn) {
       const rx = hasSignal ? `<span class="fib-reaction">${signal}</span>` : '';
       const status = event ? _fibWaveStatus(event) : (fallbackSignal ? '无法追溯' : '—');
       const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
-      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${signalDate || '—'}</span><span class="fib-wave-status ${statusClass}">${status}</span></div>`;
+      html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}${rangeHTML}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${signalDate || '—'}</span><span class="fib-wave-status ${statusClass}">${status}</span></div>`;
     }
     return html;
   };
   if (_fibBull.length) {
-    fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish');
+    fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'));
   } else if (_fibBear.length) {
-    fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish');
+    fh += _renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish', _currentFibWave('bearish'));
   } else {
     // 沿用原版四段位价格展示：以分析窗口高低点计算参考回撤位。
     // 这是当前参考价格，不代表已确认波段；历史信号只显示其原始波段状态，不代表当前有效买点。
@@ -6378,7 +6389,8 @@ function updateResults(data, meta, nineTurn) {
         reacted: false,
         reaction_signal: ''
       }));
-      fh += _renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null);
+      fh += _renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null,
+        { low: _low, high: _high }, '计算区间');
     }
   }
   // 最新状态按Fib位置展示最近一次确认；历史强信号在价格下方补充事件所属波段区间（旧记录无区间时不改变原显示）。
