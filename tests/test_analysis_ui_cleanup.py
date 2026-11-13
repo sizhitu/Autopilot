@@ -112,6 +112,7 @@ def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored()
 def test_fibonacci_panel_reuses_analysis_history_for_date_deduplicated_snapshots():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
+    history_loader = html[html.index("async function loadFibSignalHistory()"):html.index("function updateResults(data, meta, nineTurn)")]
 
     assert 'id="fibAnalysisSnapshotsBody"' in update_results
     assert "历史分析记录" in update_results
