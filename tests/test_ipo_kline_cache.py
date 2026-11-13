@@ -77,3 +77,52 @@ def test_short_history_without_listing_metadata_is_not_cached_as_complete(monkey
     # 未知上市日时仍走原有长历史补取流程，短结果不会进入K线缓存。
     assert calls == [300, 400, 300, 400]
     assert ("OLDSTOCK", 300) not in data_fetcher._KLINE_CACHE
+
+
+def test_yahoo_first_trade_date_is_preserved_as_listing_metadata(monkeypatch):
+    from datetime import date
+
+    dates = pd.bdate_range("2026-06-01", periods=108)
+    listing_ts = int(pd.Timestamp("2026-06-01", tz="UTC").timestamp())
+    rows = len(dates)
+    payload = {"chart": {"result": [{
+        "timestamp": [int(ts.timestamp()) for ts in dates],
+        "indicators": {"quote": [{
+            "open": [10.0] * rows, "high": [11.0] * rows,
+            "low": [9.0] * rows, "close": [10.0] * rows,
+            "volume": [1000.0] * rows,
+        }]},
+        "meta": {"firstTradeDate": listing_ts},
+    }], "error": None}}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return payload
+
+    class Session:
+        @staticmethod
+        def get(*args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(data_fetcher, "_yahoo_in_cooldown", lambda: False)
+    monkeypatch.setattr(data_fetcher, "_clear_yahoo_cooldown", lambda: None)
+    monkeypatch.setattr(data_fetcher, "_trigger_yahoo_cooldown", lambda: None)
+    monkeypatch.setattr(data_fetcher, "_expected_session_date", lambda market="us": dates[-1].date())
+    monkeypatch.setattr(
+        data_fetcher.DataFetcher, "_fetch_stooq",
+        lambda self, symbol, days: (_ for _ in ()).throw(RuntimeError("no Stooq")),
+    )
+    monkeypatch.setattr(
+        data_fetcher.DataFetcher, "_fetch_us_stock_nasdaq",
+        lambda self, symbol, days: (_ for _ in ()).throw(RuntimeError("no Nasdaq")),
+    )
+
+    fetcher = data_fetcher.DataFetcher()
+    fetcher.session = Session()
+    result = fetcher.fetch_us_stock("SPCX", days=300)
+
+    assert len(result) == 108
+    assert result.attrs["listing_date"] == "2026-06-01"
