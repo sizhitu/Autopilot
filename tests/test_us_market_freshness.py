@@ -82,8 +82,92 @@ def test_stale_long_yahoo_history_still_tries_fresh_fallback(monkeypatch):
 
     fetcher = data_fetcher.DataFetcher()
     fetcher.session = Session()
-    result = fetcher.fetch_us_stock("AAPL", days=120)
+    result = fetcher.fetch_us_stock("AAPL", days=300)
 
     assert called["nasdaq"] == 1
     assert data_fetcher._df_last_date(result) == date(2026, 11, 12)
     assert len(result) == 101
+
+
+
+def test_stale_full_yahoo_history_returns_without_slow_fallback(monkeypatch):
+    dates = pd.date_range(end="2026-11-11", periods=250, freq="B")
+    timestamps = [int(ts.timestamp()) for ts in dates]
+    quote = {
+        "open": [100.0] * len(dates),
+        "high": [101.0] * len(dates),
+        "low": [99.0] * len(dates),
+        "close": [100.0] * len(dates),
+        "volume": [1000] * len(dates),
+    }
+    payload = {"chart": {"result": [{
+        "timestamp": timestamps,
+        "indicators": {"quote": [quote]},
+        "meta": {},
+    }], "error": None}}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return payload
+
+    class Session:
+        @staticmethod
+        def get(*args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(data_fetcher, "_expected_session_date", lambda market="us": date(2026, 11, 12))
+    monkeypatch.setattr(data_fetcher, "_yahoo_in_cooldown", lambda: False)
+    monkeypatch.setattr(data_fetcher, "_clear_yahoo_cooldown", lambda: None)
+    monkeypatch.setattr(data_fetcher, "_trigger_yahoo_cooldown", lambda: None)
+
+    def should_not_call(*args, **kwargs):
+        raise AssertionError("long Yahoo history must not wait on fallback providers")
+
+    monkeypatch.setattr(data_fetcher.DataFetcher, "_fetch_stooq", should_not_call)
+    monkeypatch.setattr(data_fetcher.DataFetcher, "_fetch_us_stock_nasdaq", should_not_call)
+
+    fetcher = data_fetcher.DataFetcher()
+    fetcher.session = Session()
+    result = fetcher.fetch_us_stock("AAPL", days=300)
+
+    assert len(result) == 250
+    assert data_fetcher._df_last_date(result) == date(2026, 11, 11)
+
+
+def test_stooq_long_history_is_preferred_before_short_nasdaq_fallback(monkeypatch):
+    class Response:
+        status_code = 429
+
+    class Session:
+        @staticmethod
+        def get(*args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(data_fetcher, "_yahoo_in_cooldown", lambda: False)
+    monkeypatch.setattr(data_fetcher, "_trigger_yahoo_cooldown", lambda: None)
+
+    stooq = pd.DataFrame({
+        "date": pd.date_range(end="2026-11-12", periods=240, freq="B"),
+        "open": [100.0] * 240,
+        "high": [101.0] * 240,
+        "low": [99.0] * 240,
+        "close": [100.0] * 240,
+        "volume": [1000.0] * 240,
+    })
+
+    monkeypatch.setattr(data_fetcher.DataFetcher, "_fetch_stooq", lambda self, symbol, days: stooq)
+
+    def should_not_call(*args, **kwargs):
+        raise AssertionError("Nasdaq short-history fallback must not run when Stooq has long history")
+
+    monkeypatch.setattr(data_fetcher.DataFetcher, "_fetch_us_stock_nasdaq", should_not_call)
+
+    fetcher = data_fetcher.DataFetcher()
+    fetcher.session = Session()
+    result = fetcher.fetch_us_stock("AAPL", days=300)
+
+    assert len(result) == 240
+    assert data_fetcher._df_last_date(result) == date(2026, 11, 12)
