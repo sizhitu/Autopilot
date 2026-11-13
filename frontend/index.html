@@ -6103,8 +6103,8 @@ async function loadFibSignalHistory() {
   if (!previousHTML || previousHTML.indexOf('fib-history-row') < 0) box.textContent = '读取中…';
   try {
     const symbol = encodeURIComponent(currentSymbol);
-    // 新格式完整事件序列只存在最新分析记录中，先只取一条，避免拉取100份大JSON。
-    let response = await apiJSON('/api/history?symbol=' + symbol + '&limit=5');
+    // 一次请求同时复用最近快照：既汇总历史强信号，也展示分析快照；避免额外请求。
+    let response = await apiJSON('/api/history?symbol=' + symbol + '&limit=20');
     let items = Array.isArray(response.items) ? response.items : [];
     let events = [];
     const parseRecord = item => { let record=item && item.result_json ? item.result_json : {}; if (typeof record==='string') { try { record=JSON.parse(record); } catch(e) { record={}; } } return record && record.data ? record.data : {}; };
@@ -6168,6 +6168,54 @@ async function loadFibSignalHistory() {
       // 新查询中新发现的legacy记录也必须转换为事件，不能只收集到数组里。
       addLegacyEvents(legacyRecords);
     }
+    // 历史分析快照直接复用 /api/history 已返回的数据，不触发额外行情请求或指标重算。
+    // 同一交易日多次刷新只展示最新一份快照，最多展示10个不同分析日期。
+    const snapshotByDate = new Map();
+    const escSnapshot = v => String(v == null ? '' : v).replace(/[&<>"']/g,ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    for (const item of items) {
+      const data = parseRecord(item);
+      const meta = data.meta || {};
+      const snapshotDate = String(meta.end_date || meta.updated_at || (item && item.created_at) || '').slice(0,10);
+      if (!snapshotDate || snapshotByDate.has(snapshotDate)) continue;
+      const bullish = Array.isArray(data.fib_levels) ? data.fib_levels : [];
+      const bearish = Array.isArray(data.fib_bearish_levels) ? data.fib_bearish_levels : [];
+      if (!bullish.length && !bearish.length) continue;
+      snapshotByDate.set(snapshotDate, { date:snapshotDate, bullish, bearish, chart:data.chart_data || {} });
+    }
+    const snapshotBox = document.getElementById('fibAnalysisSnapshotsBody');
+    if (snapshotBox) {
+      const snapshots = Array.from(snapshotByDate.values()).slice(0,10);
+      if (!snapshots.length) {
+        snapshotBox.textContent = '暂无可展示的历史分析快照';
+      } else {
+        snapshotBox.innerHTML = snapshots.map(snapshot => {
+          const groups = [
+            { label:'↑ 上涨支撑', levels:snapshot.bullish },
+            { label:'↓ 下跌阻力', levels:snapshot.bearish }
+          ].filter(group => group.levels.length);
+          const rows = groups.map(group =>
+            '<div style="margin-top:5px;color:var(--text-dim);font-size:10px;">' + group.label + '</div>' +
+            group.levels.map(level => {
+              const confirmed = !!(level.reacted && level.reaction_signal);
+              return '<div style="display:grid;grid-template-columns:42px minmax(58px,.8fr) minmax(70px,1.2fr) 76px;gap:5px;padding:4px 0;border-bottom:1px solid var(--border);font-size:10px;">' +
+                '<span>' + escSnapshot(Number(level.level).toFixed(3)) + '</span>' +
+                '<span style="font-family:monospace;">' + escSnapshot(level.price) + '</span>' +
+                '<span style="color:' + (confirmed ? 'var(--gold)' : 'var(--text-dim)') + ';">' + (confirmed ? '★ ' + escSnapshot(level.reaction_signal) : '—') + '</span>' +
+                '<span style="text-align:right;color:var(--text-dim);">' + (confirmed ? escSnapshot(String(level.signal_date || '').slice(0,10)) : '—') + '</span></div>';
+            }).join('')
+          ).join('');
+          const swing = snapshot.chart || {};
+          const wave = Number(swing.swing_high) > Number(swing.swing_low) && Number(swing.swing_low) > 0
+            ? '波段高点 ' + escSnapshot(swing.swing_high) + ' · 低点 ' + escSnapshot(swing.swing_low)
+            : '当时分析结果';
+          return '<details style="border-bottom:1px solid var(--border);padding:6px 0;">' +
+            '<summary style="cursor:pointer;display:flex;justify-content:space-between;gap:8px;list-style:none;">' +
+            '<b style="font-size:11px;color:var(--text);">' + escSnapshot(snapshot.date) + '</b>' +
+            '<span style="font-size:10px;color:var(--text-dim);">' + wave + '　⌄</span></summary>' +
+            '<div style="margin-top:6px;">' + rows + '</div></details>';
+        }).join('');
+      }
+    }
     events = Array.from(archivedEvents.values());
     events.sort((a,b) => b.date.localeCompare(a.date));
     if (!events.length) { box.textContent = '暂无可追溯的历史斐波那契确认事件'; return; }
@@ -6181,6 +6229,8 @@ async function loadFibSignalHistory() {
         '<span class="fib-history-level">' + esc(ev.level) + '</span><span class="fib-history-price">' + esc(ev.price) + '</span><span class="fib-history-date">' + esc(ev.date) + '</span><span class="fib-history-performance ' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? (ev.forward_5d_return_pct > 0 ? 'positive' : (ev.forward_5d_return_pct < 0 ? 'negative' : '')) : '') + '" title="' + esc(ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? '信号触发日收盘价至第5个交易日收盘价的方向收益' : '暂无完整的5日后行情数据') + '">' + (ev.forward_5d_return_pct != null && Number.isFinite(ev.forward_5d_return_pct) ? ((ev.forward_5d_return_pct > 0 ? '+' : '') + ev.forward_5d_return_pct.toFixed(2) + '%') : (ev.forward_5d_status === 'pending' ? '待观察' : '暂无数据')) + '</span></div>';
     }).join('');
   } catch(e) {
+    const snapshotBox = document.getElementById('fibAnalysisSnapshotsBody');
+    if (snapshotBox && snapshotBox.textContent === '读取历史分析记录…') snapshotBox.textContent = '历史分析记录读取失败，请稍后重试';
     if (previousHTML && previousHTML.indexOf('fib-history-row') >= 0) { box.innerHTML=previousHTML; box.insertAdjacentHTML('afterbegin','<div class="fib-history-warning">历史更新失败，保留上次数据</div>'); }
     else box.textContent='历史信号读取失败：' + ((e && e.message) || '请稍后重试');
   }
@@ -6371,6 +6421,11 @@ function updateResults(data, meta, nineTurn) {
     + `<div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px;">
       <b style="font-size:12px;">历史强信号</b>
       <div id="fibSignalHistoryBody" style="font-size:11px;color:var(--text-dim);margin-top:6px;">读取历史信号…</div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px;">
+      <b style="font-size:12px;">历史分析记录</b>
+      <div style="font-size:10px;color:var(--text-dim);margin:4px 0 6px;">按分析日期保存当时的 Fib 点位和信号，不随最新行情重算</div>
+      <div id="fibAnalysisSnapshotsBody" style="font-size:11px;color:var(--text-dim);margin-top:6px;">读取历史分析记录…</div>
     </div>`;
   loadFibSignalHistory();
   const fibUpdatedAt = String((meta && meta.end_date) || (meta && meta.updated_at) || (data && data.updated_at) || '').slice(0, 10);
