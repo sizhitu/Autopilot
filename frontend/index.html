@@ -483,28 +483,35 @@ body.help-open { overflow: hidden; touch-action: none; }
 .ind-detail { font-size:10px; color:var(--text-dim); flex:1; text-align:right; margin-right:6px; }
 
 /* 斐波那契 */
-.fib-table-head,.fib-row { display:grid; grid-template-columns:42px minmax(54px,.75fr) minmax(88px,1.2fr) 72px 64px; align-items:center; column-gap:6px; }
+.fib-table-head,.fib-row {
+  display:grid;
+  grid-template-columns:36px minmax(92px,1.2fr) minmax(82px,1fr) minmax(72px,.9fr) minmax(64px,.8fr);
+  align-items:center;
+  column-gap:8px;
+}
 .fib-table-head { padding:4px 0 5px; color:var(--text-dim); font-size:10px; border-bottom:1px solid var(--border); }
+.fib-table-head span { min-width:0; }
 .fib-table-head span:last-child,.fib-signal-date { text-align:right; }
 .fib-row { padding:5px 0; border-bottom:1px solid var(--border); }
 .fib-level { font-weight:600; color:var(--purple); font-size:12px; }
-.fib-price { font-family:monospace; font-size:12px; }
-.fib-star { color:var(--gold); font-size:11px; }
+.fib-price { min-width:0; font-family:monospace; font-size:12px; font-variant-numeric:tabular-nums; }
+.fib-star { color:var(--gold); font-size:11px; flex:0 0 auto; }
 .fib-tested { color:var(--text-dim); font-size:10px; }
-.fib-status { display:flex; align-items:center; justify-content:flex-start; gap:6px; font-size:10px; white-space:nowrap; min-width:0; }
-.fib-reaction { color:var(--gold); }
-.fib-signal-date { color:var(--text-dim); font-size:10px; white-space:nowrap; }
-.fib-wave-status { font-size:10px; text-align:right; white-space:nowrap; }
+.fib-status { display:flex; align-items:center; justify-content:flex-start; gap:5px; font-size:10px; white-space:nowrap; min-width:0; overflow:hidden; }
+.fib-reaction { color:var(--gold); overflow:hidden; text-overflow:ellipsis; }
+.fib-signal-date { color:var(--text-dim); font-size:10px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.fib-wave-status { min-width:0; font-size:10px; text-align:right; white-space:nowrap; }
 .fib-wave-valid { color:var(--green); }
 .fib-wave-expired { color:var(--orange); }
 .fib-wave-unknown { color:var(--text-dim); }
 .fib-history-head,.fib-history-row {
   display:grid;
-  grid-template-columns:minmax(0,1.5fr) 44px minmax(58px,.7fr) 78px 70px;
+  grid-template-columns:minmax(0,1.5fr) 38px minmax(84px,1.05fr) minmax(70px,.85fr) minmax(60px,.75fr);
   align-items:center;
-  column-gap:10px;
+  column-gap:8px;
 }
 .fib-history-head { padding:3px 0 5px; color:var(--text-dim); font-size:10px; border-bottom:1px solid var(--border); }
+.fib-history-head span { min-width:0; }
 .fib-history-head span:nth-last-child(-n+2),.fib-history-date,.fib-history-performance { text-align:right; }
 .fib-history-row { padding:7px 0; border-bottom:1px solid var(--border); font-size:11px; }
 .fib-history-signal { display:flex; align-items:center; gap:4px; min-width:0; color:var(--gold); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -513,20 +520,29 @@ body.help-open { overflow: hidden; touch-action: none; }
 .fib-history-bearish .fib-history-direction { color:var(--red); }
 .fib-history-star { color:var(--gold); font-size:12px; flex:0 0 auto; }
 .fib-history-signal-text { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-.fib-history-price { font-family:monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.fib-history-date { color:var(--text-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }\n.fib-history-performance { font-variant-numeric:tabular-nums; white-space:nowrap; color:var(--text-dim); }
+.fib-history-price { min-width:0; font-family:monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fib-history-date { color:var(--text-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fib-history-performance { font-variant-numeric:tabular-nums; white-space:nowrap; color:var(--text-dim); }
 .fib-history-performance.positive { color:var(--green); }
 .fib-history-performance.negative { color:var(--red); }
 @media (max-width:420px) {
-  .fib-table-head,.fib-row { grid-template-columns:36px minmax(42px,.65fr) minmax(68px,1fr) 62px 54px; column-gap:4px; }
+  .fib-table-head,.fib-row {
+    grid-template-columns:30px minmax(74px,1.15fr) minmax(64px,1fr) minmax(62px,.9fr) minmax(54px,.8fr);
+    column-gap:5px;
+  }
   .fib-table-head { font-size:9px; }
   .fib-wave-status,.fib-signal-date { font-size:9px; }
-  .fib-history-head,.fib-history-row { grid-template-columns:minmax(0,1.2fr) 34px minmax(48px,.65fr) 66px 58px; column-gap:4px; }
+  .fib-history-head,.fib-history-row {
+    grid-template-columns:minmax(0,1fr) 30px minmax(72px,1.1fr) minmax(62px,.9fr) minmax(52px,.75fr);
+    column-gap:5px;
+  }
   .fib-history-row { font-size:10px; }
   .fib-history-signal { font-size:10px; }
+  .fib-history-date,.fib-history-performance { font-size:9px; }
 }
 
 /* 图表 */
+
 .chart-card { padding:0; overflow:hidden; }
 .chart-toolbar { display:flex; align-items:center; justify-content:space-between; padding:6px 12px; border-bottom:1px solid var(--border); flex-wrap:wrap; gap:4px; }
 .chart-toolbar span { font-size:12px; font-weight:600; }

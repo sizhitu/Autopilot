@@ -86,7 +86,8 @@ def test_fibonacci_panel_keeps_signal_history_with_concise_fallback_dates():
 
 def test_fibonacci_history_columns_date_last_and_confirmation_markers_restored():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
-    assert 'grid-template-columns:minmax(0,1.5fr) 44px minmax(58px,.7fr) 78px 70px' in html
+    assert 'grid-template-columns:minmax(0,1.5fr) 38px minmax(84px,1.05fr) minmax(70px,.85fr) minmax(60px,.75fr)' in html
+    assert 'grid-template-columns:minmax(0,1fr) 30px minmax(72px,1.1fr) minmax(62px,.9fr) minmax(52px,.75fr)' in html
     assert 'fib-history-head span:nth-last-child(-n+2),.fib-history-date,.fib-history-performance { text-align:right; }' in html
     assert "const bearish = ev.side === 'bearish';" in html
     assert "fib-history-bullish" in html
@@ -246,7 +247,8 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
     assert '<span>信号日期</span><span>所属波段</span>' in renderer
     assert "波段最近确认" not in renderer
     assert "class=\"fib-table-head\"" in renderer
-    assert "grid-template-columns:42px minmax(54px,.75fr) minmax(88px,1.2fr) 72px 64px" in html
+    assert "grid-template-columns:36px minmax(92px,1.2fr) minmax(82px,1fr) minmax(72px,.9fr) minmax(64px,.8fr)" in html
+    assert "grid-template-columns:30px minmax(74px,1.15fr) minmax(64px,1fr) minmax(62px,.9fr) minmax(54px,.8fr)" in html
 
 
 
