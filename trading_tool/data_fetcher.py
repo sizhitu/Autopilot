@@ -13,7 +13,7 @@ import json
 import re
 import time
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 import numpy as np
 
@@ -671,8 +671,8 @@ class DataFetcher:
                 try:
                     first_trade_ts = (data.get("meta") or {}).get("firstTradeDate")
                     if first_trade_ts:
-                        df.attrs["listing_date"] = datetime.utcfromtimestamp(
-                            int(first_trade_ts)
+                        df.attrs["listing_date"] = datetime.fromtimestamp(
+                            int(first_trade_ts), tz=timezone.utc
                         ).date().isoformat()
                 except Exception:
                     pass
@@ -1116,7 +1116,7 @@ class DataFetcher:
                 df = _merge_ohlc_frames([stored_df, df] if df is not None else [stored_df])
 
         # 过短结果：再试一次更大窗口（常见于源站截断/临时失败）
-        if not _enough(df, allow_ipo=False):
+        if not _enough(df, allow_ipo=True):
             try:
                 if self._is_us_index(symbol) or not self._is_cn_stock(symbol):
                     df2 = self.fetch_us_stock(symbol, max(days, 400))
