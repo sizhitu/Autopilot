@@ -136,6 +136,22 @@ def test_fibonacci_history_keeps_two_sections_and_shows_wave_range_under_price()
     assert '"swing_end_price": round(float(swing["end_price"]), 4)' in engine
 
 
+def test_current_fibonacci_levels_show_their_own_wave_range():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
+
+    # Current levels use the same detected swing anchors as the backend Fib calculation.
+    assert "const _fibSwing = (data && data.chart_data && data.chart_data.fib_swing) || null;" in update_results
+    assert "_fibSwing.direction !== side" in update_results
+    assert "start_price" in update_results and "end_price" in update_results
+    assert "_currentFibWave('bullish')" in update_results
+    assert "_currentFibWave('bearish')" in update_results
+    assert "rangeLabel + ' ' + waveRange.low.toFixed(2)" in update_results
+    assert "rangeHTML}</span>" in update_results
+    # Fallback levels are based on the analysis window, not a confirmed swing.
+    assert "{ low: _low, high: _high }, '计算区间'" in update_results
+
+
 def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     update_results = html[html.index("function updateResults(data, meta, nineTurn)"):]
