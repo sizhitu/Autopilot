@@ -249,6 +249,8 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
     assert "class=\"fib-table-head\"" in renderer
     assert "grid-template-columns:30px minmax(100px,1.1fr) minmax(140px,1.4fr) minmax(72px,.75fr) minmax(52px,.55fr)" in html
     assert "grid-template-columns:24px minmax(64px,1fr) minmax(76px,1.2fr) minmax(44px,.7fr) minmax(36px,.55fr)" in html
+    assert "column-gap:8px;" in html
+    assert "column-gap:5px;" in html
     assert ".fib-table-head > span,.fib-row > span { min-width:0; }" in html
     assert "white-space:normal;overflow-wrap:anywhere;" in html
 
