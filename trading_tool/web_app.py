@@ -348,6 +348,32 @@ def _run_heavy(fn, *args, **kwargs):
             pass
 
 
+def _quote_payload_has_complete_ipo_history(payload: dict) -> bool:
+    """缓存结果只有带可信上市日且覆盖上市首日至最新交易日，才允许少于250根。"""
+    try:
+        from data_fetcher import _bar_is_stale
+        meta = payload.get("meta") or {}
+        listing_date = str(meta.get("listing_date") or "").strip()
+        start_date = str(meta.get("start_date") or "").strip()
+        end_date = str(meta.get("end_date") or "").strip()
+        rows = int(meta.get("rows") or len(((payload.get("chart") or {}).get("candles")) or []))
+        if not listing_date or not start_date or not end_date or rows < 20:
+            return False
+        if start_date > listing_date:
+            return False
+        return not _bar_is_stale(datetime.strptime(end_date[:10], "%Y-%m-%d").date(), market="us")
+    except Exception:
+        return False
+
+
+def _quote_df_has_complete_ipo_history(df) -> bool:
+    try:
+        from data_fetcher import is_complete_ipo_history
+        return bool(is_complete_ipo_history(df, market="us"))
+    except Exception:
+        return False
+
+
 def _clamp_quote_chart(payload: dict) -> dict:
     """保证返回的 chart 恰好最多 CHART_BARS 根，并同步 meta.rows。"""
     if not isinstance(payload, dict):
@@ -1438,10 +1464,10 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
             and (cached_hit.get("chart") or {}).get("candles")):
         _nc = len((cached_hit.get("chart") or {}).get("candles") or [])
         # 低于 250 根视为旧截断缓存，强制重拉
-        if _nc >= 250:
+        if _nc >= 250 or _quote_payload_has_complete_ipo_history(cached_hit):
             cached_hit = _clamp_quote_chart(dict(cached_hit))
             _nc3 = len(((cached_hit.get("chart") or {}).get("candles")) or [])
-            if _nc3 >= 250:
+            if _nc3 >= 250 or _quote_payload_has_complete_ipo_history(cached_hit):
                 cached_hit["stale"] = False
                 cached_hit["cache_hit"] = True
                 cached_hit["action_log"] = _action_log_payload(req.symbol)
@@ -1458,7 +1484,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
     def _quote_fetch_df():
         _days = CHART_BARS
         df0 = fetcher.fetch(req.symbol, _days)
-        if df0 is None or len(df0) < 200:
+        if df0 is None or (len(df0) < 200 and not _quote_df_has_complete_ipo_history(df0)):
             try:
                 from data_fetcher import invalidate_kline_cache
                 invalidate_kline_cache(req.symbol)
@@ -1476,7 +1502,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
         cached = cache.get_quote_cache(req.symbol)
         if cached and isinstance(cached, dict):
             _nc2 = len(((cached.get("chart") or {}).get("candles")) or [])
-            if _nc2 >= 250:
+            if _nc2 >= 250 or _quote_payload_has_complete_ipo_history(cached):
                 cached = _clamp_quote_chart(dict(cached))
                 cached["stale"] = True
                 cached["action_log"] = _action_log_payload(req.symbol)
@@ -1497,7 +1523,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
     if len(df) < 5:
         raise HTTPException(400, f"数据不足: 仅{len(df)}根K线，无法分析")
     # 统一目标 ≥300 根；不足再强拉一次
-    if len(df) < 250:
+    if len(df) < 250 and not _quote_df_has_complete_ipo_history(df):
         try:
             from data_fetcher import invalidate_kline_cache
             invalidate_kline_cache(req.symbol)
@@ -1512,7 +1538,7 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
             pass
 
     # 实时成功时，把每日 K 线写入缓存层（供回测 / 指标分析 / 容错）
-    if source == "live" and df is not None and len(df) >= 180:
+    if source == "live" and df is not None and (len(df) >= 180 or _quote_df_has_complete_ipo_history(df)):
         try:
             daily_store.store_daily_bars(req.symbol, df, source=source)
         except Exception:
@@ -1561,17 +1587,18 @@ async def _get_quote_unlocked(req: QuoteRequest, request: Request = None,
             "last_close": round(float(df['close'].iloc[-1]), 2),
             "start_date": df['date'].iloc[0].strftime('%Y-%m-%d') if 'date' in df.columns else "",
             "end_date": df['date'].iloc[-1].strftime('%Y-%m-%d') if 'date' in df.columns else "",
+            "listing_date": (getattr(df, "attrs", {}) or {}).get("listing_date"),
         },
         "action_log": _action_log_payload(req.symbol),
     })
 
     payload = _clamp_quote_chart(payload)
 
-    # 仅当 chart≥250 根才写入 quote 缓存，杜绝 15 根污染；写入前已截断为最多 300
+    # 常规历史缓存阈值仍为250根；可信且完整的新股历史允许少于250根缓存。
     if source == "live":
         try:
             _cn = len(((payload.get("chart") or {}).get("candles")) or [])
-            if _cn >= 250:
+            if _cn >= 250 or _quote_payload_has_complete_ipo_history(payload):
                 cache.set_quote_cache(req.symbol, payload)
             else:
                 cache.delete_quote_cache(req.symbol)
