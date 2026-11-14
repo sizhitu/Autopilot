@@ -6354,6 +6354,7 @@ function updateResults(data, meta, nineTurn) {
   const _latestFibEvent = (level, side) => {
     const matches = _fibHistory.filter(ev => {
       if (!ev || !ev.signal_date || !ev.signal || !ev.side) return false;
+      if (ev.is_current_valid !== true) return false;
       if (side && ev.side !== side) return false;
       return Math.abs(Number(ev.level) - Number(level)) < 0.0005;
     });
@@ -6380,18 +6381,20 @@ function updateResults(data, meta, nineTurn) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
       // 近期信号按方向和 Fib 位匹配最近一次确认；波段有效性只作标注，不过滤信号。
       const event = _latestFibEvent(fl.level, side);
-      const fallbackSignal = !!(fl.reacted && fl.reaction_signal);
-      const hasSignal = !!event || fallbackSignal;
-      const signal = event ? event.signal : (fallbackSignal ? fl.reaction_signal : '');
-      const signalDate = event ? event.signal_date : (fallbackSignal ? fl.signal_date : '');
-      const star = hasSignal ? '<span class="fib-star">★</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '—');
+      // 当前强信号只认后端按交易日和当前波段双重校验的事件；
+      // 不再用 fib_levels.reacted 兜底，避免旧确认绕过时效过滤。
+      const hasSignal = !!event;
+      const signal = event ? event.signal : '';
+      const signalDate = event ? event.signal_date : '';
+      const star = hasSignal ? '<span class="fib-star">★</span>' : (fl.tested ? '<span class="fib-tested">●触及' + '</span>' : '—');
       const rx = hasSignal ? `<span class="fib-reaction">${signal}</span>` : '';
-      const status = event ? _fibWaveStatus(event) : (fallbackSignal ? '无法追溯' : '—');
+      const status = event ? _fibWaveStatus(event) : '—';
       const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
       html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}${rangeHTML}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${signalDate || '—'}</span><span class="fib-wave-status ${statusClass}">${status}</span></div>`;
     }
     return html;
   };
+  fh += '<div style="font-size:10px;color:var(--text-dim);padding:2px 0 6px;">★仅显示最近20个交易日内、且仍属于当前有效波段的确认信号；过期或旧波段信号保留在下方历史记录。</div>';
   if (_fibBull.length) {
     fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'));
   } else if (_fibBear.length) {
