@@ -914,12 +914,7 @@ class FujimotoStrategy:
         current_swing: Optional[dict],
         max_age_trading_days: int = 20,
     ) -> list:
-        """
-        Mark events usable for the current Fib table.
-        A signal is current only when it is within the latest N trading bars
-        and its exact confirmed swing (direction + pivot dates) is still the
-        current, non-expired swing. Historical events remain untouched.
-        """
+        """Mark current-usable events without removing or changing historical events."""
         if df is None or df.empty or not events:
             return events
 
@@ -1036,11 +1031,47 @@ class FujimotoStrategy:
                             return parsed_date.strftime("%Y-%m-%d") if not pd.isna(parsed_date) else None
                         event.update({
                             "swing_direction": swing["direction"],
-                            "swing_start_date": _date_at(start        # 当前可用性只作展示标记，不过滤/删除历史事件，也不改变5日统计。
-        current_swing = self._detect_valid_fib_swing(df, lookback=max(lookback, 120))
-        result = self._annotate_fibonacci_current_validity(df, result, current_swing)
+                            "swing_start_date": _date_at(start_idx),
+                            "swing_end_date": _date_at(end_idx),
+                            "swing_confirmation_date": _date_at(confirm_idx) if confirm_idx < len(prefix) else None,
+                            "swing_start_price": round(float(swing["start_price"]), 4),
+                            "swing_end_price": round(float(swing["end_price"]), 4),
+                        })
+                    events.append(event)
 
-es[future_position] / closes[position] - 1.0) * 100.0
+        # 同一方向、Fib 位、交易日、信号类型只保留一条。
+        unique = {}
+        for event in events:
+            key = (event["side"], event["level"], event["signal_date"], event["signal"])
+            unique[key] = event
+        result = list(unique.values())
+
+        # 5 日表现只使用信号日之后第 5 根交易 K 线；未走满 5 根时不计入分母。
+        date_values = (
+            pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+            if "date" in df.columns
+            else pd.Series(pd.to_datetime(pd.Index(df.index), errors="coerce").strftime("%Y-%m-%d"))
+        )
+        date_positions = {}
+        for position, date_value in enumerate(date_values):
+            if pd.notna(date_value):
+                date_positions[str(date_value)[:10]] = position
+        closes = pd.to_numeric(df["close"], errors="coerce").to_numpy(dtype=float)
+        bucket_stats = {}
+        for event in result:
+            position = date_positions.get(event["signal_date"])
+            future_position = position + 5 if position is not None else len(closes)
+            if (position is None or future_position >= len(closes)
+                    or not np.isfinite(closes[position])
+                    or not np.isfinite(closes[future_position])
+                    or closes[position] <= 0):
+                event.update({
+                    "forward_5d_status": "pending",
+                    "forward_5d_return_pct": None,
+                    "forward_5d_win": None,
+                })
+                continue
+            forward_return = (closes[future_position] / closes[position] - 1.0) * 100.0
             won = forward_return > 0 if event["side"] == "bullish" else forward_return < 0
             event.update({
                 "forward_5d_status": "matured",
@@ -1060,55 +1091,9 @@ es[future_position] / closes[position] - 1.0) * 100.0
                 round(stats["wins"] / samples, 4) if samples else None
             )
 
-        # 当前可用信号必须同时满足：最近20个交易日、事件所属波段仍是当前有效波段。
-        # 仅保留历史事件，不删除历史记录，也不改变5日表现统计口径。
+        # 只为近期模块标记当前可用性；历史事件和5日表现样本均完整保留。
         current_swing = self._detect_valid_fib_swing(df, lookback=max(lookback, 120))
-        current_swing_valid = bool(
-            current_swing and self._is_fib_swing_fresh(df, current_swing)
-        )
-
-        def _date_at(position):
-            raw = (
-                df.iloc[position]["date"] if "date" in df.columns
-                else df.index[position]
-            )
-            parsed_date = pd.to_datetime(raw, errors="coerce")
-            return parsed_date.strftime("%Y-%m-%d") if not pd.isna(parsed_date) else None
-
-        current_wave_key = None
-        if current_swing_valid:
-            current_wave_key = (
-                current_swing["direction"],
-                _date_at(int(current_swing["start_idx"])),
-                _date_at(int(current_swing["end_idx"])),
-            )
-
-        latest_position = len(df) - 1
-        for event in result:
-            event_position = date_positions.get(event["signal_date"])
-            age_bars = (
-                latest_position - event_position
-                if event_position is not None and event_position <= latest_position
-                else None
-            )
-            event_wave_key = (
-                event.get("swing_direction"),
-                event.get("swing_start_date"),
-                event.get("swing_end_date"),
-            )
-            same_current_wave = bool(
-                current_wave_key
-                and all(event_wave_key)
-                and event_wave_key == current_wave_key
-            )
-            event["signal_age_trading_days"] = age_bars
-            event["is_recent_20d"] = bool(
-                age_bars is not None and 0 <= age_bars < 20
-            )
-            event["is_current_wave"] = same_current_wave
-            event["is_current_valid"] = bool(
-                event["is_recent_20d"] and same_current_wave
-            )
+        self._annotate_fibonacci_current_validity(df, result, current_swing)
 
         return sorted(
             result,
