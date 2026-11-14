@@ -1022,6 +1022,56 @@ class FujimotoStrategy:
                 round(stats["wins"] / samples, 4) if samples else None
             )
 
+        # 当前可用信号必须同时满足：最近20个交易日、事件所属波段仍是当前有效波段。
+        # 仅保留历史事件，不删除历史记录，也不改变5日表现统计口径。
+        current_swing = self._detect_valid_fib_swing(df, lookback=max(lookback, 120))
+        current_swing_valid = bool(
+            current_swing and self._is_fib_swing_fresh(df, current_swing)
+        )
+
+        def _date_at(position):
+            raw = (
+                df.iloc[position]["date"] if "date" in df.columns
+                else df.index[position]
+            )
+            parsed_date = pd.to_datetime(raw, errors="coerce")
+            return parsed_date.strftime("%Y-%m-%d") if not pd.isna(parsed_date) else None
+
+        current_wave_key = None
+        if current_swing_valid:
+            current_wave_key = (
+                current_swing["direction"],
+                _date_at(int(current_swing["start_idx"])),
+                _date_at(int(current_swing["end_idx"])),
+            )
+
+        latest_position = len(df) - 1
+        for event in result:
+            event_position = date_positions.get(event["signal_date"])
+            age_bars = (
+                latest_position - event_position
+                if event_position is not None and event_position <= latest_position
+                else None
+            )
+            event_wave_key = (
+                event.get("swing_direction"),
+                event.get("swing_start_date"),
+                event.get("swing_end_date"),
+            )
+            same_current_wave = bool(
+                current_wave_key
+                and all(event_wave_key)
+                and event_wave_key == current_wave_key
+            )
+            event["signal_age_trading_days"] = age_bars
+            event["is_recent_20d"] = bool(
+                age_bars is not None and 0 <= age_bars < 20
+            )
+            event["is_current_wave"] = same_current_wave
+            event["is_current_valid"] = bool(
+                event["is_recent_20d"] and same_current_wave
+            )
+
         return sorted(
             result,
             key=lambda item: (item["signal_date"], item["side"], item["level"]),
