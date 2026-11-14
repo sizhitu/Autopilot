@@ -308,3 +308,125 @@ class TestFibonacciTouchEpisodeOptimization:
         # A late anchor means the optimized scan processes only the 20-row suffix.
         episodes = FujimotoStrategy._fib_touch_episodes(frame, 100.0, 479)
         assert episodes == [list(range(480, 500))]
+
+
+class TestFibonacciCurrentSignalValidity:
+    def test_only_last_twenty_trading_bars_on_exact_current_wave_are_current(self):
+        dates = pd.bdate_range("2026-10-01", periods=30)
+        frame = pd.DataFrame({
+            "date": dates,
+            "open": [100.0] * 30,
+            "high": [101.0] * 30,
+            "low": [99.0] * 30,
+            "close": [100.0] * 30,
+            "volume": [1000.0] * 30,
+        })
+        current_swing = {
+            "direction": "bullish",
+            "start_idx": 3,
+            "end_idx": 15,
+            "confirmation_idx": 18,
+        }
+        def date_at(index):
+            return dates[index].strftime("%Y-%m-%d")
+
+        events = [
+            {
+                "side": "bullish", "signal_date": date_at(29),
+                "swing_direction": "bullish",
+                "swing_start_date": date_at(3), "swing_end_date": date_at(15),
+            },
+            {
+                "side": "bullish", "signal_date": date_at(10),
+                "swing_direction": "bullish",
+                "swing_start_date": date_at(3), "swing_end_date": date_at(15),
+            },
+            {
+                "side": "bullish", "signal_date": date_at(28),
+                "swing_direction": "bullish",
+                "swing_start_date": date_at(3), "swing_end_date": date_at(14),
+            },
+        ]
+
+        annotated = FujimotoStrategy._annotate_fibonacci_current_validity(
+            frame, events, current_swing
+        )
+
+        assert annotated[0]["signal_age_trading_days"] == 0
+        assert annotated[0]["is_recent_20d"] is True
+        assert annotated[0]["is_current_wave"] is True
+        assert annotated[0]["is_current_valid"] is True
+
+        # 19 bars ago is still inside the latest 20 trading bars (0..19).
+        assert annotated[1]["signal_age_trading_days"] == 19
+        assert annotated[1]["is_current_valid"] is True
+
+        # A recent event from an earlier/different wave must not be current.
+        assert annotated[2]["is_recent_20d"] is True
+        assert annotated[2]["is_current_wave"] is False
+        assert annotated[2]["is_current_valid"] is False
+
+    def test_twenty_trading_bars_ago_is_outside_current_signal_window(self):
+        dates = pd.bdate_range("2026-10-01", periods=30)
+        frame = pd.DataFrame({
+            "date": dates,
+            "open": [100.0] * 30,
+            "high": [101.0] * 30,
+            "low": [99.0] * 30,
+            "close": [100.0] * 30,
+            "volume": [1000.0] * 30,
+        })
+        current_swing = {
+            "direction": "bullish",
+            "start_idx": 3,
+            "end_idx": 15,
+            "confirmation_idx": 18,
+        }
+        event = {
+            "side": "bullish",
+            "signal_date": dates[9].strftime("%Y-%m-%d"),
+            "swing_direction": "bullish",
+            "swing_start_date": dates[3].strftime("%Y-%m-%d"),
+            "swing_end_date": dates[15].strftime("%Y-%m-%d"),
+        }
+
+        result = FujimotoStrategy._annotate_fibonacci_current_validity(
+            frame, [event], current_swing
+        )
+
+        assert result[0]["signal_age_trading_days"] == 20
+        assert result[0]["is_recent_20d"] is False
+        assert result[0]["is_current_wave"] is True
+        assert result[0]["is_current_valid"] is False
+
+    def test_expired_current_wave_cannot_authorize_current_signal(self):
+        dates = pd.bdate_range("2026-06-01", periods=110)
+        frame = pd.DataFrame({
+            "date": dates,
+            "open": [100.0] * 110,
+            "high": [101.0] * 110,
+            "low": [99.0] * 110,
+            "close": [100.0] * 110,
+            "volume": [1000.0] * 110,
+        })
+        current_swing = {
+            "direction": "bullish",
+            "start_idx": 3,
+            "end_idx": 15,
+            "confirmation_idx": 18,
+        }
+        event = {
+            "side": "bullish",
+            "signal_date": dates[-1].strftime("%Y-%m-%d"),
+            "swing_direction": "bullish",
+            "swing_start_date": dates[3].strftime("%Y-%m-%d"),
+            "swing_end_date": dates[15].strftime("%Y-%m-%d"),
+        }
+
+        result = FujimotoStrategy._annotate_fibonacci_current_validity(
+            frame, [event], current_swing
+        )
+
+        assert result[0]["is_recent_20d"] is True
+        assert result[0]["is_current_wave"] is False
+        assert result[0]["is_current_valid"] is False
