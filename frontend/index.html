@@ -6379,14 +6379,14 @@ function updateResults(data, meta, nineTurn) {
       : '';
     for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      // 近期信号按方向和 Fib 位匹配最近一次确认；波段有效性只作标注，不过滤信号。
+      // 近期强信号必须通过后端的交易日时效与当前波段双重校验。
       const event = _latestFibEvent(fl.level, side);
       // 当前强信号只认后端按交易日和当前波段双重校验的事件；
       // 不再用 fib_levels.reacted 兜底，避免旧确认绕过时效过滤。
       const hasSignal = !!event;
       const signal = event ? event.signal : '';
       const signalDate = event ? event.signal_date : '';
-      const star = hasSignal ? '<span class="fib-star">★</span>' : (fl.tested ? '<span class="fib-tested">●触及' + '</span>' : '—');
+      const star = hasSignal ? '<span class="fib-star">★</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '—');
       const rx = hasSignal ? `<span class="fib-reaction">${signal}</span>` : '';
       const status = event ? _fibWaveStatus(event) : '—';
       const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
