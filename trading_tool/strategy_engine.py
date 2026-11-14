@@ -907,6 +907,75 @@ class FujimotoStrategy:
         target_prices = [swing_low - diff * (ext - 1) for ext in (1.272, 1.618)]
         return fib_levels, swing_high, swing_low, target_prices
 
+    @staticmethod
+    def _annotate_fibonacci_current_validity(
+        df: pd.DataFrame,
+        events: list,
+        current_swing: Optional[dict],
+        max_age_trading_days: int = 20,
+    ) -> list:
+        """Mark current-usable events without removing or changing historical events."""
+        if df is None or df.empty or not events:
+            return events
+
+        if "date" in df.columns:
+            date_values = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        else:
+            date_values = pd.Series(
+                pd.to_datetime(pd.Index(df.index), errors="coerce").strftime("%Y-%m-%d")
+            )
+        date_positions = {
+            str(value)[:10]: position
+            for position, value in enumerate(date_values)
+            if pd.notna(value)
+        }
+        latest_position = len(df) - 1
+
+        current_wave_key = None
+        if current_swing and FujimotoStrategy._is_fib_swing_fresh(df, current_swing):
+            def _date_at(position):
+                if position < 0 or position >= len(df):
+                    return None
+                raw = (
+                    df.iloc[position]["date"] if "date" in df.columns
+                    else df.index[position]
+                )
+                parsed_date = pd.to_datetime(raw, errors="coerce")
+                return parsed_date.strftime("%Y-%m-%d") if not pd.isna(parsed_date) else None
+
+            current_wave_key = (
+                current_swing.get("direction"),
+                _date_at(int(current_swing["start_idx"])),
+                _date_at(int(current_swing["end_idx"])),
+            )
+
+        for event in events:
+            event_position = date_positions.get(str(event.get("signal_date") or "")[:10])
+            age_bars = (
+                latest_position - event_position
+                if event_position is not None and event_position <= latest_position
+                else None
+            )
+            event_wave_key = (
+                event.get("swing_direction"),
+                event.get("swing_start_date"),
+                event.get("swing_end_date"),
+            )
+            same_current_wave = bool(
+                current_wave_key
+                and all(event_wave_key)
+                and event_wave_key == current_wave_key
+            )
+            event["signal_age_trading_days"] = age_bars
+            event["is_recent_20d"] = bool(
+                age_bars is not None and 0 <= age_bars < max_age_trading_days
+            )
+            event["is_current_wave"] = same_current_wave
+            event["is_current_valid"] = bool(
+                event["is_recent_20d"] and same_current_wave
+            )
+        return events
+
     def _build_fibonacci_signal_history(self, df: pd.DataFrame, lookback: int = 60) -> list:
         """
         从完整 K 线序列逐日重放已确认波段 Fib 算法，重建独立确认事件。
@@ -1021,6 +1090,10 @@ class FujimotoStrategy:
             event["forward_5d_win_rate"] = (
                 round(stats["wins"] / samples, 4) if samples else None
             )
+
+        # 只为近期模块标记当前可用性；历史事件和5日表现样本均完整保留。
+        current_swing = self._detect_valid_fib_swing(df, lookback=max(lookback, 120))
+        self._annotate_fibonacci_current_validity(df, result, current_swing)
 
         return sorted(
             result,
