@@ -271,14 +271,14 @@ def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wav
     assert "Math.abs(Number(ev.level) - Number(level)) < 0.0005" in renderer
     assert "if (side && ev.side !== side) return false;" in renderer
     assert "matches.sort((a, b) => String(b.signal_date).localeCompare(String(a.signal_date)));" in renderer
-    assert "if (ev.is_current_valid !== true) return false;" in renderer
+    assert "if (ev.is_recent_20d !== true) return false;" in renderer
     assert "const hasSignal = !!event;" in renderer
     assert "fallbackSignal" not in renderer
     assert "ev.swing_confirmation_date" in renderer
     assert "if ((asOfAt - confirmedAt) / 86400000 > 90) return '已过期';" in renderer
     assert "if (ev.is_current_wave === true) return '当前波段';" in renderer
     assert "if (ev.is_current_wave === false) return '前波段';" in renderer
-    assert "const statusClass = status === '当前波段' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');" in renderer
+    assert "const statusClass = status === '当前波段' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : (status === '前波段' ? 'fib-wave-previous' : 'fib-wave-unknown'));" in renderer
     assert "const rangeColumnLabel = '参考价 / ' + rangeLabel;" in renderer
     assert '<span>最近确认</span><span>信号日期</span><span>信号所属波段</span>' in renderer
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
