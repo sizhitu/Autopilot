@@ -6392,7 +6392,7 @@ function updateResults(data, meta, nineTurn) {
       const star = hasSignal ? '<span class="fib-star">★</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '—');
       const rx = hasSignal ? `<span class="fib-reaction">${signal}</span>` : '';
       const status = event ? _fibWaveStatus(event) : '—';
-      const statusClass = status === '当前波段' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
+      const statusClass = status === '当前波段' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : (status === '前波段' ? 'fib-wave-previous' : 'fib-wave-unknown'));
       html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}${rangeHTML}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${signalDate || '—'}</span><span class="fib-wave-status ${statusClass}">${status}</span></div>`;
     }
     return html;
