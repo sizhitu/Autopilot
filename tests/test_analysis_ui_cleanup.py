@@ -170,7 +170,7 @@ def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish', _currentFibWave('bearish'))" in update_results
     assert "近期强信号必须通过后端的交易日时效与当前波段双重校验。" in update_results
-    assert "if (ev.is_current_valid !== true) return false;" in update_results
+    assert "if (ev.is_recent_20d !== true) return false;" in update_results
     assert "const hasSignal = !!event;" in update_results
     assert "不再用 fib_levels.reacted 兜底" in update_results
     assert "const _latestFibEvent = (level, side) =>" in update_results
@@ -275,8 +275,10 @@ def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wav
     assert "const hasSignal = !!event;" in renderer
     assert "fallbackSignal" not in renderer
     assert "ev.swing_confirmation_date" in renderer
-    assert "return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';" in renderer
-    assert "const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');" in renderer
+    assert "if ((asOfAt - confirmedAt) / 86400000 > 90) return '已过期';" in renderer
+    assert "if (ev.is_current_wave === true) return '当前波段';" in renderer
+    assert "if (ev.is_current_wave === false) return '前波段';" in renderer
+    assert "const statusClass = status === '当前波段' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');" in renderer
     assert "const rangeColumnLabel = '参考价 / ' + rangeLabel;" in renderer
     assert '<span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
@@ -285,7 +287,9 @@ def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wav
     assert "fib-wave-expired" in html
     # Old/expired-wave confirmations are excluded from the current table, not deleted from history.
     assert "const event = _latestFibEvent(fl.level, side);" in renderer
-    assert "ev.is_current_valid !== true" in renderer
+    assert "ev.is_recent_20d !== true" in renderer
+    assert "ev.is_current_wave === false" in renderer
+    assert "最近20个交易日内的强信号；所属波段单独标记" in renderer
     assert "const hasSignal = !!event;" in renderer
 
 
