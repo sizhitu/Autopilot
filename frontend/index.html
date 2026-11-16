@@ -508,6 +508,7 @@ body.help-open { overflow: hidden; touch-action: none; }
 .fib-wave-valid { color:var(--green); }
 .fib-wave-expired { color:var(--orange); }
 .fib-wave-unknown { color:var(--text-dim); }
+.fib-wave-previous { color:var(--text-dim); }
 .fib-history-head,.fib-history-row {
   display:grid;
   grid-template-columns:minmax(0,1.35fr) 34px minmax(78px,1.05fr) minmax(68px,.9fr) minmax(58px,.75fr);
@@ -6354,7 +6355,7 @@ function updateResults(data, meta, nineTurn) {
   const _latestFibEvent = (level, side) => {
     const matches = _fibHistory.filter(ev => {
       if (!ev || !ev.signal_date || !ev.signal || !ev.side) return false;
-      if (ev.is_current_valid !== true) return false;
+      if (ev.is_recent_20d !== true) return false;
       if (side && ev.side !== side) return false;
       return Math.abs(Number(ev.level) - Number(level)) < 0.0005;
     });
@@ -6367,34 +6368,36 @@ function updateResults(data, meta, nineTurn) {
     const confirmedAt = Date.parse(confirmed + 'T00:00:00Z');
     const asOfAt = Date.parse(_fibAsOf + 'T00:00:00Z');
     if (!Number.isFinite(confirmedAt) || !Number.isFinite(asOfAt) || asOfAt < confirmedAt) return '无法追溯';
-    return (asOfAt - confirmedAt) / 86400000 <= 90 ? '有效' : '已过期';
+    if ((asOfAt - confirmedAt) / 86400000 > 90) return '已过期';
+    if (ev.is_current_wave === true) return '当前波段';
+    if (ev.is_current_wave === false) return '前波段';
+    return '无法追溯';
   };
   const _renderFibGroup = (title, levels, side, waveRange, rangeLabel = '波段区间') => {
     if (!levels.length) return '';
     let html = `<div style="font-size:11px;font-weight:600;color:var(--text-dim);padding:5px 0 2px;">${title}</div>`;
     const rangeColumnLabel = '参考价 / ' + rangeLabel;
-    html += '<div class="fib-table-head"><span>Fib</span><span>' + rangeColumnLabel + '</span><span>最近确认</span><span>信号日期</span><span>所属波段</span></div>';
+    html += '<div class="fib-table-head"><span>Fib</span><span>' + rangeColumnLabel + '</span><span>最近确认</span><span>信号日期</span><span>信号所属波段</span></div>';
     const rangeHTML = waveRange && Number.isFinite(waveRange.low) && Number.isFinite(waveRange.high)
       ? '<small style="display:block;margin-top:2px;font-size:9px;color:var(--text-dim);white-space:normal;overflow-wrap:anywhere;">' + waveRange.low.toFixed(2) + '–' + waveRange.high.toFixed(2) + '</small>'
       : '';
     for (const fl of levels) {
       const lv = (typeof fl.level === 'number') ? fl.level.toFixed(3) : fl.level;
-      // 近期强信号必须通过后端的交易日时效与当前波段双重校验。
+      // 近期强信号按交易日时效筛选；波段归属单独展示，避免隐藏前波段近期确认。
       const event = _latestFibEvent(fl.level, side);
-      // 当前强信号只认后端按交易日和当前波段双重校验的事件；
-      // 不再用 fib_levels.reacted 兜底，避免旧确认绕过时效过滤。
+      // 仅展示后端确认的近期历史事件；不使用 fib_levels.reacted 兜底，避免旧确认绕过时效过滤。
       const hasSignal = !!event;
       const signal = event ? event.signal : '';
       const signalDate = event ? event.signal_date : '';
       const star = hasSignal ? '<span class="fib-star">★</span>' : (fl.tested ? '<span class="fib-tested">●触及</span>' : '—');
       const rx = hasSignal ? `<span class="fib-reaction">${signal}</span>` : '';
       const status = event ? _fibWaveStatus(event) : '—';
-      const statusClass = status === '有效' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
+      const statusClass = status === '当前波段' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : 'fib-wave-unknown');
       html += `<div class="fib-row"><span class="fib-level">${lv}</span><span class="fib-price">${fl.price}${rangeHTML}</span><span class="fib-status">${star}${rx}</span><span class="fib-signal-date">${signalDate || '—'}</span><span class="fib-wave-status ${statusClass}">${status}</span></div>`;
     }
     return html;
   };
-  fh += '<div style="font-size:10px;color:var(--text-dim);padding:2px 0 6px;">★仅显示最近20个交易日内、且仍属于当前有效波段的确认信号；过期或旧波段信号保留在下方历史记录。</div>';
+  fh += '<div style="font-size:10px;color:var(--text-dim);padding:2px 0 6px;">★显示最近20个交易日内的强信号；所属波段单独标记。当前参考价对应最新波段，前波段信号不代表当前价位再次确认。</div>';
   if (_fibBull.length) {
     fh += _renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'));
   } else if (_fibBear.length) {
