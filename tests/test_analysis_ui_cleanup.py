@@ -172,7 +172,7 @@ def test_fibonacci_panel_renders_bullish_and_bearish_current_levels():
     assert "近期强信号按交易日时效筛选；波段归属单独展示" in update_results
     assert "if (ev.is_recent_20d !== true) return false;" in update_results
     assert "const hasSignal = !!event;" in update_results
-    assert "不再用 fib_levels.reacted 兜底" in update_results
+    assert "不使用 fib_levels.reacted 兜底" in update_results
     assert "const _latestFibEvent = (level, side) =>" in update_results
     assert "if (side && ev.side !== side) return false;" in update_results
     assert "matches.sort((a, b) => String(b.signal_date).localeCompare(String(a.signal_date)));" in update_results
@@ -246,7 +246,7 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
     renderer = update_results[update_results.index("const _renderFibGroup"):update_results.index("if (_fibBull.length)")]
 
     assert '<span>最近确认</span>' in renderer
-    assert '<span>信号日期</span><span>所属波段</span>' in renderer
+    assert '<span>信号日期</span><span>信号所属波段</span>' in renderer
     assert "波段最近确认" not in renderer
     assert "class=\"fib-table-head\"" in renderer
     assert "grid-template-columns:30px minmax(100px,1.1fr) minmax(140px,1.4fr) minmax(72px,.75fr) minmax(52px,.55fr)" in html
