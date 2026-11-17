@@ -246,7 +246,7 @@ def test_current_fibonacci_levels_show_confirmation_date_as_a_separate_column():
     renderer = update_results[update_results.index("const _renderFibGroup"):update_results.index("if (_fibBull.length)")]
 
     assert '<span>最近确认</span>' in renderer
-    assert '<span>信号日期</span><span>信号所属波段</span>' in renderer
+    assert '<span>信号日期</span><span>所属波段</span>' in renderer
     assert "波段最近确认" not in renderer
     assert "class=\"fib-table-head\"" in renderer
     assert "grid-template-columns:30px minmax(100px,1.1fr) minmax(140px,1.4fr) minmax(72px,.75fr) minmax(52px,.55fr)" in html
@@ -280,7 +280,7 @@ def test_current_fibonacci_reference_rows_restore_recent_history_signals_and_wav
     assert "if (ev.is_current_wave === false) return '前波段';" in renderer
     assert "const statusClass = status === '当前波段' ? 'fib-wave-valid' : (status === '已过期' ? 'fib-wave-expired' : (status === '前波段' ? 'fib-wave-previous' : 'fib-wave-unknown'));" in renderer
     assert "const rangeColumnLabel = '参考价 / ' + rangeLabel;" in renderer
-    assert '<span>最近确认</span><span>信号日期</span><span>信号所属波段</span>' in renderer
+    assert '<span>最近确认</span><span>信号日期</span><span>所属波段</span>' in renderer
     assert "_renderFibGroup('↑ 上涨波段 · 回撤支撑位', _fibBull, 'bullish', _currentFibWave('bullish'))" in update_results
     assert "_renderFibGroup('↓ 下跌波段 · 反弹阻力位', _fibBear, 'bearish', _currentFibWave('bearish'))" in update_results
     assert "_renderFibGroup('参考区间 · Fib 回撤位', _fallbackLevels, null," in update_results
