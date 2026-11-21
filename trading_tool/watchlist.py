@@ -11,6 +11,7 @@
 import sys
 import os
 import time
+import logging
 import threading
 import pandas as pd
 import numpy as np
@@ -28,6 +29,7 @@ from daily_store import store_daily_bars
 import symbols
 import watchlist_store
 
+logger = logging.getLogger(__name__)
 fetcher = DataFetcher()
 
 # ----------------------------------------------------------------------
@@ -2711,6 +2713,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
             try:
                 row = fut.result()
             except Exception:
+                logger.exception("[watchlist] 单只股票计算失败: %s", code)
                 row = {
                     'code': code, 'name': name_of.get(str(code), code),
                     'market': '美股' if not str(code).isdigit() else 'A股',
@@ -2812,51 +2815,74 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
 
 
 def _background_refresh(key, items, user_id, bust_status_cache: bool = False):
-    """后台刷新某个看板缓存（边算边增量写入 _CACHES[key]，带兜底熔断）"""
+    """后台刷新某个看板缓存；任务级异常必须显式暴露，不能伪装成全部成功。"""
+    refresh_exception = None
     try:
         _compute_watchlist(items=items, user_id=user_id, key=key,
                            bust_status_cache=bust_status_cache)
-    except Exception:
-        pass
+    except Exception as exc:
+        refresh_exception = exc
+        logger.exception(
+            "[watchlist] 后台看板刷新任务失败 key=%s symbols=%s",
+            key, len(items or []),
+        )
     finally:
-        # 无论成功失败：必须结束 refreshing / computing，避免「最后一只」一直刷新中
         entry = _CACHES.get(key)
+        total = len(items) if items else 0
         if not entry:
+            failed_data = {
+                'success': True, 'computing': False,
+                'updated_at': '',
+                'count': 0, 'total': total,
+                'summary': {}, 'stocks': [],
+                'progress': {'done': 0, 'total': total},
+            }
+            if refresh_exception is not None:
+                failed_data['refresh_failed'] = True
+                failed_data['refresh_error'] = '后台计算异常，未能完成本次刷新'
             _CACHES[key] = {
-                'data': {
-                    'success': True, 'computing': False,
-                    'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'count': 0, 'total': len(items) if items else 0,
-                    'summary': {}, 'stocks': [],
-                    'progress': {'done': len(items) if items else 0, 'total': len(items) if items else 0},
-                },
+                'data': failed_data,
                 'ts': time.time(), 'refreshing': False,
             }
+            return
+
+        entry['refreshing'] = False
+        data = entry.get('data')
+        if not isinstance(data, dict):
+            data = {}
+            entry['data'] = data
+        data['computing'] = False
+        data.setdefault('total', total)
+
+        if refresh_exception is not None:
+            # 保留上次成功时间和已计算行；不得将失败任务标记为 done=total。
+            data['refresh_failed'] = True
+            data['refresh_error'] = '后台计算异常，已保留已有行情'
+            progress = data.get('progress') if isinstance(data.get('progress'), dict) else {}
+            try:
+                done = max(0, min(int(progress.get('done') or 0), int(progress.get('total') or total)))
+            except (TypeError, ValueError):
+                done = 0
+            data['progress'] = {'done': done, 'total': total}
         else:
-            entry['refreshing'] = False
-            data = entry.get('data')
-            if not isinstance(data, dict):
-                data = {}
-                entry['data'] = data
-            data['computing'] = False
-            data.setdefault('total', len(items) if items else 0)
-            # 若计算已写入新 updated_at 则保留；否则补时间戳
+            data.pop('refresh_failed', None)
+            data.pop('refresh_error', None)
+            # 正常完成才把进度标记为全部完成。
+            data['progress'] = {'done': total, 'total': total}
+
+        # 只有正常完成且确有可用行时才更新完成时间；失败时保留旧时间。
+        if refresh_exception is None:
             if not data.get('updated_at') or data.get('updated_at') == data.get('prev_updated_at'):
-                # 有可用 stocks 时用当前时间，保证「刷新完成」可见
                 stocks = data.get('stocks') or []
                 usable = any(
                     s and not s.get('pending') and s.get('price') not in (None, '', '-', '…')
                     for s in stocks
                 )
-                if usable:
+                if usable or not data.get('updated_at'):
                     data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                elif not data.get('updated_at'):
-                    data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            tot = int(data.get('total') or (len(items) if items else 0) or 0)
-            data['progress'] = {'done': tot, 'total': tot}
-            entry['ts'] = time.time()
-            # 强制固化看板缓存引用
-            _CACHES[key] = entry
+
+        entry['ts'] = time.time()
+        _CACHES[key] = entry
 
 
 def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = False,
@@ -3022,14 +3048,18 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
             _row_incomplete(s) for s in (out.get('stocks') or [])
         )
         if need_refresh:
+            start_refresh = False
             with _refresh_lock:
                 c2 = _CACHES.get(key)
-                # force：即使标记在刷新中也允许重开（避免卡死在「最后1只」）
-                stuck = bool(c2 and c2.get('refreshing') and force)
-                if stuck:
-                    # 卡在 refreshing：允许重开
-                    c2['refreshing'] = False
-                if c2 and (not c2.get('refreshing') or stuck):
+                # 同一看板已有任务时，普通刷新和 force 刷新都复用该任务。
+                # 不得把仍在运行的任务标记为 stopped 后再启动第二个线程；
+                # 否则第二个线程可能拿不到全局信号量，却把第一个任务的状态清成 false。
+                if c2 and c2.get('refreshing'):
+                    out['computing'] = True
+                else:
+                    if c2 is None:
+                        c2 = {'data': out, 'ts': time.time(), 'refreshing': False}
+                        _CACHES[key] = c2
                     c2['refreshing'] = True
                     if isinstance(c2.get('data'), dict):
                         c2['data']['computing'] = True
@@ -3039,33 +3069,37 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                             'done': 0,
                             'total': len(items),
                         }
-                    def _run_bg():
-                        # 不在后台线程等待全局计算锁；拿不到资源就冷却，避免堆积等待线程。
-                        got = _BG_SEM.acquire(blocking=False)
-                        if not got:
-                            ent = _CACHES.get(key)
-                            if ent:
-                                ent['refreshing'] = False
-                                ent['retry_after'] = time.time() + 20
-                                ent['refresh_deferred'] = True
-                                if isinstance(ent.get('data'), dict):
-                                    ent['data']['computing'] = False
-                                    ent['data']['refresh_deferred'] = True
-                                    ent['data']['refresh_error'] = "后台计算资源繁忙，已保留现有行情，请 20 秒后重试"
-                                ent['ts'] = time.time()
-                            return
+                        c2['data'].pop('refresh_failed', None)
+                        c2['data'].pop('refresh_error', None)
+                    start_refresh = True
+            if start_refresh:
+                def _run_bg():
+                    # 不在后台线程等待全局计算锁；拿不到资源就冷却，避免堆积等待线程。
+                    got = _BG_SEM.acquire(blocking=False)
+                    if not got:
+                        ent = _CACHES.get(key)
+                        if ent:
+                            ent['refreshing'] = False
+                            ent['retry_after'] = time.time() + 20
+                            ent['refresh_deferred'] = True
+                            if isinstance(ent.get('data'), dict):
+                                ent['data']['computing'] = False
+                                ent['data']['refresh_deferred'] = True
+                                ent['data']['refresh_error'] = "后台计算资源繁忙，已保留现有行情，请 20 秒后重试"
+                            ent['ts'] = time.time()
+                        return
+                    try:
+                        ent = _CACHES.get(key)
+                        if ent:
+                            ent.pop('retry_after', None)
+                            ent.pop('refresh_deferred', None)
+                        _background_refresh(key, items, user_id, bool(force or hard))
+                    finally:
                         try:
-                            ent = _CACHES.get(key)
-                            if ent:
-                                ent.pop('retry_after', None)
-                                ent.pop('refresh_deferred', None)
-                            _background_refresh(key, items, user_id, bool(force or hard))
-                        finally:
-                            try:
-                                _BG_SEM.release()
-                            except Exception:
-                                pass
-                    threading.Thread(target=_run_bg, daemon=True, name="wl-refresh").start()
+                            _BG_SEM.release()
+                        except Exception:
+                            pass
+                threading.Thread(target=_run_bg, daemon=True, name="wl-refresh").start()
             out['computing'] = True
             if hard:
                 out['hard_refresh'] = True

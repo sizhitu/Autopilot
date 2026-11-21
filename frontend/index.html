@@ -5401,6 +5401,29 @@ async function _loadWatchlistBody(forceRefresh) {
       return;
     }
 
+    if (json.refresh_failed) {
+      const failedStocks = (json.stocks && json.stocks.length)
+        ? mergeWatchRows(json.stocks, _lastWatchRows)
+        : (_lastWatchRows || []);
+      if (failedStocks.length) {
+        renderWatchlistSummary(json.summary || buildWatchlistSummaryFromStocks(failedStocks));
+        renderWatchlist(failedStocks);
+        _lastWatchRows = failedStocks.slice();
+      }
+      _wlPollCount = 0;
+      _wlLoadStartedAt = 0;
+      _wlStalledPolls = 0;
+      _watchWasComputing = false;
+      setWatchUpdatedLabel({ computing: false, updated_at: json.updated_at || _lastWatchUpdatedAt || '' });
+      const updatedEl = document.getElementById('watchlistUpdated');
+      if (updatedEl) {
+        updatedEl.textContent = (_lastWatchUpdatedAt ? ('更新于 ' + _lastWatchUpdatedAt + ' · ') : '')
+          + '后台刷新失败（保留上次数据）';
+      }
+      try { showToast('后台刷新异常，已保留已有行情；请稍后重试', 'info'); } catch (e) {}
+      return;
+    }
+
     if (json.computing) {
       _watchWasComputing = true;
       let stocks = json.stocks || [];
