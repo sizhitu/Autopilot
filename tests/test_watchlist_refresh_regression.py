@@ -377,3 +377,35 @@ def test_watchlist_user_rows_are_loaded_once_and_offloaded_from_event_loop():
     assert "await asyncio.to_thread(watchlist_store.get_all, user_id, token or None)" in body
     assert "watchlist_items=items" in body
     assert body.count("watchlist_store.get_all(") == 0
+
+
+
+def test_watchlist_background_task_exception_is_logged_and_not_marked_complete():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("def _background_refresh(")
+    end = source.index("\\n\\ndef get_watchlist_status", start)
+    body = source[start:end]
+
+    assert "logger.exception(" in body
+    assert "data['refresh_failed'] = True" in body
+    assert "data['progress'] = {'done': done, 'total': total}" in body
+    assert "data['progress'] = {'done': total, 'total': total}" in body
+    assert body.index("if refresh_exception is not None:") < body.index(
+        "data['progress'] = {'done': total, 'total': total}"
+    )
+
+
+def test_watchlist_frontend_stops_polling_and_preserves_rows_on_task_failure():
+    source = Path("frontend/index.html").read_text(encoding="utf-8")
+    start = source.index("async function _loadWatchlistBody(forceRefresh)")
+    end = source.index("// 编辑某只自选备注", start)
+    body = source[start:end]
+
+    failed = body.index("if (json.refresh_failed)")
+    computing = body.index("if (json.computing)", failed)
+    assert failed < computing
+    failure_branch = body[failed:computing]
+    assert "mergeWatchRows(json.stocks, _lastWatchRows)" in failure_branch
+    assert "_watchWasComputing = false;" in failure_branch
+    assert "后台刷新失败（保留上次数据）" in failure_branch
+    assert "return;" in failure_branch
