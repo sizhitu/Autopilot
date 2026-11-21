@@ -3048,14 +3048,18 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
             _row_incomplete(s) for s in (out.get('stocks') or [])
         )
         if need_refresh:
+            start_refresh = False
             with _refresh_lock:
                 c2 = _CACHES.get(key)
-                # force：即使标记在刷新中也允许重开（避免卡死在「最后1只」）
-                stuck = bool(c2 and c2.get('refreshing') and force)
-                if stuck:
-                    # 卡在 refreshing：允许重开
-                    c2['refreshing'] = False
-                if c2 and (not c2.get('refreshing') or stuck):
+                # 同一看板已有任务时，普通刷新和 force 刷新都复用该任务。
+                # 不得把仍在运行的任务标记为 stopped 后再启动第二个线程；
+                # 否则第二个线程可能拿不到全局信号量，却把第一个任务的状态清成 false。
+                if c2 and c2.get('refreshing'):
+                    out['computing'] = True
+                else:
+                    if c2 is None:
+                        c2 = {'data': out, 'ts': time.time(), 'refreshing': False}
+                        _CACHES[key] = c2
                     c2['refreshing'] = True
                     if isinstance(c2.get('data'), dict):
                         c2['data']['computing'] = True
@@ -3065,33 +3069,37 @@ def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = Fal
                             'done': 0,
                             'total': len(items),
                         }
-                    def _run_bg():
-                        # 不在后台线程等待全局计算锁；拿不到资源就冷却，避免堆积等待线程。
-                        got = _BG_SEM.acquire(blocking=False)
-                        if not got:
-                            ent = _CACHES.get(key)
-                            if ent:
-                                ent['refreshing'] = False
-                                ent['retry_after'] = time.time() + 20
-                                ent['refresh_deferred'] = True
-                                if isinstance(ent.get('data'), dict):
-                                    ent['data']['computing'] = False
-                                    ent['data']['refresh_deferred'] = True
-                                    ent['data']['refresh_error'] = "后台计算资源繁忙，已保留现有行情，请 20 秒后重试"
-                                ent['ts'] = time.time()
-                            return
+                        c2['data'].pop('refresh_failed', None)
+                        c2['data'].pop('refresh_error', None)
+                    start_refresh = True
+            if start_refresh:
+                def _run_bg():
+                    # 不在后台线程等待全局计算锁；拿不到资源就冷却，避免堆积等待线程。
+                    got = _BG_SEM.acquire(blocking=False)
+                    if not got:
+                        ent = _CACHES.get(key)
+                        if ent:
+                            ent['refreshing'] = False
+                            ent['retry_after'] = time.time() + 20
+                            ent['refresh_deferred'] = True
+                            if isinstance(ent.get('data'), dict):
+                                ent['data']['computing'] = False
+                                ent['data']['refresh_deferred'] = True
+                                ent['data']['refresh_error'] = "后台计算资源繁忙，已保留现有行情，请 20 秒后重试"
+                            ent['ts'] = time.time()
+                        return
+                    try:
+                        ent = _CACHES.get(key)
+                        if ent:
+                            ent.pop('retry_after', None)
+                            ent.pop('refresh_deferred', None)
+                        _background_refresh(key, items, user_id, bool(force or hard))
+                    finally:
                         try:
-                            ent = _CACHES.get(key)
-                            if ent:
-                                ent.pop('retry_after', None)
-                                ent.pop('refresh_deferred', None)
-                            _background_refresh(key, items, user_id, bool(force or hard))
-                        finally:
-                            try:
-                                _BG_SEM.release()
-                            except Exception:
-                                pass
-                    threading.Thread(target=_run_bg, daemon=True, name="wl-refresh").start()
+                            _BG_SEM.release()
+                        except Exception:
+                            pass
+                threading.Thread(target=_run_bg, daemon=True, name="wl-refresh").start()
             out['computing'] = True
             if hard:
                 out['hard_refresh'] = True
