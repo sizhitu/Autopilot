@@ -409,3 +409,17 @@ def test_watchlist_frontend_stops_polling_and_preserves_rows_on_task_failure():
     assert "_watchWasComputing = false;" in failure_branch
     assert "后台刷新失败（保留上次数据）" in failure_branch
     assert "return;" in failure_branch
+
+
+
+def test_watchlist_force_refresh_reuses_an_active_background_task():
+    source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
+    start = source.index("        if need_refresh:")
+    end = source.index("        else:\n            out['computing'] = bool(cache.get('refreshing'))", start)
+    body = source[start:end]
+
+    assert "if c2 and c2.get('refreshing'):" in body
+    assert "out['computing'] = True" in body
+    assert "if start_refresh:" in body
+    assert "stuck = bool(c2 and c2.get('refreshing') and force)" not in body
+    assert "c2['refreshing'] = False" not in body
