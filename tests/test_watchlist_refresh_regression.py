@@ -383,7 +383,7 @@ def test_watchlist_user_rows_are_loaded_once_and_offloaded_from_event_loop():
 def test_watchlist_background_task_exception_is_logged_and_not_marked_complete():
     source = Path("trading_tool/watchlist.py").read_text(encoding="utf-8")
     start = source.index("def _background_refresh(")
-    end = source.index("\\n\\ndef get_watchlist_status", start)
+    end = source.index("\n\ndef get_watchlist_status", start)
     body = source[start:end]
 
     assert "logger.exception(" in body
