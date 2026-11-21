@@ -11,6 +11,7 @@
 import sys
 import os
 import time
+import logging
 import threading
 import pandas as pd
 import numpy as np
@@ -28,6 +29,7 @@ from daily_store import store_daily_bars
 import symbols
 import watchlist_store
 
+logger = logging.getLogger(__name__)
 fetcher = DataFetcher()
 
 # ----------------------------------------------------------------------
@@ -2711,6 +2713,7 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
             try:
                 row = fut.result()
             except Exception:
+                logger.exception("[watchlist] 单只股票计算失败: %s", code)
                 row = {
                     'code': code, 'name': name_of.get(str(code), code),
                     'market': '美股' if not str(code).isdigit() else 'A股',
@@ -2812,51 +2815,74 @@ def _compute_watchlist(items: list = None, user_id: int = None, key=None,
 
 
 def _background_refresh(key, items, user_id, bust_status_cache: bool = False):
-    """后台刷新某个看板缓存（边算边增量写入 _CACHES[key]，带兜底熔断）"""
+    """后台刷新某个看板缓存；任务级异常必须显式暴露，不能伪装成全部成功。"""
+    refresh_exception = None
     try:
         _compute_watchlist(items=items, user_id=user_id, key=key,
                            bust_status_cache=bust_status_cache)
-    except Exception:
-        pass
+    except Exception as exc:
+        refresh_exception = exc
+        logger.exception(
+            "[watchlist] 后台看板刷新任务失败 key=%s symbols=%s",
+            key, len(items or []),
+        )
     finally:
-        # 无论成功失败：必须结束 refreshing / computing，避免「最后一只」一直刷新中
         entry = _CACHES.get(key)
+        total = len(items) if items else 0
         if not entry:
+            failed_data = {
+                'success': True, 'computing': False,
+                'updated_at': '',
+                'count': 0, 'total': total,
+                'summary': {}, 'stocks': [],
+                'progress': {'done': 0, 'total': total},
+            }
+            if refresh_exception is not None:
+                failed_data['refresh_failed'] = True
+                failed_data['refresh_error'] = '后台计算异常，未能完成本次刷新'
             _CACHES[key] = {
-                'data': {
-                    'success': True, 'computing': False,
-                    'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'count': 0, 'total': len(items) if items else 0,
-                    'summary': {}, 'stocks': [],
-                    'progress': {'done': len(items) if items else 0, 'total': len(items) if items else 0},
-                },
+                'data': failed_data,
                 'ts': time.time(), 'refreshing': False,
             }
+            return
+
+        entry['refreshing'] = False
+        data = entry.get('data')
+        if not isinstance(data, dict):
+            data = {}
+            entry['data'] = data
+        data['computing'] = False
+        data.setdefault('total', total)
+
+        if refresh_exception is not None:
+            # 保留上次成功时间和已计算行；不得将失败任务标记为 done=total。
+            data['refresh_failed'] = True
+            data['refresh_error'] = '后台计算异常，已保留已有行情'
+            progress = data.get('progress') if isinstance(data.get('progress'), dict) else {}
+            try:
+                done = max(0, min(int(progress.get('done') or 0), int(progress.get('total') or total)))
+            except (TypeError, ValueError):
+                done = 0
+            data['progress'] = {'done': done, 'total': total}
         else:
-            entry['refreshing'] = False
-            data = entry.get('data')
-            if not isinstance(data, dict):
-                data = {}
-                entry['data'] = data
-            data['computing'] = False
-            data.setdefault('total', len(items) if items else 0)
-            # 若计算已写入新 updated_at 则保留；否则补时间戳
+            data.pop('refresh_failed', None)
+            data.pop('refresh_error', None)
+            # 正常完成才把进度标记为全部完成。
+            data['progress'] = {'done': total, 'total': total}
+
+        # 只有正常完成且确有可用行时才更新完成时间；失败时保留旧时间。
+        if refresh_exception is None:
             if not data.get('updated_at') or data.get('updated_at') == data.get('prev_updated_at'):
-                # 有可用 stocks 时用当前时间，保证「刷新完成」可见
                 stocks = data.get('stocks') or []
                 usable = any(
                     s and not s.get('pending') and s.get('price') not in (None, '', '-', '…')
                     for s in stocks
                 )
-                if usable:
+                if usable or not data.get('updated_at'):
                     data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                elif not data.get('updated_at'):
-                    data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            tot = int(data.get('total') or (len(items) if items else 0) or 0)
-            data['progress'] = {'done': tot, 'total': tot}
-            entry['ts'] = time.time()
-            # 强制固化看板缓存引用
-            _CACHES[key] = entry
+
+        entry['ts'] = time.time()
+        _CACHES[key] = entry
 
 
 def get_watchlist_status(user_id=None, force: bool = False, is_admin: bool = False,
